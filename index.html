@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aerospace Program: Flight Core</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+
+    <div id="hud" class="panel">
+      <div class="row"><span>AIRSPEED</span><b id="h-speed">0</b><small>kt</small></div>
+      <div class="row"><span>ALTITUDE</span><b id="h-alt">0</b><small>m</small></div>
+      <div class="row"><span>V/S</span><b id="h-vs">0</b><small>m/s</small></div>
+      <div class="row"><span>AOA</span><b id="h-aoa">0</b><small>°</small></div>
+      <div class="row"><span>G</span><b id="h-g">1.0</b><small>g</small></div>
+      <div class="row"><span>HDG</span><b id="h-hdg">000</b><small>°</small></div>
+      <div class="row throttle">
+        <span>THR</span>
+        <div class="bar"><div id="h-thr-bar"></div><div id="h-spool-bar"></div></div>
+        <b id="h-thr">0</b><small>%</small>
+      </div>
+      <div class="row"><span>TRIM</span><b id="h-trim">0</b><small></small></div>
+      <div id="h-flags"></div>
+    </div>
+
+    <div id="stall" class="hidden">STALL</div>
+
+    <div id="help" class="panel">
+      <h3>Controls</h3>
+      <table>
+        <tr><td>W / S</td><td>pitch down / up</td></tr>
+        <tr><td>A / D</td><td>roll</td></tr>
+        <tr><td>Q / E</td><td>yaw (rudder, nose wheel)</td></tr>
+        <tr><td>Shift / Ctrl</td><td>throttle up / down</td></tr>
+        <tr><td>Z / X</td><td>full / cut throttle</td></tr>
+        <tr><td>B or Space</td><td>brakes</td></tr>
+        <tr><td>T / G</td><td>trim nose down / up (Y resets)</td></tr>
+        <tr><td>R</td><td>reset to runway</td></tr>
+        <tr><td>C</td><td>chase / orbit camera</td></tr>
+        <tr><td>F3</td><td>debug forces &amp; stats</td></tr>
+        <tr><td>H</td><td>toggle this help</td></tr>
+      </table>
+      <p class="muted">Gamepad: left stick pitch/roll, right stick or bumpers yaw, triggers throttle,
+        A brake, Y reset, Back camera.</p>
+      <p class="muted">Tip: full throttle (Z), roll down the runway, pull back gently (S) around 60 kt.</p>
+    </div>
+
+    <div id="debug" class="panel hidden">
+      <h3>Debug</h3>
+      <div id="d-stats"></div>
+      <label>
+        CoM shift (aft +): <b id="d-com-val">0.00</b> m
+        <input id="d-com" type="range" min="-1" max="2" step="0.05" value="0" />
+      </label>
+      <div class="legend">
+        <span style="color:#33ff55">■ lift</span>
+        <span style="color:#ff3333">■ drag</span>
+        <span style="color:#ffdd00">■ thrust</span>
+        <span style="color:#aaa">■ wheel</span><br />
+        <span style="color:#ffd400">● CoM</span>
+        <span style="color:#2f7dff">● CoL</span>
+        <span style="color:#b04dff">● CoT</span>
+      </div>
+    </div>
+
+    <div id="loading">Loading physics…</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

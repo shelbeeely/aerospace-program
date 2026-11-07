@@ -1,0 +1,36 @@
+/**
+ * A plain, JSON-serializable snapshot of the craft's flight state. This is what the HUD shows
+ * and what a future AI/LLM pilot would receive as its observation.
+ */
+export interface Telemetry {
+  /** Simulation time (s). */
+  time: number;
+  position: [number, number, number];
+  velocity: [number, number, number];
+  /** Airspeed (m/s). No wind yet, so equal to ground speed. */
+  airspeed: number;
+  /** Height above ground (m). */
+  altitude: number;
+  /** m/s, positive up. */
+  verticalSpeed: number;
+  /** Compass heading, deg. 0 = -Z ("north"), 90 = +X ("east"). */
+  heading: number;
+  /** Nose pitch above horizon, deg. */
+  pitch: number;
+  /** Bank angle, deg, positive = right wing down. */
+  roll: number;
+  /** Angle of attack, deg. */
+  angleOfAttack: number;
+  /** Sideslip, deg, positive = air coming from the right. */
+  sideslip: number;
+  /** Load factor along the craft's up axis, in g (1 = level flight). */
+  gForce: number;
+  /** Commanded throttle 0..1 and actual engine spool 0..1. */
+  throttle: number;
+  engineSpool: number;
+  onGround: boolean;
+  /** 0..1, how stalled the main wings are. */
+  stall: number;
+  /** Current control inputs actually applied. */
+  controls: { pitch: number; roll: number; yaw: number; throttle: number; brake: number };
+}
