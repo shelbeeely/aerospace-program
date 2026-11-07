@@ -64,6 +64,9 @@ Every reply must contain the COMPLETE craft, not a diff.`;
 
 export interface DesignAttempt {
   iteration: number;
+  /** Which job did this round, and which model actually answered (may be a fallback). */
+  role: 'designer' | 'engineer';
+  model?: string;
   craft?: CraftDef;
   validationErrors?: string[];
   report?: FlightReport;
@@ -76,7 +79,13 @@ export type DesignEvent =
   | { type: 'attempt'; attempt: DesignAttempt };
 
 export interface DesignRequest {
+  /** Designer: writes the first draft. */
   model: string;
+  /** Engineer: does the repair rounds. Defaults to the designer model. */
+  engineerModel?: string;
+  /** Backup models per job (OpenRouter fails over to them on rate limits). */
+  designerFallbacks?: string[];
+  engineerFallbacks?: string[];
   prompt: string;
   /** Existing craft to modify (refinement). */
   base?: CraftDef;
@@ -136,21 +145,34 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
   let best: DesignResult | null = null;
   let totalCost = 0;
 
+  let engineerStuck = false;
   for (let i = 1; i <= maxIterations; i++) {
-    emit({ type: 'status', message: `Asking ${req.model} (round ${i}/${maxIterations})…` });
-    const attempt: DesignAttempt = { iteration: i, cost: 0 };
+    // Round 1 is the designer's draft; later rounds are the engineer fixing reported problems.
+    // If the engineer couldn't produce usable JSON, the designer takes the next round back.
+    const role = i === 1 || engineerStuck ? 'designer' : 'engineer';
+    const model = role === 'designer' ? req.model : (req.engineerModel ?? req.model);
+    const fallbacks = role === 'designer' ? req.designerFallbacks : req.engineerFallbacks;
+    emit({ type: 'status', message: `${role === 'designer' ? 'Designer' : 'Engineer'} (${model}) working, round ${i}/${maxIterations}…` });
+    const attempt: DesignAttempt = { iteration: i, role, cost: 0 };
     attempts.push(attempt);
     let reply: string;
+    let reasoning = '';
     try {
       const res = await client.chat({
-        model: req.model,
+        model,
+        fallbacks,
         messages,
         format: 'json',
         temperature: 0.4,
         maxTokens: 16000,
+        // Designers get room to think; engineers make targeted fixes and must not run out of
+        // tokens mid-JSON (free reasoning models will happily think for 40K characters).
+        reasoningEffort: role === 'designer' ? 'medium' : 'low',
         signal: req.signal,
       });
       reply = res.content;
+      reasoning = res.reasoning;
+      attempt.model = res.model;
       attempt.cost = res.usage.cost;
       totalCost += res.usage.cost;
     } catch (e) {
@@ -159,15 +181,23 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
       if (best) break;
       throw e;
     }
-    messages.push({ role: 'assistant', content: reply });
-
     let parsed: ReturnType<typeof normalize>;
     try {
-      parsed = normalize(extractJson(reply));
+      try {
+        parsed = normalize(extractJson(reply));
+      } catch (e) {
+        // Some models leave the answer in their reasoning when the visible reply is empty.
+        if (!reasoning) throw e;
+        parsed = normalize(extractJson(reasoning));
+        reply = JSON.stringify({ name: parsed.name, notes: parsed.notes, craft: parsed.craft });
+      }
+      messages.push({ role: 'assistant', content: reply });
+      engineerStuck = false;
     } catch (e) {
-      attempt.error = `Could not parse JSON: ${e instanceof Error ? e.message : e}`;
+      attempt.error = `Could not parse JSON${reply ? '' : ' (empty reply)'}: ${e instanceof Error ? e.message : e}`;
       emit({ type: 'attempt', attempt });
-      messages.push({ role: 'user', content: `${attempt.error}. Reply with ONLY the JSON object described in the instructions.` });
+      // Don't leave an empty assistant turn in the thread; hand the next round to the designer.
+      if (role === 'engineer') engineerStuck = true;
       continue;
     }
 
@@ -219,5 +249,7 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
   if (!best) throw new Error('The model never produced a valid craft. Try another model or a simpler request.');
   best.cost = totalCost;
   best.attempts = attempts;
+  // Credit everyone who worked on it, in order (designer first, then engineers/fallbacks).
+  best.model = [...new Set(attempts.map((a) => a.model).filter((m): m is string => !!m))].join(' + ') || req.model;
   return best;
 }

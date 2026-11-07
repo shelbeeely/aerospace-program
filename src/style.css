@@ -69,6 +69,17 @@ h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.12em; color: #9fd0ff; }
 #studio button:hover:not(:disabled) { background: rgba(255,255,255,0.16); }
 #studio button:disabled { opacity: 0.45; cursor: default; }
 #studio button.primary { background: #3d7fd8; border-color: #5b98ea; }
+.crew { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+#studio label.inline { display: inline-flex; align-items: center; gap: 4px; margin: 0; }
+#studio .row.spread { justify-content: space-between; margin-top: 0; }
+#studio .row.spread h4 { margin: 0; }
+#studio details.settings { margin-top: 6px; }
+#studio details.settings summary { cursor: pointer; color: #9fb2c2; font-size: 11px; }
+#studio input[type=password], #studio input[type=number] {
+  width: 100%; margin-top: 3px; background: rgba(0,0,0,0.35); color: #eaf2f8;
+  border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; padding: 5px 6px; font: inherit;
+}
+#studio audio { width: 100%; margin-top: 6px; height: 32px; }
 .studio-head { display: flex; justify-content: space-between; align-items: baseline; }
 .studio-status { color: #cfe; margin: 4px 0 6px; min-height: 1.3em; }
 .studio-status.error { color: #ff8a7a; }

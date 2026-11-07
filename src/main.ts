@@ -12,7 +12,7 @@ import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
 import { initPhysics, Simulation } from './sim/Simulation.ts';
 import { TUNING } from './tuning.ts';
-import { Studio } from './ui/Studio.ts';
+import { CAP_STORAGE, KEY_STORAGE, Studio } from './ui/Studio.ts';
 
 async function start() {
   await initPhysics();
@@ -64,7 +64,16 @@ async function start() {
   };
 
   // --- Generation: craft come from the Studio (designer models) and live in the hangar library.
-  const client = browserClient();
+  const stored = (k: string) => {
+    try {
+      return localStorage.getItem(k);
+    } catch {
+      return null;
+    }
+  };
+  // A player-supplied key talks to OpenRouter directly (works on GitHub Pages); otherwise the
+  // dev-server proxy holds the key. Default session cap: $1.
+  const client = browserClient(stored(KEY_STORAGE), Number(stored(CAP_STORAGE) ?? 1));
   const library = new Library();
   let currentEntry: LibraryEntry | null = null;
   const fly = (entry: LibraryEntry | null) => {

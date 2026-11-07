@@ -1,11 +1,12 @@
 /**
  * Generate a craft from a description, flight-test it, iterate, and save it.
  *
- *   npm run design -- "a stubby twin-boom cargo plane" [--model id] [--rounds 3] [--base crafts/x.json]
+ *   npm run design -- "a stubby twin-boom cargo plane" [--designer id] [--engineer id] [--rounds 3] [--base crafts/x.json]
  *
  * Needs OPENROUTER_API_KEY in the environment (or a proxy that injects it).
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { JOBS } from '../src/gen/catalog.ts';
 import { designCraft } from '../src/gen/craftDesigner.ts';
 import { OpenRouter } from '../src/gen/openrouter.ts';
 import { formatReport } from '../src/sim/flightTest.ts';
@@ -19,12 +20,15 @@ const opt = (name: string) => {
   args.splice(i, 2);
   return v;
 };
-const model = opt('model') ?? 'nvidia/nemotron-3-ultra-550b-a55b:free';
+// Free crew by default; any OpenRouter model id works.
+const model = opt('designer') ?? opt('model') ?? JOBS.designer.free[0];
+const engineer = opt('engineer') ?? JOBS.engineer.free[0];
+const backups = (list: string[], primary: string) => list.filter((m) => m !== primary).slice(0, 2);
 const rounds = Number(opt('rounds') ?? 3);
 const basePath = opt('base');
 const prompt = args.join(' ').trim();
 if (!prompt) {
-  console.error('usage: npm run design -- "description" [--model id] [--rounds n] [--base file.json]');
+  console.error('usage: npm run design -- "description" [--designer id] [--engineer id] [--rounds n] [--base file.json]');
   process.exit(1);
 }
 
@@ -38,6 +42,9 @@ const base = basePath ? JSON.parse(readFileSync(basePath, 'utf8')).craft ?? unde
 const t0 = Date.now();
 const result = await designCraft(client, {
   model,
+  designerFallbacks: backups(JOBS.designer.free, model),
+  engineerModel: engineer,
+  engineerFallbacks: backups(JOBS.engineer.free, engineer),
   prompt,
   base,
   maxIterations: rounds,
@@ -45,9 +52,9 @@ const result = await designCraft(client, {
     if (e.type === 'status') console.log(`… ${e.message}`);
     else {
       const a = e.attempt;
-      if (a.error) console.log(`  round ${a.iteration}: ${a.error}`);
-      else if (a.validationErrors) console.log(`  round ${a.iteration}: ${a.validationErrors.length} validation errors, e.g. ${a.validationErrors[0]}`);
-      else if (a.report) console.log(`  round ${a.iteration}: "${a.craft?.name}" scored ${a.report.score}/100`);
+      if (a.error) console.log(`  round ${a.iteration} ${a.role}${a.model ? ` (${a.model})` : ""}: ${a.error}`);
+      else if (a.validationErrors) console.log(`  round ${a.iteration} ${a.role}${a.model ? ` (${a.model})` : ""}: ${a.validationErrors.length} validation errors, e.g. ${a.validationErrors[0]}`);
+      else if (a.report) console.log(`  round ${a.iteration} ${a.role}${a.model ? ` (${a.model})` : ""}: "${a.craft?.name}" scored ${a.report.score}/100`);
     }
   },
 });

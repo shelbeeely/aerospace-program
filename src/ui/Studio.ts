@@ -1,9 +1,16 @@
 import type { CraftDef } from '../craft/types.ts';
-import { defaultModel, isFree, modelsForTask, priceLabel, TASKS, type GenTask } from '../gen/catalog.ts';
+import { defaultModel, fallbacksFor, isFree, JOBS, modelsForJob, priceLabel, type JobId } from '../gen/catalog.ts';
 import { designCraft, type DesignResult } from '../gen/craftDesigner.ts';
 import { fromImportJson, toExportJson, type Library, type LibraryEntry } from '../gen/library.ts';
 import { paintLivery } from '../gen/livery.ts';
-import { OpenRouterError, type ModelInfo, type OpenRouter } from '../gen/openrouter.ts';
+import { composeMusic } from '../gen/music.ts';
+import {
+  DIRECT_BASE_URL,
+  OpenRouter,
+  OpenRouterError,
+  PROXY_BASE_URL,
+  type ModelInfo,
+} from '../gen/openrouter.ts';
 import { formatReport } from '../sim/flightTest.ts';
 
 export interface StudioHost {
@@ -15,7 +22,7 @@ export interface StudioHost {
   flightNotes(): string;
   /** Put a craft on the runway. */
   fly(entry: LibraryEntry | null): void;
-  /** Re-apply the livery of the current entry after painting. */
+  /** Apply a livery texture to the current craft (null removes it). */
   applyLivery(dataUrl: string | null): void;
 }
 
@@ -24,7 +31,7 @@ const SUGGESTIONS = [
   'a twin-engine cargo plane',
   'a canard racer with a pusher prop',
   'a long-winged motor glider',
-  'a tiny aerobatic biplane-style trainer',
+  'a tiny aerobatic trainer',
 ];
 
 type Child = Node | string | null | undefined | false;
@@ -42,53 +49,87 @@ function h<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
-const PREF_KEY = 'aerospace.studio.models.v1';
+const PREFS_KEY = 'aerospace.studio.prefs.v2';
+export const KEY_STORAGE = 'aerospace.openrouter.key';
+export const CAP_STORAGE = 'aerospace.openrouter.cap';
+
+interface Prefs {
+  freeOnly: boolean;
+  jobs: Partial<Record<JobId, string>>;
+}
+
+function loadPrefs(): Prefs {
+  try {
+    const p = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}');
+    return { freeOnly: p.freeOnly ?? true, jobs: p.jobs ?? {} };
+  } catch {
+    return { freeOnly: true, jobs: {} };
+  }
+}
 
 /**
- * The generation workflow in-game: pick a model per task, describe a craft, watch it get
- * designed, validated and flight-tested, fly it, then refine it with notes from your own
- * flight. Every result lands in the hangar library with its provenance.
+ * The generation workflow in-game. A crew of models, one per job (designer, engineer,
+ * painter, composer), free by default. Describe a craft, watch it get designed, validated,
+ * flight-tested and repaired, fly it, refine it with notes from your own flight, paint it,
+ * score it. Every result lands in the hangar with its provenance.
  */
 export class Studio {
   readonly root: HTMLElement;
   private models: ModelInfo[] = [];
-  private selected: Partial<Record<GenTask, string>> = {};
+  private prefs = loadPrefs();
   private busy: AbortController | null = null;
   private lastResult: DesignResult | null = null;
+  private readonly selects = {} as Record<JobId, HTMLSelectElement>;
+  private readonly audioEl: HTMLAudioElement;
 
   private readonly el: {
     status: HTMLElement;
     spend: HTMLElement;
-    designer: HTMLSelectElement;
-    designerInfo: HTMLElement;
-    painter: HTMLSelectElement;
+    keyInput: HTMLInputElement;
+    keyNote: HTMLElement;
+    settings: HTMLDetailsElement;
     prompt: HTMLTextAreaElement;
     rounds: HTMLSelectElement;
     log: HTMLOListElement;
     result: HTMLElement;
     liveryPrompt: HTMLInputElement;
+    musicPrompt: HTMLInputElement;
+    musicInfo: HTMLElement;
     hangar: HTMLElement;
     buttons: HTMLButtonElement[];
     cancel: HTMLButtonElement;
   };
 
   constructor(private readonly host: StudioHost) {
-    try {
-      this.selected = JSON.parse(localStorage.getItem(PREF_KEY) ?? '{}');
-    } catch {
-      /* ignore */
+    const crew = h('div', { class: 'crew' });
+    for (const job of Object.keys(JOBS) as JobId[]) {
+      const sel = h('select', { title: JOBS[job].description, onchange: () => this.pick(job, sel.value) });
+      this.selects[job] = sel;
+      crew.append(h('label', { title: JOBS[job].description }, JOBS[job].label, sel));
     }
-    const designer = h('select', { onchange: () => this.pick('design', designer.value) });
-    const painter = h('select', { onchange: () => this.pick('livery', painter.value) });
+    const freeOnly = h('input', { type: 'checkbox', onchange: () => this.setFreeOnly(freeOnly.checked) });
+    freeOnly.checked = this.prefs.freeOnly;
+
+    const keyInput = h('input', { type: 'password', placeholder: 'sk-or-… (optional)', autocomplete: 'off' });
+    keyInput.value = safeGet(KEY_STORAGE) ?? '';
+    const capInput = h('input', { type: 'number', min: '0', step: '0.5', title: 'Hard cap on spend per session (USD)' });
+    capInput.value = String(Number.isFinite(host.client.maxSpendUsd) ? host.client.maxSpendUsd : 1);
+    capInput.addEventListener('change', () => {
+      const v = Math.max(0, Number(capInput.value) || 0);
+      host.client.configure({ maxSpendUsd: v });
+      safeSet(CAP_STORAGE, String(v));
+      this.updateSpend();
+    });
+
     const prompt = h('textarea', {
       rows: '3',
       placeholder: 'Describe a craft… (Ctrl+Enter to design)',
       onkeydown: (e) => {
         const k = e as KeyboardEvent;
-        if (k.key === 'Enter' && (k.ctrlKey || k.metaKey)) this.design(false);
+        if (k.key === 'Enter' && (k.ctrlKey || k.metaKey)) void this.design(false);
       },
     });
-    const rounds = h('select', { title: 'Model calls allowed, including self-repair after flight tests' });
+    const rounds = h('select', { title: 'Model calls allowed: 1 designer draft, then engineer repair rounds' });
     for (const n of [1, 2, 3, 4, 5]) rounds.append(h('option', { value: String(n) }, `${n} round${n > 1 ? 's' : ''}`));
     rounds.value = '3';
     const designBtn = h('button', { class: 'primary', onclick: () => this.design(false) }, 'Design new');
@@ -96,23 +137,39 @@ export class Studio {
     const cancel = h('button', { class: 'hidden', onclick: () => this.busy?.abort() }, 'Cancel');
     const liveryPrompt = h('input', { type: 'text', placeholder: 'e.g. racing stripes, red and cream' });
     const paintBtn = h('button', { onclick: () => this.paint() }, 'Paint');
+    const unpaintBtn = h('button', { title: 'Remove livery', onclick: () => this.unpaint() }, '✕');
+    const musicPrompt = h('input', { type: 'text', placeholder: 'e.g. breezy 70s adventure theme' });
+    const composeBtn = h('button', { onclick: () => this.compose() }, 'Compose');
+    this.audioEl = h('audio', { controls: '', loop: '', class: 'hidden' });
     const importInput = h('input', { type: 'file', accept: '.json,application/json', class: 'hidden', onchange: () => this.importFile(importInput) });
+    const settings = h('details', { class: 'settings' },
+      h('summary', {}, 'Key & spend'),
+      h('label', {}, 'Your OpenRouter key (stored in this browser, sent only to openrouter.ai)', keyInput),
+      h('div', { class: 'row' },
+        h('button', { onclick: () => this.saveKey() }, 'Save key'),
+        h('button', { onclick: () => ((keyInput.value = ''), this.saveKey()) }, 'Forget key'),
+      ),
+      h('label', {}, 'Session spend cap (USD)', capInput),
+    );
 
     this.el = {
       status: h('div', { class: 'studio-status' }, 'Loading models…'),
       spend: h('span', { class: 'muted' }),
-      designer,
-      designerInfo: h('div', { class: 'muted small' }),
-      painter,
+      keyInput,
+      keyNote: h('div', { class: 'muted small' }),
+      settings,
       prompt,
       rounds,
       log: h('ol', { class: 'studio-log' }),
       result: h('div', { class: 'studio-result hidden' }),
       liveryPrompt,
+      musicPrompt,
+      musicInfo: h('div', { class: 'muted small' }),
       hangar: h('div', { class: 'studio-hangar' }),
-      buttons: [designBtn, refineBtn, paintBtn],
+      buttons: [designBtn, refineBtn, paintBtn, composeBtn],
       cancel,
     };
+    settings.append(this.el.keyNote);
 
     const chips = h('div', { class: 'chips' });
     for (const s of SUGGESTIONS) chips.append(h('button', { class: 'chip', onclick: () => ((prompt.value = s), prompt.focus()) }, s));
@@ -123,18 +180,24 @@ export class Studio {
       h('div', { class: 'studio-head' }, h('h3', {}, '✦ STUDIO'), this.el.spend),
       this.el.status,
       h('section', {},
-        h('label', {}, TASKS.design.label, designer),
-        this.el.designerInfo,
+        h('div', { class: 'row spread' }, h('h4', {}, 'Crew'), h('label', { class: 'inline' }, freeOnly, ' Free only')),
+        crew,
+        settings,
+      ),
+      h('section', {},
+        h('h4', {}, 'Design'),
         prompt,
         chips,
         h('div', { class: 'row' }, rounds, designBtn, refineBtn, cancel),
         this.el.log,
         this.el.result,
       ),
+      h('section', {}, h('h4', {}, 'Livery'), h('div', { class: 'row' }, liveryPrompt, paintBtn, unpaintBtn)),
       h('section', {},
-        h('h4', {}, 'Livery'),
-        h('label', {}, TASKS.livery.label, painter),
-        h('div', { class: 'row' }, liveryPrompt, paintBtn),
+        h('h4', {}, 'Music'),
+        h('div', { class: 'row' }, musicPrompt, composeBtn),
+        this.audioEl,
+        this.el.musicInfo,
       ),
       h('section', {},
         h('h4', {}, 'Hangar'),
@@ -144,6 +207,7 @@ export class Studio {
     );
     document.body.append(this.root);
     this.renderHangar();
+    this.updateSpend();
     void this.loadModels();
   }
 
@@ -151,57 +215,99 @@ export class Studio {
     this.root.classList.toggle('hidden');
   }
 
-  private pick(task: GenTask, id: string): void {
-    this.selected[task] = id;
-    try {
-      localStorage.setItem(PREF_KEY, JSON.stringify(this.selected));
-    } catch {
-      /* ignore */
-    }
-    this.renderModelInfo();
-  }
+  // ---------------------------------------------------------------- models & crew
 
   private async loadModels(): Promise<void> {
+    const client = this.host.client;
     try {
-      this.models = await this.host.client.models();
-    } catch (e) {
-      this.setStatus(
-        `Can't reach OpenRouter through the dev server (${e instanceof Error ? e.message : e}). ` +
-          'Run "npm run dev" with OPENROUTER_API_KEY set (see .env.example). Flying still works.',
-        'error',
-      );
-      return;
+      this.models = await client.models(true);
+    } catch {
+      // No dev-server proxy (e.g. GitHub Pages). The model list is public, so show it anyway
+      // and ask for the player's own key.
+      try {
+        this.models = await new OpenRouter({ baseUrl: DIRECT_BASE_URL }).models();
+        if (client.baseUrl === PROXY_BASE_URL) client.configure({ baseUrl: DIRECT_BASE_URL });
+        if (!client.hasKey) this.el.settings.open = true;
+      } catch (e) {
+        this.setStatus(`Can't reach OpenRouter (${e instanceof Error ? e.message : e}). Flying still works.`, 'error');
+        return;
+      }
     }
-    this.fillSelect(this.el.designer, 'design');
-    this.fillSelect(this.el.painter, 'livery');
-    this.renderModelInfo();
-    this.setStatus(`${this.models.length} models available.`);
+    this.el.keyNote.textContent = client.hasKey
+      ? 'Using your key, directly with openrouter.ai.'
+      : client.baseUrl === PROXY_BASE_URL
+        ? 'Using the dev server (key held server-side).'
+        : 'No server here: paste your own key to generate. Free models cost nothing.';
+    this.fillSelects();
+    const freeCount = this.models.filter(isFree).length;
+    this.setStatus(
+      `${this.models.length} models (${freeCount} free).${this.canGenerate() ? '' : ' Add a key under "Key & spend" to generate.'}`,
+    );
   }
 
-  private fillSelect(sel: HTMLSelectElement, task: GenTask): void {
-    const list = modelsForTask(this.models, task);
-    const preferred = new Set(TASKS[task].preferred);
-    const groups: Array<[string, ModelInfo[]]> = [
-      ['Recommended', list.filter((m) => preferred.has(m.id))],
-      ['Free', list.filter((m) => isFree(m) && !preferred.has(m.id))],
-      ['All (newest first)', list.filter((m) => !isFree(m) && !preferred.has(m.id))],
-    ];
-    sel.replaceChildren();
-    for (const [label, ms] of groups) {
-      if (!ms.length) continue;
-      const g = h('optgroup', { label });
-      for (const m of ms) g.append(h('option', { value: m.id }, `${m.name} · ${priceLabel(m)}`));
-      sel.append(g);
-    }
-    const want = this.selected[task];
-    sel.value = want && list.some((m) => m.id === want) ? want : (defaultModel(this.models, task) ?? '');
-    this.selected[task] = sel.value;
+  private canGenerate(): boolean {
+    return this.host.client.hasKey || this.host.client.baseUrl === PROXY_BASE_URL;
   }
 
-  private renderModelInfo(): void {
-    const m = this.models.find((x) => x.id === this.selected.design);
-    this.el.designerInfo.textContent = m ? `${m.id} · ${Math.round(m.contextLength / 1000)}K ctx · ${priceLabel(m)}` : '';
+  private fillSelects(): void {
+    for (const job of Object.keys(JOBS) as JobId[]) {
+      const sel = this.selects[job];
+      const list = modelsForJob(this.models, job, this.prefs.freeOnly);
+      const info = JOBS[job];
+      const paidPref = new Set(info.paid);
+      const groups: Array<[string, ModelInfo[]]> = [
+        ['Recommended free', info.free.map((id) => list.find((m) => m.id === id)).filter((m): m is ModelInfo => !!m)],
+        ['Other free', list.filter((m) => isFree(m) && !info.free.includes(m.id))],
+        ['Recommended paid', list.filter((m) => !isFree(m) && paidPref.has(m.id))],
+        ['All paid (newest first)', list.filter((m) => !isFree(m) && !paidPref.has(m.id))],
+      ];
+      sel.replaceChildren();
+      for (const [label, ms] of groups) {
+        if (!ms.length) continue;
+        const g = h('optgroup', { label });
+        for (const m of ms) g.append(h('option', { value: m.id }, `${m.name} · ${priceLabel(m)}`));
+        sel.append(g);
+      }
+      if (!list.length) sel.append(h('option', { value: '' }, this.prefs.freeOnly ? 'no free model for this job' : 'none available'));
+      const want = this.prefs.jobs[job];
+      sel.value = want && list.some((m) => m.id === want) ? want : (defaultModel(this.models, job, this.prefs.freeOnly) ?? '');
+      this.prefs.jobs[job] = sel.value || undefined;
+    }
+    this.savePrefs();
   }
+
+  private pick(job: JobId, id: string): void {
+    this.prefs.jobs[job] = id;
+    this.savePrefs();
+  }
+
+  private setFreeOnly(v: boolean): void {
+    this.prefs.freeOnly = v;
+    this.fillSelects();
+  }
+
+  private savePrefs(): void {
+    safeSet(PREFS_KEY, JSON.stringify(this.prefs));
+  }
+
+  private crew(job: JobId): { model: string; fallbacks: string[]; info?: ModelInfo } {
+    const model = this.prefs.jobs[job] ?? '';
+    return {
+      model,
+      fallbacks: model ? fallbacksFor(this.models, job, model) : [],
+      info: this.models.find((m) => m.id === model),
+    };
+  }
+
+  private saveKey(): void {
+    const key = this.el.keyInput.value.trim();
+    if (key) safeSet(KEY_STORAGE, key);
+    else safeRemove(KEY_STORAGE);
+    this.host.client.configure(key ? { baseUrl: DIRECT_BASE_URL, apiKey: key } : { baseUrl: PROXY_BASE_URL, apiKey: undefined });
+    void this.loadModels();
+  }
+
+  // ---------------------------------------------------------------- status helpers
 
   private setStatus(text: string, kind: 'info' | 'error' = 'info'): void {
     this.el.status.textContent = text;
@@ -209,7 +315,8 @@ export class Studio {
   }
 
   private updateSpend(): void {
-    this.el.spend.textContent = `session $${this.host.client.spent.toFixed(4)}`;
+    const c = this.host.client;
+    this.el.spend.textContent = `session $${c.spent.toFixed(4)}${Number.isFinite(c.maxSpendUsd) ? ` / $${c.maxSpendUsd}` : ''}`;
   }
 
   private setBusy(ctrl: AbortController | null): void {
@@ -218,39 +325,71 @@ export class Studio {
     this.el.cancel.classList.toggle('hidden', !ctrl);
   }
 
-  private logLine(text: string, cls = ''): HTMLLIElement {
+  private logLine(text: string, cls = ''): void {
     const li = h('li', cls ? { class: cls } : {}, text);
     this.el.log.append(li);
     li.scrollIntoView({ block: 'nearest' });
-    return li;
   }
 
-  private async design(refine: boolean): Promise<void> {
-    if (this.busy) return;
-    const model = this.selected.design;
-    const text = this.el.prompt.value.trim();
-    if (!model) return this.setStatus('Pick a designer model first.', 'error');
-    if (!text && !refine) return this.setStatus('Describe the craft you want.', 'error');
-    const cur = this.host.current();
+  private guard(job: JobId): { model: string; fallbacks: string[]; info?: ModelInfo } | null {
+    if (this.busy) return null;
+    if (!this.canGenerate()) {
+      this.setStatus('Add your OpenRouter key under "Key & spend" first (free models cost nothing).', 'error');
+      this.el.settings.open = true;
+      return null;
+    }
+    const c = this.crew(job);
+    if (!c.model) {
+      this.setStatus(`Pick a ${JOBS[job].label} model first.`, 'error');
+      return null;
+    }
+    return c;
+  }
+
+  private async run(label: string, fn: (signal: AbortSignal) => Promise<void>): Promise<void> {
     const ctrl = new AbortController();
     this.setBusy(ctrl);
+    try {
+      await fn(ctrl.signal);
+    } catch (e) {
+      const aborted = e instanceof DOMException && e.name === 'AbortError';
+      this.setStatus(aborted ? 'Cancelled.' : `${label} failed: ${explain(e)}`, aborted ? 'info' : 'error');
+    } finally {
+      this.setBusy(null);
+      this.updateSpend();
+    }
+  }
+
+  // ---------------------------------------------------------------- jobs
+
+  private async design(refine: boolean): Promise<void> {
+    const designer = this.guard('designer');
+    if (!designer) return;
+    const engineer = this.crew('engineer');
+    const text = this.el.prompt.value.trim();
+    if (!text && !refine) return this.setStatus('Describe the craft you want.', 'error');
+    const cur = this.host.current();
     this.el.log.replaceChildren();
     this.el.result.classList.add('hidden');
-    try {
+    await this.run('Design', async (signal) => {
       const result = await designCraft(this.host.client, {
-        model,
+        model: designer.model,
+        designerFallbacks: designer.fallbacks,
+        engineerModel: engineer.model || designer.model,
+        engineerFallbacks: engineer.model ? engineer.fallbacks : designer.fallbacks,
         prompt: text || 'Fix whatever made it fly badly.',
         base: refine ? cur.craft : undefined,
         feedback: refine ? this.host.flightNotes() : undefined,
         maxIterations: Number(this.el.rounds.value),
-        signal: ctrl.signal,
+        signal,
         onEvent: (e) => {
           if (e.type === 'status') this.setStatus(e.message);
           else {
             const a = e.attempt;
-            if (a.error) this.logLine(`Round ${a.iteration}: ${a.error}`, 'bad');
-            else if (a.validationErrors) this.logLine(`Round ${a.iteration}: ${a.validationErrors.length} format errors, asking for a fix`, 'warn');
-            else if (a.report) this.logLine(`Round ${a.iteration}: "${a.craft?.name}" scored ${a.report.score}/100`, a.report.passed ? 'good' : 'warn');
+            const who = `${a.role === 'designer' ? 'Designer' : 'Engineer'}${a.model ? ` (${shortName(a.model)})` : ''}`;
+            if (a.error) this.logLine(`${who}: ${a.error}`, 'bad');
+            else if (a.validationErrors) this.logLine(`${who}: ${a.validationErrors.length} format errors → engineer`, 'warn');
+            else if (a.report) this.logLine(`${who}: "${a.craft?.name}" scored ${a.report.score}/100`, a.report.passed ? 'good' : 'warn');
           }
           this.updateSpend();
         },
@@ -274,22 +413,16 @@ export class Studio {
       this.showResult(result, entry);
       this.renderHangar();
       this.host.fly(entry);
-      this.setStatus(`"${result.name}" is on the runway. Fly it, then hit Refine with what you'd change.`);
-    } catch (e) {
-      const aborted = e instanceof DOMException && e.name === 'AbortError';
-      this.setStatus(aborted ? 'Cancelled.' : `Design failed: ${explain(e)}`, aborted ? 'info' : 'error');
-    } finally {
-      this.setBusy(null);
-      this.updateSpend();
-    }
+      this.setStatus(`"${result.name}" is on the runway. Fly it, then Refine with what you'd change.`);
+    });
   }
 
   private showResult(r: DesignResult, entry: LibraryEntry): void {
-    const pre = h('pre', {}, formatReport(r.report));
     this.el.result.replaceChildren(
       h('div', { class: 'row' }, h('b', {}, r.name), h('span', { class: r.report.passed ? 'good' : 'warn' }, ` ${r.report.score}/100`)),
       r.notes ? h('div', { class: 'muted' }, r.notes) : '',
-      h('details', {}, h('summary', {}, 'Flight test report'), pre),
+      h('div', { class: 'muted small' }, `Crew: ${r.model}`),
+      h('details', {}, h('summary', {}, 'Flight test report'), h('pre', {}, formatReport(r.report))),
       h('div', { class: 'row' },
         h('button', { onclick: () => this.host.fly(entry) }, 'Fly again'),
         h('span', { class: 'muted small' }, `${r.attempts.length} round(s) · $${r.cost.toFixed(4)}`),
@@ -299,34 +432,67 @@ export class Studio {
   }
 
   private async paint(): Promise<void> {
-    if (this.busy) return;
-    const model = this.selected.livery;
+    const painter = this.guard('painter');
+    if (!painter) return;
     const cur = this.host.current();
-    if (!model) return this.setStatus('Pick a painter (image) model first.', 'error');
     const style = this.el.liveryPrompt.value.trim() || 'classic aviation stripes';
-    const ctrl = new AbortController();
-    this.setBusy(ctrl);
-    this.setStatus(`Painting with ${model}…`);
-    try {
-      const res = await paintLivery(this.host.client, model, style, cur.craft.name, ctrl.signal);
+    const imageModel = !!painter.info?.outputModalities.includes('image');
+    this.setStatus(`Painter (${shortName(painter.model)}) ${imageModel ? 'painting' : 'designing a pattern'}…`);
+    await this.run('Painting', async (signal) => {
+      const res = await paintLivery(this.host.client, {
+        model: painter.model,
+        fallbacks: painter.fallbacks,
+        imageModel,
+        prompt: style,
+        craftName: cur.craft.name,
+        signal,
+      });
       this.host.applyLivery(res.image);
       if (cur.entryId) {
-        const e = this.host.library.get(cur.entryId);
+        const e = this.host.library.get(cur.entryId)!;
         this.host.library.update(cur.entryId, {
           livery: res.image,
-          provenance: { ...e!.provenance, liveryModel: res.model, liveryPrompt: style },
+          provenance: { ...e.provenance, liveryModel: res.model, liveryPrompt: style },
         });
       }
-      this.setStatus(`Painted ($${res.cost.toFixed(4)}).${cur.entryId ? '' : ' (The built-in trainer\'s livery is not saved.)'}`);
+      const how = res.spec ? ` (${res.spec.pattern}, ${res.spec.colors.length + 1} colours)` : '';
+      this.setStatus(
+        `Painted by ${shortName(res.model)}${how}, $${res.cost.toFixed(4)}.${cur.entryId ? '' : " The built-in trainer's livery isn't saved."}`,
+      );
       this.renderHangar();
-    } catch (e) {
-      const aborted = e instanceof DOMException && e.name === 'AbortError';
-      this.setStatus(aborted ? 'Cancelled.' : `Painting failed: ${explain(e)}`, aborted ? 'info' : 'error');
-    } finally {
-      this.setBusy(null);
-      this.updateSpend();
-    }
+    });
   }
+
+  private unpaint(): void {
+    const cur = this.host.current();
+    this.host.applyLivery(null);
+    if (cur.entryId) this.host.library.update(cur.entryId, { livery: undefined });
+    this.renderHangar();
+  }
+
+  private async compose(): Promise<void> {
+    const composer = this.guard('composer');
+    if (!composer) return;
+    const style = this.el.musicPrompt.value.trim() || 'breezy, optimistic flying adventure theme';
+    this.setStatus(`Composer (${shortName(composer.model)}) writing…`);
+    await this.run('Composing', async (signal) => {
+      const res = await composeMusic(this.host.client, {
+        model: composer.model,
+        fallbacks: composer.fallbacks,
+        prompt: style,
+        craftName: this.host.current().craft.name,
+        signal,
+      });
+      this.audioEl.src = res.audio;
+      this.audioEl.volume = 0.5;
+      this.audioEl.classList.remove('hidden');
+      void this.audioEl.play().catch(() => {});
+      this.el.musicInfo.textContent = `${shortName(res.model)} · $${res.cost.toFixed(4)}${res.text ? ` · ${res.text.slice(0, 120)}` : ''}`;
+      this.setStatus('Now playing. (Music is kept for this session only.)');
+    });
+  }
+
+  // ---------------------------------------------------------------- hangar
 
   renderHangar(): void {
     const cur = this.host.current().entryId;
@@ -339,9 +505,11 @@ export class Studio {
     ];
     for (const e of this.host.library.list()) {
       const p = e.provenance;
-      const meta = [p.score !== undefined ? `${p.score}/100` : '', p.model?.split('/')[1]?.replace(/:free$/, '') ?? p.source].filter(Boolean).join(' · ');
+      const meta = [p.score !== undefined ? `${p.score}/100` : '', p.model ? shortName(p.model.split(' + ')[0]) : p.source]
+        .filter(Boolean)
+        .join(' · ');
       rows.push(
-        h('div', { class: `hangar-row${cur === e.id ? ' active' : ''}`, title: p.prompt ?? '' },
+        h('div', { class: `hangar-row${cur === e.id ? ' active' : ''}`, title: `${p.prompt ?? ''}\n${p.model ?? ''}` },
           e.livery ? h('img', { src: e.livery, alt: '' }) : null,
           h('span', { class: 'name' }, e.name),
           h('span', { class: 'muted small' }, meta),
@@ -368,19 +536,46 @@ export class Studio {
     }
   }
 
-  /** Expose the last design for debugging in the console. */
+  /** The last design, for debugging in the console. */
   get last(): DesignResult | null {
     return this.lastResult;
   }
 }
 
+function shortName(id: string): string {
+  return (id.split('/')[1] ?? id).replace(/:free$/, '');
+}
+
 /** Error text with a hint for the common billing/limit failures. */
 function explain(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
+  if (e instanceof OpenRouterError && e.status === 401) return `${msg} (Check your OpenRouter key.)`;
   if (e instanceof OpenRouterError && (e.status === 402 || e.status === 403))
-    return `${msg} (Pick a free model, or raise the key's credit/limit on openrouter.ai.)`;
-  if (e instanceof OpenRouterError && e.status === 429) return `${msg} (Rate limited: wait a bit or pick another model.)`;
+    return `${msg} (Use a :free model, or raise the key's credit/limit on openrouter.ai.)`;
+  if (e instanceof OpenRouterError && e.status === 429) return `${msg} (All picked models are rate-limited: wait a bit or pick others.)`;
   return msg;
+}
+
+function safeGet(k: string): string | null {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+}
+function safeSet(k: string, v: string): void {
+  try {
+    localStorage.setItem(k, v);
+  } catch {
+    /* storage blocked */
+  }
+}
+function safeRemove(k: string): void {
+  try {
+    localStorage.removeItem(k);
+  } catch {
+    /* storage blocked */
+  }
 }
 
 function download(name: string, text: string): void {
