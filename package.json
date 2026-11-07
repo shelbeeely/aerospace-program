@@ -1,0 +1,35 @@
+{
+  "name": "aerospace-program",
+  "version": "1.0.0",
+  "description": "Browser aircraft sandbox: build aircraft from parts and fly them with emergent physics",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc",
+    "sim": "node --experimental-transform-types --no-warnings scripts/headless.ts",
+    "design": "node --experimental-transform-types --no-warnings scripts/design.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shelbeeely/aerospace-program.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/shelbeeely/aerospace-program/issues"
+  },
+  "homepage": "https://github.com/shelbeeely/aerospace-program#readme",
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.21.0",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "typescript": "~5.9",
+    "vite": "^7.3.7"
+  },
+  "private": true,
+  "type": "module"
+}
