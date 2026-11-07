@@ -1,0 +1,401 @@
+{
+  "craft": {
+    "name": "Bushmaster STOL",
+    "formatVersion": 1,
+    "parts": [
+      {
+        "id": "engine",
+        "kind": "engine.prop",
+        "mass": 150,
+        "position": [
+          0,
+          0,
+          -3.5
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1.1,
+            1.1,
+            1.2
+          ]
+        },
+        "color": "#c94f3d",
+        "modules": [
+          {
+            "type": "engine",
+            "offset": [
+              0,
+              0,
+              -0.7
+            ],
+            "maxThrust": 4000,
+            "propMaxSpeed": 80,
+            "propRadius": 1.2,
+            "spoolTime": 2
+          }
+        ]
+      },
+      {
+        "id": "fuselage",
+        "kind": "fuselage",
+        "mass": 280,
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1.2,
+            1.5,
+            5
+          ]
+        },
+        "color": "#e8e4da",
+        "modules": [
+          {
+            "type": "drag",
+            "cdA": 0.4
+          }
+        ]
+      },
+      {
+        "id": "cockpit",
+        "kind": "cockpit",
+        "mass": 100,
+        "position": [
+          0,
+          0.85,
+          -1.5
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1,
+            0.7,
+            1.6
+          ]
+        },
+        "color": "#5b8fb9"
+      },
+      {
+        "id": "wing.left",
+        "kind": "wing",
+        "mass": 70,
+        "position": [
+          -3.25,
+          1.5,
+          0.2
+        ],
+        "rotationDeg": [
+          0,
+          0,
+          -4
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            6.5,
+            0.15,
+            2.5
+          ]
+        },
+        "color": "#f2c14e",
+        "modules": [
+          {
+            "type": "aero",
+            "offset": [
+              1.625,
+              0,
+              0
+            ],
+            "span": 3.25,
+            "chord": 2.5,
+            "aspectRatio": 6.5,
+            "incidenceDeg": 3
+          },
+          {
+            "type": "aero",
+            "offset": [
+              -1.625,
+              0,
+              0
+            ],
+            "span": 3.25,
+            "chord": 1.5,
+            "aspectRatio": 6.5,
+            "incidenceDeg": 0,
+            "control": {
+              "channel": "roll",
+              "maxDeflectionDeg": 20,
+              "gain": 1,
+              "spanFraction": 0.9,
+              "chordFraction": 0.3
+            }
+          }
+        ]
+      },
+      {
+        "id": "wing.right",
+        "kind": "wing",
+        "mass": 70,
+        "position": [
+          3.25,
+          1.5,
+          0.2
+        ],
+        "rotationDeg": [
+          0,
+          0,
+          4
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            6.5,
+            0.15,
+            2.5
+          ]
+        },
+        "color": "#f2c14e",
+        "modules": [
+          {
+            "type": "aero",
+            "offset": [
+              -1.625,
+              0,
+              0
+            ],
+            "span": 3.25,
+            "chord": 2.5,
+            "aspectRatio": 6.5,
+            "incidenceDeg": 3
+          },
+          {
+            "type": "aero",
+            "offset": [
+              1.625,
+              0,
+              0
+            ],
+            "span": 3.25,
+            "chord": 1.5,
+            "aspectRatio": 6.5,
+            "incidenceDeg": 0,
+            "control": {
+              "channel": "roll",
+              "maxDeflectionDeg": 20,
+              "gain": -1,
+              "spanFraction": 0.9,
+              "chordFraction": 0.3
+            }
+          }
+        ]
+      },
+      {
+        "id": "stabilizer.horizontal",
+        "kind": "tail.horizontal",
+        "mass": 20,
+        "position": [
+          0,
+          0.5,
+          5
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            3.2,
+            0.12,
+            1
+          ]
+        },
+        "color": "#f2c14e",
+        "modules": [
+          {
+            "type": "aero",
+            "span": 3.2,
+            "chord": 1,
+            "aspectRatio": 3.2,
+            "incidenceDeg": -1.5,
+            "control": {
+              "channel": "pitch",
+              "maxDeflectionDeg": 25,
+              "gain": -1,
+              "chordFraction": 0.4
+            }
+          }
+        ]
+      },
+      {
+        "id": "stabilizer.vertical",
+        "kind": "tail.vertical",
+        "mass": 15,
+        "position": [
+          0,
+          1.5,
+          5
+        ],
+        "rotationDeg": [
+          0,
+          0,
+          90
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1.5,
+            0.12,
+            1.2
+          ]
+        },
+        "color": "#c94f3d",
+        "modules": [
+          {
+            "type": "aero",
+            "span": 1.5,
+            "chord": 1.2,
+            "aspectRatio": 1.25,
+            "control": {
+              "channel": "yaw",
+              "maxDeflectionDeg": 25,
+              "gain": 1,
+              "chordFraction": 0.4
+            }
+          }
+        ]
+      },
+      {
+        "id": "gear.left",
+        "kind": "gear",
+        "mass": 25,
+        "position": [
+          -1.5,
+          -0.8,
+          0
+        ],
+        "collider": false,
+        "shape": {
+          "type": "box",
+          "size": [
+            0.15,
+            0.5,
+            0.15
+          ]
+        },
+        "color": "#555555",
+        "modules": [
+          {
+            "type": "wheel",
+            "offset": [
+              0,
+              0.15,
+              0
+            ],
+            "radius": 0.4,
+            "restLength": 0.5,
+            "stiffness": 23000,
+            "damping": 2500,
+            "brakes": true
+          },
+          {
+            "type": "drag",
+            "cdA": 0.06
+          }
+        ]
+      },
+      {
+        "id": "gear.right",
+        "kind": "gear",
+        "mass": 25,
+        "position": [
+          1.5,
+          -0.8,
+          0
+        ],
+        "collider": false,
+        "shape": {
+          "type": "box",
+          "size": [
+            0.15,
+            0.5,
+            0.15
+          ]
+        },
+        "color": "#555555",
+        "modules": [
+          {
+            "type": "wheel",
+            "offset": [
+              0,
+              0.15,
+              0
+            ],
+            "radius": 0.4,
+            "restLength": 0.5,
+            "stiffness": 23000,
+            "damping": 2500,
+            "brakes": true
+          },
+          {
+            "type": "drag",
+            "cdA": 0.06
+          }
+        ]
+      },
+      {
+        "id": "gear.tail",
+        "kind": "gear",
+        "mass": 10,
+        "position": [
+          0,
+          -0.5,
+          5
+        ],
+        "collider": false,
+        "shape": {
+          "type": "box",
+          "size": [
+            0.1,
+            0.3,
+            0.1
+          ]
+        },
+        "color": "#555555",
+        "modules": [
+          {
+            "type": "wheel",
+            "offset": [
+              0,
+              0.1,
+              0
+            ],
+            "radius": 0.2,
+            "restLength": 0.3,
+            "stiffness": 8500,
+            "damping": 900,
+            "maxSteerDeg": 30,
+            "control": {
+              "channel": "yaw",
+              "gain": 1
+            }
+          },
+          {
+            "type": "drag",
+            "cdA": 0.02
+          }
+        ]
+      }
+    ]
+  },
+  "provenance": {
+    "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "prompt": "a slow, stable bush plane with big high wings and a short takeoff",
+    "notes": "High-wing taildragger optimized for short takeoff with 35 kg/m² wing loading, 3° washout, and large tundra tires. CoM at -0.46m gives 12% static margin with neutral point at -0.20m.",
+    "score": 55,
+    "rounds": 3,
+    "costUsd": 0,
+    "createdAt": "2026-11-07T20:16:51.473Z"
+  }
+}

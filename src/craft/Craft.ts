@@ -102,6 +102,18 @@ export class Craft {
     return w > 0 ? out.divideScalar(w) : out.copy(this.massProps.com);
   }
 
+  /** Rough bounding radius around the CoM (m), for camera framing. */
+  boundingRadius(): number {
+    let r = 1;
+    const c = this.massProps.com;
+    for (const p of this.def.parts) {
+      const s = p.shape;
+      const ext = s.type === 'box' ? Math.hypot(...s.size) / 2 : s.type === 'sphere' ? s.radius : Math.hypot(s.radius, s.length / 2);
+      r = Math.max(r, Math.hypot(p.position[0] - c.x, p.position[1] - c.y, p.position[2] - c.z) + ext);
+    }
+    return r;
+  }
+
   /** Height of the craft origin above the ground when resting on its wheels (or belly). */
   restingHeight(): number {
     let lowest = Infinity;

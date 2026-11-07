@@ -33,6 +33,7 @@ export class CraftView {
   readonly root = new THREE.Group();
   private readonly animated: Animated[] = [];
   private readonly materials = new Map<string, THREE.MeshStandardMaterial>();
+  private livery: THREE.Texture | null = null;
 
   constructor(craft: Craft) {
     for (const part of craft.def.parts) {
@@ -141,6 +142,36 @@ export class CraftView {
         strut.position.y = -len / 2;
       },
     });
+  }
+
+  /**
+   * Apply a generated livery texture (data URL) to every part, tinted by the part colour, or
+   * remove it with null.
+   */
+  setLivery(url: string | null): void {
+    this.livery?.dispose();
+    this.livery = null;
+    const tex = url ? new THREE.TextureLoader().load(url) : null;
+    if (tex) {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      this.livery = tex;
+    }
+    for (const [color, m] of this.materials) {
+      m.map = tex;
+      // Keep part colours readable but let the paint scheme dominate.
+      m.color.set(color);
+      if (tex) m.color.lerp(new THREE.Color('#ffffff'), 0.65);
+      m.needsUpdate = true;
+    }
+  }
+
+  dispose(): void {
+    this.root.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.geometry.dispose();
+    });
+    for (const m of this.materials.values()) m.dispose();
+    this.livery?.dispose();
   }
 
   /** Place the craft at an (interpolated) pose and animate moving parts. */

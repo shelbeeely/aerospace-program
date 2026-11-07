@@ -10,6 +10,11 @@ import { neutralControls, sanitizeControls, type ControlInputs } from './control
 import { LAYOUT } from './layout.ts';
 import type { Telemetry } from './telemetry.ts';
 
+function assertValidCraft(def: CraftDef): void {
+  const errors = validateCraft(def);
+  if (errors.length) throw new Error(`Invalid craft:\n${errors.join('\n')}`);
+}
+
 let rapierReady: Promise<void> | null = null;
 /** Rapier's WASM must be initialised once before anything else. */
 export function initPhysics(): Promise<void> {
@@ -49,6 +54,7 @@ export class Simulation {
   readonly rotation = new THREE.Quaternion();
 
   controls: ControlInputs = neutralControls();
+  private readonly groundCollider: RAPIER.Collider;
   private readonly linvel = new THREE.Vector3();
   private readonly angvel = new THREE.Vector3();
   private readonly com = new THREE.Vector3();
@@ -57,15 +63,14 @@ export class Simulation {
   private readonly ctx: StepContext;
 
   constructor(craftDef: CraftDef) {
-    const errors = validateCraft(craftDef);
-    if (errors.length) throw new Error(`Invalid craft:\n${errors.join('\n')}`);
+    assertValidCraft(craftDef);
 
     this.world = new RAPIER.World({ x: 0, y: -TUNING.gravity, z: 0 });
     this.world.timestep = this.dt;
 
     const half = LAYOUT.groundSize / 2;
     const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -5, 0));
-    this.world.createCollider(
+    this.groundCollider = this.world.createCollider(
       RAPIER.ColliderDesc.cuboid(half, 5, half).setFriction(0.8).setRestitution(0.1),
       ground,
     );
@@ -107,9 +112,35 @@ export class Simulation {
   private spawnPose(craft: Craft | null) {
     const h = craft ? craft.restingHeight() : 3;
     return {
-      position: new THREE.Vector3(0, h, LAYOUT.spawnZ),
+      // Place the centre of mass (not the arbitrary origin) on the runway centreline at the spawn.
+      position: craft
+        ? new THREE.Vector3(-craft.massProps.com.x, h, LAYOUT.spawnZ - craft.massProps.com.z)
+        : new THREE.Vector3(0, h, LAYOUT.spawnZ),
       rotation: new THREE.Quaternion(),
     };
+  }
+
+  /** Swap in a different craft (e.g. one just generated). The old body is removed. */
+  loadCraft(def: CraftDef): void {
+    assertValidCraft(def);
+    this.world.removeRigidBody(this.craft.body);
+    const { position, rotation } = this.spawnPose(null);
+    this.craft = new Craft(this.world, def, position, rotation);
+    (this.ctx as { body: RAPIER.RigidBody }).body = this.craft.body;
+    this.explosionResets = 0;
+    this.resetToRunway();
+  }
+
+  /** True if any airframe collider (not a wheel) is touching the ground: a crash or belly slide. */
+  airframeTouchingGround(): boolean {
+    let touching = false;
+    const n = this.craft.body.numColliders();
+    for (let i = 0; i < n && !touching; i++) {
+      this.world.contactPair(this.groundCollider, this.craft.body.collider(i), (m) => {
+        if (m.numContacts() > 0) touching = true;
+      });
+    }
+    return touching;
   }
 
   resetToRunway(): void {

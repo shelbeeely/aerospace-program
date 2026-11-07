@@ -17,7 +17,7 @@ export interface RawInput {
   trimRate: number; // -1 nose down .. +1 nose up
 }
 
-export type Action = 'reset' | 'camera' | 'debug' | 'help' | 'trimReset';
+export type Action = 'reset' | 'camera' | 'debug' | 'help' | 'trimReset' | 'studio';
 
 export interface InputDevice {
   /** Accumulate this device's intent into `raw` (devices are summed then clamped). */
@@ -29,7 +29,7 @@ export interface InputDevice {
 const GAME_CODES = new Set([
   'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyB', 'KeyR', 'KeyC', 'KeyZ', 'KeyX',
   'KeyT', 'KeyG', 'KeyH', 'KeyY', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'F3',
-  'Space',
+  'Space', 'KeyN',
 ]);
 
 export class KeyboardDevice implements InputDevice {
@@ -39,7 +39,9 @@ export class KeyboardDevice implements InputDevice {
 
   constructor(target: Window = window) {
     target.addEventListener('keydown', (e) => {
-      if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return;
+      // Typing in the Studio (or any form field) must not fly the plane.
+      const el = e.target as HTMLElement | null;
+      if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) return;
       if (GAME_CODES.has(e.code)) e.preventDefault(); // stops Ctrl+S, F3 search, etc. where allowed
       if (e.repeat) return;
       this.down.add(e.code);
@@ -48,6 +50,7 @@ export class KeyboardDevice implements InputDevice {
         case 'KeyC': this.actions.push('camera'); break;
         case 'F3': this.actions.push('debug'); break;
         case 'KeyH': this.actions.push('help'); break;
+        case 'KeyN': this.actions.push('studio'); break;
         case 'KeyY': this.actions.push('trimReset'); break;
         case 'KeyZ': this.throttleSet = 1; break;
         case 'KeyX': this.throttleSet = 0; break;

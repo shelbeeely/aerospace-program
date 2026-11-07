@@ -55,6 +55,11 @@ export class DebugOverlay {
     this.setVisible(false);
   }
 
+  /** Re-parent the CoM/CoL/CoT markers to a new craft view (after a craft swap). */
+  attach(craftRoot: THREE.Object3D): void {
+    for (const m of [this.com, this.col, this.cot]) craftRoot.add(m);
+  }
+
   setVisible(v: boolean): void {
     this.group.visible = v;
     this.com.visible = this.col.visible = this.cot.visible = v;

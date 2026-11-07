@@ -2,13 +2,17 @@ import * as THREE from 'three';
 import { TEST_PLANE } from './craft/testPlane.ts';
 import { Hud } from './hud/Hud.ts';
 import { GamepadDevice, KeyboardDevice, PlayerInput } from './input/PlayerInput.ts';
+import { browserClient } from './gen/openrouter.ts';
+import { Library, type LibraryEntry } from './gen/library.ts';
 import { CameraRig } from './render/CameraRig.ts';
 import { CraftView } from './render/CraftView.ts';
 import { DebugOverlay } from './render/DebugOverlay.ts';
 import { WorldView } from './render/WorldView.ts';
 import type { ControlSource } from './sim/controls.ts';
+import { FlightLog } from './sim/flightLog.ts';
 import { initPhysics, Simulation } from './sim/Simulation.ts';
 import { TUNING } from './tuning.ts';
+import { Studio } from './ui/Studio.ts';
 
 async function start() {
   await initPhysics();
@@ -30,7 +34,7 @@ async function start() {
 
   // --- Simulation
   const sim = new Simulation(TEST_PLANE);
-  const craftView = new CraftView(sim.craft);
+  let craftView = new CraftView(sim.craft);
   scene.add(craftView.root);
   const debug = new DebugOverlay(scene, craftView.root);
   const rig = new CameraRig(camera, canvas);
@@ -51,11 +55,42 @@ async function start() {
   // Don't let the slider keep keyboard focus (arrow keys / letters would go to it).
   comSlider.addEventListener('change', () => comSlider.blur());
 
+  const flightLog = new FlightLog();
   const reset = () => {
     sim.resetToRunway();
     player.reset();
     rig.snap();
+    flightLog.reset();
   };
+
+  // --- Generation: craft come from the Studio (designer models) and live in the hangar library.
+  const client = browserClient();
+  const library = new Library();
+  let currentEntry: LibraryEntry | null = null;
+  const fly = (entry: LibraryEntry | null) => {
+    sim.loadCraft(entry ? entry.craft : TEST_PLANE);
+    const old = craftView;
+    craftView = new CraftView(sim.craft);
+    craftView.setLivery(entry?.livery ?? null);
+    scene.add(craftView.root);
+    debug.attach(craftView.root); // move the CoM/CoL markers before disposing the old view
+    scene.remove(old.root);
+    old.dispose();
+    comSlider.value = '0';
+    comVal.textContent = '0.00';
+    currentEntry = entry;
+    rig.fitCraft(sim.craft.boundingRadius());
+    reset();
+    studio.renderHangar();
+  };
+  const studio = new Studio({
+    client,
+    library,
+    current: () => ({ craft: sim.craft.def, entryId: currentEntry?.id ?? null }),
+    flightNotes: () => flightLog.summary(),
+    fly,
+    applyLivery: (url) => craftView.setLivery(url),
+  });
 
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -70,6 +105,10 @@ async function start() {
       scene,
       camera,
       telemetry: () => sim.telemetry(),
+      client,
+      library,
+      studio,
+      fly,
       setPilot: (p: ControlSource | null) => (pilot = p ?? player),
       reset,
     },
@@ -97,6 +136,7 @@ async function start() {
       if (a === 'reset') reset();
       else if (a === 'camera') rig.toggle(renderPos);
       else if (a === 'help') hud.toggleHelp();
+      else if (a === 'studio') studio.toggle();
       else if (a === 'trimReset') player.trim = 0;
       else if (a === 'debug') {
         debugOn = !debugOn;
@@ -117,6 +157,7 @@ async function start() {
     }
     if (stepsThisFrame === TUNING.maxStepsPerFrame) accumulator = 0; // drop time rather than spiral
     telemetry = sim.telemetry();
+    flightLog.update(telemetry, dt, sim.airframeTouchingGround());
 
     const alpha = accumulator / sim.dt;
     renderPos.lerpVectors(sim.prevPosition, sim.position, alpha);

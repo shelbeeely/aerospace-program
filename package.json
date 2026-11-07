@@ -7,7 +7,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "typecheck": "tsc",
-    "sim": "node --experimental-transform-types --no-warnings scripts/headless.ts"
+    "sim": "node --experimental-transform-types --no-warnings scripts/headless.ts",
+    "design": "node --experimental-transform-types --no-warnings scripts/design.ts"
   },
   "repository": {
     "type": "git",

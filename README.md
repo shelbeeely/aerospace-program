@@ -1,15 +1,58 @@
 # aerospace-program
 
-A browser aircraft sandbox ("KSP for planes") built with three.js + Rapier.
-**Stage 1: flight core.** One data-defined test plane, a 10 km flat world with a runway,
-per-surface aerodynamics.
+A browser aircraft sandbox ("KSP for planes") built with three.js + Rapier, where **generative
+models are part of the core loop**. Describe a craft, a model of your choice (any of the
+hundreds on OpenRouter) designs it as a part graph, the physics sim flight-tests it and feeds
+problems back to the model, and then you fly it. Physics is emergent, so a bad design really
+flies badly.
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
-npm run sim        # headless flight test in Node (takeoff, turn, stalls, CoM shift, crash)
-npm run build      # typecheck + production build
+cp .env.example .env   # add your OPENROUTER_API_KEY (optional: flying works without it)
+npm run dev            # http://localhost:5173, press N for the Studio
+npm run design -- "a twin-boom cargo plane" --model anthropic/claude-sonnet-5.5
+npm run sim            # headless physics regression (takeoff, turn, stalls, CoM shift, crash)
+npm run build          # typecheck + production build
 ```
+
+## The generation loop
+
+```
+ describe ──► designer model ──► validate ──► flight test (headless sim) ──► fly it yourself
+                   ▲                 │                │                          │
+                   └── format errors ┘                │                          │
+                   └──────── test report: "CoM behind CoL", "can't rotate"… ──────┘
+                   └──────────────── Refine: your flight notes + what to change ─┘
+```
+
+1. **Design.** In the Studio (N), pick a designer model and describe a craft. The model gets
+   the full craft format and the sim's physics conventions
+   (`src/gen/craftDesigner.ts → DESIGNER_SYSTEM_PROMPT`).
+2. **Validate.** `validateCraft` rejects malformed or out-of-range data and returns the
+   errors to the model to fix.
+3. **Flight test.** `src/sim/flightTest.ts` flies the craft headless through a test card: rest
+   on the runway, take off, climb to 140 m, turn 90°, then fly hands-off with the elevator
+   trimmed. It scores the run out of 100 and writes up actionable issues. Problems go back to
+   the model until it passes or the round budget runs out. About 150 simulated seconds take
+   about half a second.
+4. **Fly.** The best design lands on the runway and in the **hangar** (localStorage). Each
+   entry records its provenance: model, prompt, score, rounds and cost.
+5. **Refine.** After flying, "Refine current" sends the craft, your instructions, and a
+   summary of your flight (stalls, crashes, lift-off speed, g range) back to the designer.
+6. **Paint.** A painter (image-output) model generates a livery texture for the craft.
+
+Models are chosen **per task** from the live OpenRouter catalog (`src/gen/catalog.ts`): text
+models for design, image models for liveries, and the slots are ready for audio and others.
+Spend is shown per session. The dev server enforces a hard cap (`OPENROUTER_MAX_SPEND_USD`,
+default $2), and free models are listed separately.
+
+**API keys never reach the browser.** The page calls `/api/openrouter/*` on the Vite dev
+server, and `tools/openrouterProxy.ts` adds the key server-side and allows only the models
+and chat endpoints. This is for local play only. A public deployment needs a real backend
+with user auth and rate limits.
+
+Sample output: `crafts/bushmaster-stol.json` was designed by a free model through
+`npm run design`. It flies but scrapes its belly at rest; the report shows why.
 
 ## Controls
 
@@ -25,6 +68,7 @@ npm run build      # typecheck + production build
 | R | reset to runway |
 | C | chase / orbit camera |
 | F3 | debug: force vectors, CoM/CoL/CoT, stats, CoM slider |
+| N | toggle the Studio (generate / refine / paint craft, hangar) |
 | H | toggle help |
 
 Gamepad (standard mapping): left stick pitch/roll, right stick or bumpers yaw, triggers
@@ -59,14 +103,25 @@ src/
     Simulation.ts        headless sim: world, ground, fixed 120 Hz step, NaN guard, telemetry
     controls.ts          ControlInputs + ControlSource (anything that can fly the craft)
     telemetry.ts         JSON flight-state snapshot (HUD and future AI pilots)
-    autopilot.ts         simple PD/PI autopilot (heading/altitude/speed targets)
+    autopilot.ts         PID autopilot (heading/altitude/speed targets)
+    flightTest.ts        automated test card + design metrics, scored report
+    flightLog.ts         summary of the player's flight (feedback for Refine)
     atmosphere.ts        exponential air density
     layout.ts            ground size, runway, spawn
+  gen/
+    openrouter.ts        browser/Node OpenRouter client: retries, cost tracking, JSON extraction
+    catalog.ts           tasks (design, pilot, livery, music…) -> capable models, defaults
+    craftDesigner.ts     designer prompt + generate/validate/flight-test/repair loop
+    livery.ts            image model -> livery texture
+    library.ts           hangar: saved craft with provenance (localStorage), import/export
+  ui/Studio.ts           in-game generation workflow
   input/PlayerInput.ts   keyboard + gamepad devices -> a ControlSource with smoothing & trim
   render/                WorldView, CraftView, CameraRig, DebugOverlay (three.js only)
   hud/Hud.ts             plain-DOM HUD
   main.ts                wires it together: fixed-step accumulator + render interpolation
 scripts/headless.ts      runs the real sim in Node about 300x faster than real time
+scripts/design.ts        CLI: generate + flight-test + save a craft to crafts/
+tools/openrouterProxy.ts dev-server proxy that keeps the API key server-side
 ```
 
 Key ideas:
@@ -131,12 +186,17 @@ test, so you can see the effect without flying.
 5. Missions: deliveries between generated points of interest
 6. Helicopters, VTOL, blimps
 
-Longer-term goals that shape the design now:
+Generation roadmap, using more of OpenRouter's model types:
 
-- **Race other LLMs.** An LLM is too slow to fly the stick, so it would issue high-level commands
-  (heading, altitude, speed, waypoints) every few seconds. A fast autopilot `ControlSource`
-  turns those into stick inputs. The headless sim, fixed timestep and JSON telemetry are there
-  so races can run faster than real time and be replayed. It could also run with no
-  autopilot, as a "write your own flight controller" challenge.
-- **LLM-generated content.** Craft, worlds and missions are plain JSON with validators, so
-  generated data can be checked before it reaches the sim.
+- **LLM pilots and races** (next). The `pilot` task: a model receives JSON telemetry every few
+  seconds and sets autopilot targets or waypoints. Races run headless, faster than real time,
+  model against model on the same craft and course, with replays.
+- **Generated courses and missions.** Text models emit gate lists and delivery jobs as
+  validated JSON, flight-tested for feasibility like craft are.
+- **Radio chatter.** Speech models for ATC and race commentary. Transcription for voice
+  commands.
+- **Music.** Audio models (e.g. Lyria) for a soundtrack that follows the flight.
+- **Embeddings** for searching the hangar and part library by description.
+- **Video** models for race trailers from replays.
+- **Procedural worlds** (Stage 3) seeded and themed by a model: biome palette, landmarks,
+  airports.

@@ -1,0 +1,79 @@
+/**
+ * Generate a craft from a description, flight-test it, iterate, and save it.
+ *
+ *   npm run design -- "a stubby twin-boom cargo plane" [--model id] [--rounds 3] [--base crafts/x.json]
+ *
+ * Needs OPENROUTER_API_KEY in the environment (or a proxy that injects it).
+ */
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { designCraft } from '../src/gen/craftDesigner.ts';
+import { OpenRouter } from '../src/gen/openrouter.ts';
+import { formatReport } from '../src/sim/flightTest.ts';
+import { initPhysics } from '../src/sim/Simulation.ts';
+
+const args = process.argv.slice(2);
+const opt = (name: string) => {
+  const i = args.indexOf(`--${name}`);
+  if (i < 0) return undefined;
+  const v = args[i + 1];
+  args.splice(i, 2);
+  return v;
+};
+const model = opt('model') ?? 'nvidia/nemotron-3-ultra-550b-a55b:free';
+const rounds = Number(opt('rounds') ?? 3);
+const basePath = opt('base');
+const prompt = args.join(' ').trim();
+if (!prompt) {
+  console.error('usage: npm run design -- "description" [--model id] [--rounds n] [--base file.json]');
+  process.exit(1);
+}
+
+await initPhysics();
+const client = new OpenRouter({
+  baseUrl: 'https://openrouter.ai/api/v1',
+  apiKey: process.env.OPENROUTER_API_KEY ?? 'injected-by-proxy',
+});
+const base = basePath ? JSON.parse(readFileSync(basePath, 'utf8')).craft ?? undefined : undefined;
+
+const t0 = Date.now();
+const result = await designCraft(client, {
+  model,
+  prompt,
+  base,
+  maxIterations: rounds,
+  onEvent: (e) => {
+    if (e.type === 'status') console.log(`… ${e.message}`);
+    else {
+      const a = e.attempt;
+      if (a.error) console.log(`  round ${a.iteration}: ${a.error}`);
+      else if (a.validationErrors) console.log(`  round ${a.iteration}: ${a.validationErrors.length} validation errors, e.g. ${a.validationErrors[0]}`);
+      else if (a.report) console.log(`  round ${a.iteration}: "${a.craft?.name}" scored ${a.report.score}/100`);
+    }
+  },
+});
+
+console.log(`\n${result.name}: ${result.notes}\n`);
+console.log(formatReport(result.report));
+const slug = result.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'craft';
+mkdirSync('crafts', { recursive: true });
+const file = `crafts/${slug}.json`;
+writeFileSync(
+  file,
+  JSON.stringify(
+    {
+      craft: result.craft,
+      provenance: {
+        model: result.model,
+        prompt: result.prompt,
+        notes: result.notes,
+        score: result.report.score,
+        rounds: result.attempts.length,
+        costUsd: result.cost,
+        createdAt: new Date().toISOString(),
+      },
+    },
+    null,
+    2,
+  ),
+);
+console.log(`\nSaved ${file}  (${((Date.now() - t0) / 1000).toFixed(0)} s, $${result.cost.toFixed(4)})`);

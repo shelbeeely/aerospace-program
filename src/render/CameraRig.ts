@@ -51,6 +51,12 @@ export class CameraRig {
     this.initialised = false;
   }
 
+  /** Frame a craft of the given bounding radius (m): bigger craft get a more distant chase cam. */
+  fitCraft(radius: number): void {
+    const k = Math.max(1, radius / 6);
+    this.chaseOffset.set(0, 2.8 * k, 13 * k);
+  }
+
   update(dt: number, target: THREE.Vector3, rotation: THREE.Quaternion, velocity: THREE.Vector3): void {
     if (this.mode === 'orbit') {
       // Carry the camera along with the craft, keep user's orbit angle/distance.
