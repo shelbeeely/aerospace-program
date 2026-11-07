@@ -27,7 +27,7 @@ export class Drag implements ForceModule {
 
   step(ctx: StepContext): void {
     ctx.toWorldPoint(this.localPosition, _p);
-    ctx.pointVelocity(_p, _v);
+    ctx.airVelocity(_p, _v);
     const speed = _v.length();
     if (speed < TUNING.minAeroSpeed) return;
     const k = -0.5 * ctx.airDensity(_p.y) * speed * this.def.cdA;

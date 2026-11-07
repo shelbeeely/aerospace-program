@@ -115,6 +115,38 @@ To fly: press Z, roll down the runway, and pull back gently (S) at about 60 kt. 
 around 65–75 kt. Open F3 and drag the CoM slider aft past the blue CoL marker to watch the plane
 become pitch-unstable.
 
+**Other vehicles** (pick them in the Studio's hangar):
+- **Quadcopter / helicopter:** throttle is collective, and about 50% hovers. W/S/A/D tilt (the
+  flight controller holds the attitude you ask for, and centring the stick levels it). Q/E yaw.
+- **Blimp:** it's about 1% heavier than air. Add power and pitch up (S) to climb on hull lift;
+  steer with the rudder.
+
+**Weather:** the F3 panel has wind speed and direction, gusts and turbulence. The HUD shows the
+wind relative to your nose.
+
+## Physics model
+
+Everything below is emergent from parts and modules; nothing is scripted per vehicle.
+
+| Effect | Where | Notes |
+| --- | --- | --- |
+| Rigid body, collisions | Rapier | One body per craft. Mass, CoM and inertia come from the parts plus the fuel on board. |
+| Lift and drag per surface | `AeroSurface` | Airflow includes body rotation and **wind**, soft stall, control surfaces. |
+| **Ground effect** | `AeroSurface` | Within about one span of the ground: higher effective aspect ratio, so more lift slope and much less induced drag (McCormick). |
+| **Wind, gusts, turbulence** | `Atmosphere` | Log wind profile (calmer near the ground), "1-cosine" gusts, smooth turbulence that varies in space and time. Seeded, so every run and race gets the same weather. |
+| Thrust, spool, prop falloff | `Engine` | Density-scaled. |
+| **Prop torque and P-factor** | `Engine` | Reaction torque rolls the airframe against the prop. Crossflow shifts the thrust centre on the disk. Twin engines can counter-rotate. |
+| **Fuel burn** | `FuelTank` + `Engine` | Fuel mass sits at each tank, and mass properties are recomputed as it burns, so the CoM moves. Engines starve when it's gone. |
+| **Structural failure** | `Simulation.checkStructure` | Modules report the load they put on their part. A filtered load above the part's strength breaks it off into a free-falling **debris** body, and the craft loses its mass, lift and fuel. Reset rebuilds it. |
+| **Buoyancy** | `Buoyancy` | (ρ_air − ρ_gas)·V·g with helium, hydrogen or hot air. Lift fades with altitude, so blimps find a ceiling. |
+| **Blade-element rotors** | `Rotor` | Radial blade stations with a soft-stalling section polar. Inflow comes from Glauert momentum theory, solved with Newton's method. That gives translational lift, climb and descent effects, reaction torque and in-plane drag. RPM mode for drones; collective plus cyclic for helicopters. |
+| **Flight controller** | `FlightController` | Angle-mode stabilisation with an automatic mixer built from rotor positions and spin directions. Helicopter mode drives the cyclic and has a yaw-rate loop on the tail rotor. |
+| Wheels | `Wheel` | Raycast suspension, tyre friction, steering, brakes. |
+
+Each vehicle type has its own automated test card (`flightTest.ts`, `vehicleTests.ts`), which
+both the generation loop and the built-ins use. All four built-ins (trainer, quadcopter,
+helicopter, blimp) score 100/100.
+
 ## Architecture
 
 ```
@@ -122,7 +154,8 @@ src/
   tuning.ts              every feel-related constant, commented
   craft/
     types.ts             JSON craft format (parts + module defs); what the hangar will save
-    testPlane.ts         the Stage 1 plane, as data
+    testPlane.ts         the trainer, as data
+    builtins.ts          quadcopter, helicopter, blimp (+ trainer) as data
     validate.ts          validates untrusted craft JSON before it reaches physics
     massProperties.ts    parts -> total mass, CoM, inertia tensor (diagonalised for Rapier)
     Craft.ts             ONE Rapier rigid body + one collider per part + force modules
@@ -132,15 +165,20 @@ src/
     Engine.ts            thrust along part axis, spool lag, prop falloff, density scaling
     Wheel.ts             raycast suspension + tyre friction, steering, brakes
     Drag.ts              simple quadratic drag (the smallest example module)
-    registry.ts          def.type -> module factory
+    FuelTank.ts          fuel mass at the tank; burns move the CoM
+    Buoyancy.ts          gas cells (helium / hydrogen / hot air)
+    Rotor.ts             blade-element rotor with momentum inflow, cyclic, torque reaction
+    FlightController.ts  stabilisation + automatic rotor mixing (multirotor / helicopter)
+    registry.ts          def.type -> module factory, step order
   sim/
     Simulation.ts        headless sim: world, ground, fixed 120 Hz step, NaN guard, telemetry
     controls.ts          ControlInputs + ControlSource (anything that can fly the craft)
     telemetry.ts         JSON flight-state snapshot (HUD and future AI pilots)
-    autopilot.ts         PID autopilot (heading/altitude/speed targets)
-    flightTest.ts        automated test card + design metrics, scored report
+    autopilot.ts         Autopilot (planes) and HoverPilot (rotorcraft): targets -> stick
+    flightTest.ts        airplane test card + design metrics, scored report
+    vehicleTests.ts      rotorcraft and lighter-than-air test cards, vehicle detection
     flightLog.ts         summary of the player's flight (feedback for Refine)
-    atmosphere.ts        exponential air density
+    atmosphere.ts        air density + Atmosphere (wind profile, gusts, turbulence)
     layout.ts            ground size, runway, spawn
   gen/
     openrouter.ts        browser/Node OpenRouter client: retries, cost tracking, JSON extraction
@@ -190,12 +228,15 @@ Example: a parachute, a rotor, or a buoyancy cell.
    ```ts
    step(ctx: StepContext) {
      ctx.toWorldPoint(this.localPosition, p);   // craft-local -> world
-     ctx.pointVelocity(p, v);                   // includes angular velocity
+     ctx.airVelocity(p, v);                     // relative to the air: rotation + wind
      // ...compute a world-space force...
      ctx.applyForce('drag', force, p);          // NaN-safe, also feeds the F3 overlay
    }
    reset() { /* clear internal state */ }
    ```
+   Other context helpers: `applyTorque`, `drawFuel`, `structuralLoad(partId, N)` (so the part
+   can break), `groundHeight`, `atmosphere`. Implement `link(modules)` if your module needs to
+   find others (as the flight controller does with rotors).
    Expose any live state (deployment, RPM...) as public fields so the renderer can animate it.
 3. **Register it** in `src/modules/registry.ts` (add a `case 'parachute'`). TypeScript's
    exhaustiveness check flags the switch until you do.
@@ -217,9 +258,9 @@ test, so you can see the effect without flying.
 1. **Flight core** ✅
 2. Hangar: snap-together parts, craft saved as JSON part graphs
 3. Procedural world: noise terrain, chunk loading in workers, floating origin
-4. Rotor module: multirotor drones (blade element rotors + PID flight controllers)
+4. Rotor module: multirotor drones (blade element rotors + PID flight controllers) ✅
 5. Missions: deliveries between generated points of interest
-6. Helicopters, VTOL, blimps
+6. Helicopters ✅, blimps ✅, VTOL (next: tilt-rotors from the same Rotor module)
 
 Generation roadmap, using more of OpenRouter's model types:
 

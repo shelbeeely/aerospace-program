@@ -86,6 +86,8 @@ export class AeroSurface implements ForceModule {
   alpha = 0; // rad, effective incl. incidence (not incl. flap)
   stall = 0;
   liftMagnitude = 0;
+  /** 0..1, how much ground effect is helping right now. */
+  groundEffect = 0;
 
   constructor(
     readonly partId: string,
@@ -126,7 +128,7 @@ export class AeroSurface implements ForceModule {
       : 0;
 
     ctx.toWorldPoint(this.localPosition, _p);
-    ctx.pointVelocity(_p, _v);
+    ctx.airVelocity(_p, _v); // relative to the moving air: wind, gusts, turbulence
     _c.copy(CHORD).applyQuaternion(this.localRotation);
     ctx.toWorldDir(_c, _c);
     _n.copy(NORMAL).applyQuaternion(this.localRotation);
@@ -149,12 +151,30 @@ export class AeroSurface implements ForceModule {
     this.alpha = geomAlpha + this.incidence;
     const flapAlpha = this.deflection * TUNING.controlEffectiveness;
 
+    // Ground effect: within about a span of the ground the downwash is blocked, which acts like
+    // a bigger aspect ratio (more lift slope, much less induced drag). McCormick's factor.
+    let ar = this.aspectRatio;
+    let slope = this.liftSlope;
+    this.groundEffect = 0;
+    if (TUNING.groundEffect > 0 && Math.abs(_n.y) > 0.5) {
+      const h = _p.y - ctx.groundHeight(_p.x, _p.z);
+      const span = this.def.chord * this.aspectRatio; // full-wing span, also for wing panels
+      if (h > 0 && h < span) {
+        const x = (16 * h) / span;
+        const phi = Math.max(0.05, (x * x) / (1 + x * x)); // induced drag multiplier
+        const blend = TUNING.groundEffect;
+        ar = this.aspectRatio / (1 - blend + blend * phi);
+        slope = (2 * Math.PI * ar) / (ar + 2);
+        this.groundEffect = 1 - phi;
+      }
+    }
+
     const { cl, cd, stall } = liftDragCoefficients(
       this.alpha + flapAlpha,
-      this.liftSlope,
+      slope,
       this.stallAngle,
       this.cd0 + TUNING.controlDragFactor * this.deflection * this.deflection,
-      this.aspectRatio,
+      ar,
     );
     this.stall = stall;
 
@@ -174,5 +194,7 @@ export class AeroSurface implements ForceModule {
     ctx.applyForce('lift', _f, _p);
     _f.copy(_air).multiplyScalar(drag);
     ctx.applyForce('drag', _f, _p);
+    // Bending load on the spar: mostly the normal force.
+    ctx.structuralLoad(this.partId, Math.hypot(lift, drag * 0.3));
   }
 }

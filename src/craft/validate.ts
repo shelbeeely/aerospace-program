@@ -33,6 +33,7 @@ export function validateCraft(input: unknown): string[] {
     if (p.rotationDeg !== undefined && !isVec(p.rotationDeg, 360))
       errors.push(`${at}: rotationDeg must be [x,y,z] degrees`);
     if (typeof p.color !== 'string') errors.push(`${at}: color must be a CSS colour string`);
+    if (p.strength !== undefined && !isNum(p.strength, 0, 1e9)) errors.push(`${at}: strength must be 0..1e9 N (0 = unbreakable)`);
     errors.push(...validateShape(p.shape, at));
     (p.modules ?? []).forEach((m, j) => errors.push(...validateModule(m, `${at}.modules[${j}]`)));
   });
@@ -75,6 +76,29 @@ export function validateCraft(input: unknown): string[] {
         break;
       case 'drag':
         if (!isNum(m.cdA, 0, 1000)) e.push(`${at}: cdA invalid`);
+        break;
+      case 'fuel':
+        if (!isNum(m.capacity, 0, 1e5)) e.push(`${at}: fuel capacity 0..100000 kg`);
+        if (m.fill !== undefined && !isNum(m.fill, 0, 1)) e.push(`${at}: fill 0..1`);
+        break;
+      case 'buoyancy':
+        if (!isNum(m.volume, 0, 1e6)) e.push(`${at}: volume 0..1e6 m³`);
+        if (m.gas !== undefined && !['helium', 'hydrogen', 'hot-air'].includes(m.gas)) e.push(`${at}: gas must be helium|hydrogen|hot-air`);
+        break;
+      case 'rotor':
+        if (!isNum(m.radius, 0.02, 15) || !isNum(m.chord, 0.005, 2)) e.push(`${at}: rotor radius 0.02..15 m, chord 0.005..2 m`);
+        if (!isNum(m.blades, 1, 12) || !Number.isInteger(m.blades)) e.push(`${at}: blades must be an integer 1..12`);
+        if (!isNum(m.maxRpm, 10, 40000)) e.push(`${at}: maxRpm 10..40000`);
+        if (m.mode !== 'rpm' && m.mode !== 'collective') e.push(`${at}: mode must be "rpm" or "collective"`);
+        if (!isNum(m.pitchDeg, -20, 40)) e.push(`${at}: pitchDeg -20..40`);
+        if (m.spin !== 1 && m.spin !== -1) e.push(`${at}: spin must be 1 or -1`);
+        if (m.cyclicDeg !== undefined && !isNum(m.cyclicDeg, 0, 20)) e.push(`${at}: cyclicDeg 0..20`);
+        // Tip speed above ~Mach 0.9 isn't something this model handles.
+        if (isNum(m.radius) && isNum(m.maxRpm) && ((m.maxRpm * Math.PI * 2) / 60) * m.radius > 300)
+          e.push(`${at}: tip speed over 300 m/s (lower maxRpm or radius)`);
+        break;
+      case 'flightController':
+        if (m.mode !== 'multirotor' && m.mode !== 'helicopter') e.push(`${at}: mode must be "multirotor" or "helicopter"`);
         break;
       default:
         e.push(`${at}: unknown module type`);

@@ -7,6 +7,7 @@ const COLORS: Record<ForceKind, THREE.Color> = {
   drag: new THREE.Color('#ff3333'),
   thrust: new THREE.Color('#ffdd00'),
   wheel: new THREE.Color('#aaaaaa'),
+  buoyancy: new THREE.Color('#33e0ff'),
 };
 const MAX_LINES = 256;
 

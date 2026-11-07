@@ -58,8 +58,84 @@ export interface EngineDef {
   /** Airspeed (m/s) at which a propeller's thrust has fallen to zero. Omit for a jet (flat thrust). */
   propMaxSpeed?: number;
   spoolTime?: number;
-  /** Visual propeller radius. */
+  /** Visual propeller radius. Also sets the size of torque and P-factor effects. */
   propRadius?: number;
+  /**
+   * Propeller rotation seen from behind: 1 = clockwise (most single-engine planes), -1 =
+   * counter-clockwise, 0 = no torque effects (e.g. a jet). Default 1 when propMaxSpeed is set.
+   */
+  propDirection?: 1 | -1 | 0;
+  /** Fuel burn at full thrust (kg/s). Default scales with maxThrust (see tuning). */
+  fuelFlow?: number;
+}
+
+/** Fuel carried in the part. Its mass moves the CoM as it burns. */
+export interface FuelTankDef {
+  type: 'fuel';
+  offset?: Vec3Tuple;
+  /** Capacity in kg. */
+  capacity: number;
+  /** Initial fill fraction 0..1 (default 1). */
+  fill?: number;
+}
+
+/** Lifting gas cell (blimps, balloons): buoyancy = (air density - gas density) × volume × g. */
+export interface BuoyancyDef {
+  type: 'buoyancy';
+  offset?: Vec3Tuple;
+  /** Gas volume in m³. */
+  volume: number;
+  gas?: 'helium' | 'hydrogen' | 'hot-air';
+}
+
+/**
+ * Blade-element rotor. Thrust along the part's +Y axis. Two control styles:
+ * - 'rpm': fixed blade pitch, thrust controlled by motor speed (multirotor drones).
+ * - 'collective': constant speed, thrust controlled by blade pitch, plus cyclic disk tilt
+ *   (helicopters).
+ */
+export interface RotorDef {
+  type: 'rotor';
+  offset?: Vec3Tuple;
+  radius: number;
+  blades: number;
+  /** Blade chord (m). */
+  chord: number;
+  /** Rotor speed at full command (rpm 'rpm' mode) or governed speed ('collective' mode). */
+  maxRpm: number;
+  mode: 'rpm' | 'collective';
+  /** Blade pitch at the 3/4 radius station (deg): fixed for 'rpm', maximum for 'collective'. */
+  pitchDeg: number;
+  /** Lowest collective pitch (deg), 'collective' mode only. Default -2. */
+  minPitchDeg?: number;
+  /** Linear blade twist root to tip (deg, usually negative). Default -8. */
+  twistDeg?: number;
+  /** Spin seen from above: 1 = counter-clockwise, -1 = clockwise. Sets the reaction torque. */
+  spin: 1 | -1;
+  /** Max disk tilt from cyclic (deg), 'collective' mode only. Default 0 (no cyclic). */
+  cyclicDeg?: number;
+  /** Which input drives cyclic/collective. Tail rotors use { collective: 'yaw' }. */
+  inputs?: { collective?: 'throttle' | 'yaw' };
+  /** Motor/rotor speed time constant (s). Default 0.08 for 'rpm', 1.0 for 'collective'. */
+  spoolTime?: number;
+}
+
+/**
+ * Stability augmentation / flight computer. Reads the pilot's stick and the body's attitude
+ * and rates, then drives the craft's rotors (and, in 'assist' mode, adds damping to stick
+ * inputs for control surfaces). Without one, a multirotor is unflyable, as in real life.
+ */
+export interface FlightControllerDef {
+  type: 'flightController';
+  offset?: Vec3Tuple;
+  /** 'multirotor': angle mode for drones; 'helicopter': rate damping + auto tail rotor. */
+  mode: 'multirotor' | 'helicopter';
+  /** Max tilt the stick commands (deg). Default 30. */
+  maxTiltDeg?: number;
+  /** Max yaw rate the stick commands (deg/s). Default 120. */
+  maxYawRateDeg?: number;
+  /** Proportional/derivative gains for attitude (defaults are tuned for small drones). */
+  gains?: { attitude?: number; rate?: number; yaw?: number };
 }
 
 /** Raycast suspension wheel. `offset` is the suspension mount (top of travel). */
@@ -86,7 +162,15 @@ export interface DragDef {
   cdA: number;
 }
 
-export type ModuleDef = AeroSurfaceDef | EngineDef | WheelDef | DragDef;
+export type ModuleDef =
+  | AeroSurfaceDef
+  | EngineDef
+  | WheelDef
+  | DragDef
+  | FuelTankDef
+  | BuoyancyDef
+  | RotorDef
+  | FlightControllerDef;
 
 export interface PartDef {
   id: string;
@@ -101,6 +185,12 @@ export interface PartDef {
   collider?: boolean;
   color: string;
   modules?: ModuleDef[];
+  /**
+   * Structural strength: the load (N) the part's modules can put on it before it breaks off.
+   * Omit for a sensible default (lifting surfaces ~8 g of their share of the weight, gear ~5 g).
+   * Use 0 for unbreakable.
+   */
+  strength?: number;
 }
 
 export interface CraftDef {

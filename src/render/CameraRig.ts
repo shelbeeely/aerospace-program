@@ -53,8 +53,9 @@ export class CameraRig {
 
   /** Frame a craft of the given bounding radius (m): bigger craft get a more distant chase cam. */
   fitCraft(radius: number): void {
-    const k = Math.max(1, radius / 6);
-    this.chaseOffset.set(0, 2.8 * k, 13 * k);
+    // Small drones get a close camera; big craft (blimps) a farther, higher one.
+    const k = Math.min(3, Math.max(0.35, radius / 6));
+    this.chaseOffset.set(0, 2.8 * k * (k > 1.5 ? 1.4 : 1), 13 * k);
   }
 
   update(dt: number, target: THREE.Vector3, rotation: THREE.Quaternion, velocity: THREE.Vector3): void {

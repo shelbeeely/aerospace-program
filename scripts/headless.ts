@@ -127,3 +127,18 @@ const N = 12000;
 for (let i = 0; i < N; i++) sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0.5, brake: 0 });
 const ms = (performance.now() - t0) / N;
 console.log(`\nstep cost: ${(ms * 1000).toFixed(1)} µs/step  (${(1 / 120 / (ms / 1000)).toFixed(0)}x real time)`);
+
+// Every built-in vehicle must still pass its own automated test card.
+console.log('\n--- built-in vehicle test cards');
+const { BUILTINS } = await import('../src/craft/builtins.ts');
+const { flightTest } = await import('../src/sim/flightTest.ts');
+let failed = 0;
+for (const b of BUILTINS) {
+  const r = await flightTest(b.craft);
+  console.log(`${r.passed ? 'PASS' : 'FAIL'} ${b.label}: ${r.score}/100 (${r.vehicle})${r.issues.length ? ` - ${r.issues[0]}` : ''}`);
+  if (!r.passed) failed++;
+}
+if (failed) {
+  console.error(`${failed} built-in craft failed their test card`);
+  process.exit(1);
+}

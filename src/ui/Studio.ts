@@ -1,3 +1,4 @@
+import { BUILTINS, type BuiltinCraft } from '../craft/builtins.ts';
 import type { CraftDef } from '../craft/types.ts';
 import { defaultModel, fallbacksFor, isFree, JOBS, modelsForJob, priceLabel, type JobId } from '../gen/catalog.ts';
 import { designCraft, type DesignResult } from '../gen/craftDesigner.ts';
@@ -30,8 +31,9 @@ const SUGGESTIONS = [
   'a slow, forgiving bush plane with huge wings',
   'a twin-engine cargo plane',
   'a canard racer with a pusher prop',
-  'a long-winged motor glider',
-  'a tiny aerobatic trainer',
+  'a heavy-lift hexacopter drone',
+  'a two-seat helicopter',
+  'a small helium blimp for sightseeing',
 ];
 
 type Child = Node | string | null | undefined | false;
@@ -448,8 +450,8 @@ export class Studio {
         signal,
       });
       this.host.applyLivery(res.image);
-      if (cur.entryId) {
-        const e = this.host.library.get(cur.entryId)!;
+      const e = cur.entryId ? this.host.library.get(cur.entryId) : undefined;
+      if (cur.entryId && e) {
         this.host.library.update(cur.entryId, {
           livery: res.image,
           provenance: { ...e.provenance, liveryModel: res.model, liveryPrompt: style },
@@ -457,7 +459,7 @@ export class Studio {
       }
       const how = res.spec ? ` (${res.spec.pattern}, ${res.spec.colors.length + 1} colours)` : '';
       this.setStatus(
-        `Painted by ${shortName(res.model)}${how}, $${res.cost.toFixed(4)}.${cur.entryId ? '' : " The built-in trainer's livery isn't saved."}`,
+        `Painted by ${shortName(res.model)}${how}, $${res.cost.toFixed(4)}.${e ? '' : " Built-in craft liveries aren't saved."}`,
       );
       this.renderHangar();
     });
@@ -496,13 +498,15 @@ export class Studio {
 
   renderHangar(): void {
     const cur = this.host.current().entryId;
-    const rows: HTMLElement[] = [
-      h('div', { class: `hangar-row${cur === null ? ' active' : ''}` },
-        h('span', { class: 'name' }, 'Trainer T-1'),
+    const rows: HTMLElement[] = BUILTINS.map((b, i) => {
+      const entry = builtinEntry(b);
+      const active = cur === entry.id || (cur === null && i === 0);
+      return h('div', { class: `hangar-row${active ? ' active' : ''}`, title: b.hint },
+        h('span', { class: 'name' }, b.label),
         h('span', { class: 'muted small' }, 'built-in'),
-        h('button', { onclick: () => this.host.fly(null) }, 'Fly'),
-      ),
-    ];
+        h('button', { onclick: () => { this.host.fly(entry); this.setStatus(b.hint); } }, 'Fly'),
+      );
+    });
     for (const e of this.host.library.list()) {
       const p = e.provenance;
       const meta = [p.score !== undefined ? `${p.score}/100` : '', p.model ? shortName(p.model.split(' + ')[0]) : p.source]
@@ -540,6 +544,11 @@ export class Studio {
   get last(): DesignResult | null {
     return this.lastResult;
   }
+}
+
+/** Built-in craft as (unsaved) hangar entries, so they fly through the same path. */
+export function builtinEntry(b: BuiltinCraft): LibraryEntry {
+  return { id: `builtin:${b.id}`, name: b.label, craft: b.craft, provenance: { source: 'builtin', createdAt: '' } };
 }
 
 function shortName(id: string): string {

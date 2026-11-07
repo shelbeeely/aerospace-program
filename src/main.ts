@@ -6,6 +6,7 @@ import { browserClient } from './gen/openrouter.ts';
 import { Library, type LibraryEntry } from './gen/library.ts';
 import { CameraRig } from './render/CameraRig.ts';
 import { CraftView } from './render/CraftView.ts';
+import { DebrisView } from './render/DebrisView.ts';
 import { DebugOverlay } from './render/DebugOverlay.ts';
 import { WorldView } from './render/WorldView.ts';
 import type { ControlSource } from './sim/controls.ts';
@@ -37,6 +38,19 @@ async function start() {
   let craftView = new CraftView(sim.craft);
   scene.add(craftView.root);
   const debug = new DebugOverlay(scene, craftView.root);
+  const debrisView = new DebrisView(scene);
+  let viewVersion = sim.version;
+  let currentLivery: string | null = null;
+  /** Rebuild the craft's visuals (new craft, or the sim rebuilt a broken one on reset). */
+  const replaceCraftView = () => {
+    const old = craftView;
+    craftView = new CraftView(sim.craft);
+    craftView.setLivery(currentLivery);
+    scene.add(craftView.root);
+    debug.attach(craftView.root); // move the CoM/CoL markers before disposing the old view
+    scene.remove(old.root);
+    old.dispose();
+  };
   const rig = new CameraRig(camera, canvas);
   const hud = new Hud();
 
@@ -54,6 +68,20 @@ async function start() {
   });
   // Don't let the slider keep keyboard focus (arrow keys / letters would go to it).
   comSlider.addEventListener('change', () => comSlider.blur());
+
+  // Weather controls (F3 panel). Same seed = same gusts every run.
+  const weatherInputs = ['w-speed', 'w-dir', 'w-gust', 'w-turb'].map((id) => document.getElementById(id) as HTMLInputElement);
+  const applyWeather = () => {
+    const [speed, dir, gust, turb] = weatherInputs.map((el) => Number(el.value));
+    sim.atmosphere.configure({ windSpeed: speed, windFromDeg: dir, gustStrength: gust, turbulence: turb });
+    document.getElementById('w-label')!.textContent =
+      `${speed.toFixed(0)} m/s from ${dir.toFixed(0)}°, gusts ${gust.toFixed(0)}, turbulence ${turb.toFixed(1)}`;
+  };
+  for (const el of weatherInputs) {
+    el.addEventListener('input', applyWeather);
+    el.addEventListener('change', () => el.blur());
+  }
+  applyWeather();
 
   const flightLog = new FlightLog();
   const reset = () => {
@@ -78,13 +106,9 @@ async function start() {
   let currentEntry: LibraryEntry | null = null;
   const fly = (entry: LibraryEntry | null) => {
     sim.loadCraft(entry ? entry.craft : TEST_PLANE);
-    const old = craftView;
-    craftView = new CraftView(sim.craft);
-    craftView.setLivery(entry?.livery ?? null);
-    scene.add(craftView.root);
-    debug.attach(craftView.root); // move the CoM/CoL markers before disposing the old view
-    scene.remove(old.root);
-    old.dispose();
+    currentLivery = entry?.livery ?? null;
+    replaceCraftView();
+    viewVersion = sim.version;
     comSlider.value = '0';
     comVal.textContent = '0.00';
     currentEntry = entry;
@@ -98,7 +122,10 @@ async function start() {
     current: () => ({ craft: sim.craft.def, entryId: currentEntry?.id ?? null }),
     flightNotes: () => flightLog.summary(),
     fly,
-    applyLivery: (url) => craftView.setLivery(url),
+    applyLivery: (url) => {
+      currentLivery = url;
+      craftView.setLivery(url);
+    },
   });
 
   window.addEventListener('resize', () => {
@@ -167,6 +194,13 @@ async function start() {
     if (stepsThisFrame === TUNING.maxStepsPerFrame) accumulator = 0; // drop time rather than spiral
     telemetry = sim.telemetry();
     flightLog.update(telemetry, dt, sim.airframeTouchingGround());
+    // Structure changed: a part broke off (hide it), or the craft was rebuilt (new view).
+    if (sim.version !== viewVersion) {
+      if (sim.craft !== craftView.craft) replaceCraftView();
+      else craftView.hideParts(sim.craft.detached);
+      viewVersion = sim.version;
+    }
+    debrisView.update(sim.debris);
 
     const alpha = accumulator / sim.dt;
     renderPos.lerpVectors(sim.prevPosition, sim.position, alpha);
@@ -200,6 +234,8 @@ async function start() {
           `mass       ${mp.mass.toFixed(0)} kg\n` +
           `CoM z      ${mp.com.z.toFixed(2)} m   CoL z ${col.z.toFixed(2)} m\n` +
           `margin     ${(col.z - mp.com.z).toFixed(2)} m ${col.z - mp.com.z < 0 ? '(UNSTABLE)' : ''}\n` +
+          `fuel       ${sim.craft.fuelCapacity ? `${sim.craft.fuel.toFixed(1)} / ${sim.craft.fuelCapacity} kg` : 'none (infinite)'}\n` +
+          `broken     ${sim.failures.map((f) => `${f.partId} (${(f.load / 1000).toFixed(1)}/${(f.strength / 1000).toFixed(1)} kN)`).join(', ') || 'none'}\n` +
           `draw calls ${renderer.info.render.calls}`,
       );
     }

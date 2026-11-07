@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type { ControlInputs } from '../sim/controls.ts';
+import type { Atmosphere } from '../sim/atmosphere.ts';
 
 /** Category used for debug vector colours. */
-export type ForceKind = 'lift' | 'drag' | 'thrust' | 'wheel';
+export type ForceKind = 'lift' | 'drag' | 'thrust' | 'wheel' | 'buoyancy';
 
 export interface DebugForce {
   kind: ForceKind;
@@ -22,6 +23,7 @@ export interface StepContext {
   world: RAPIER.World;
   body: RAPIER.RigidBody;
   controls: Readonly<ControlInputs>;
+  atmosphere: Atmosphere;
   /** Body origin position and rotation (craft-local frame -> world). */
   position: THREE.Vector3;
   rotation: THREE.Quaternion;
@@ -31,8 +33,12 @@ export interface StepContext {
   angvel: THREE.Vector3;
   /** Air density at an altitude (m). */
   airDensity(altitude: number): number;
+  /** Terrain height under a point (flat ground for now; terrain later). */
+  groundHeight(x: number, z: number): number;
   /** Velocity of a world point rigidly attached to the body (includes angular contribution). */
   pointVelocity(worldPoint: THREE.Vector3, out: THREE.Vector3): THREE.Vector3;
+  /** Velocity of that point relative to the moving air (what aerodynamics feels). */
+  airVelocity(worldPoint: THREE.Vector3, out: THREE.Vector3): THREE.Vector3;
   /** Craft-local point -> world. */
   toWorldPoint(local: THREE.Vector3, out: THREE.Vector3): THREE.Vector3;
   /** Craft-local direction -> world. */
@@ -42,6 +48,17 @@ export interface StepContext {
    * recorded for the F3 debug overlay.
    */
   applyForce(kind: ForceKind, force: THREE.Vector3, point: THREE.Vector3): void;
+  /** Apply a pure world torque (N·m), e.g. propeller/rotor reaction torque. */
+  applyTorque(torque: THREE.Vector3): void;
+  /** Take up to `kg` of fuel from the craft's tanks; returns the kg actually delivered. */
+  drawFuel(kg: number): number;
+  /** True if the craft carries any fuel tanks (engines without tanks run forever). */
+  hasFuelSystem: boolean;
+  /**
+   * Report the structural load (N) a module puts on its part this step. If it exceeds the
+   * part's strength for long enough, the part breaks off.
+   */
+  structuralLoad(partId: string, newtons: number): void;
 }
 
 /**
@@ -57,6 +74,11 @@ export interface ForceModule {
   readonly localPosition: THREE.Vector3;
   /** Module orientation in craft-local coordinates. */
   readonly localRotation: THREE.Quaternion;
+  /**
+   * Optional: called once after all modules of a craft exist (and again after parts break
+   * off), so a module can find the others it works with (e.g. a flight controller its rotors).
+   */
+  link?(modules: readonly ForceModule[]): void;
   /** Called on spawn/reset. Clear any internal state (spool, suspension history...). */
   reset(): void;
   /** Compute and apply forces for one fixed physics step. */

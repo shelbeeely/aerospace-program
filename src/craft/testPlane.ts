@@ -24,7 +24,7 @@ export const TEST_PLANE: CraftDef = {
     {
       id: 'fuselage',
       kind: 'fuselage',
-      mass: 280,
+      mass: 220,
       position: [0, 0, 0],
       shape: { type: 'box', size: [1.1, 1.2, 4.2] },
       color: '#e8e4da',
@@ -56,6 +56,8 @@ export const TEST_PLANE: CraftDef = {
       shape: { type: 'box', size: [4.6, 0.14, 1.5] },
       color: '#f2c14e',
       modules: [
+        // Wing tank near the root, 30 kg of fuel. Burning it shifts the CoM slightly aft.
+        { type: 'fuel', offset: [1.15, 0, 0], capacity: 30 },
         // Inboard panel: more incidence than the tip (washout), so the root stalls first and
         // the ailerons keep working through the stall, as on real trainers.
         { type: 'aero', offset: [1.15, 0, 0], span: 2.3, chord: 1.5, aspectRatio: 7, incidenceDeg: 3.5 },
@@ -79,6 +81,8 @@ export const TEST_PLANE: CraftDef = {
       shape: { type: 'box', size: [4.6, 0.14, 1.5] },
       color: '#f2c14e',
       modules: [
+        // Wing tank near the root, 30 kg of fuel. Burning it shifts the CoM slightly aft.
+        { type: 'fuel', offset: [-1.15, 0, 0], capacity: 30 },
         // Inboard panel: more incidence than the tip (washout), so the root stalls first and
         // the ailerons keep working through the stall, as on real trainers.
         { type: 'aero', offset: [-1.15, 0, 0], span: 2.3, chord: 1.5, aspectRatio: 7, incidenceDeg: 3.5 },

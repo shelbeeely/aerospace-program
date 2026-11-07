@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Craft } from '../craft/Craft.ts';
-import type { CraftDef } from '../craft/types.ts';
+import type { CraftDef, PartDef } from '../craft/types.ts';
 import { validateCraft } from '../craft/validate.ts';
 import type { DebugForce, ForceKind, StepContext } from '../modules/ForceModule.ts';
 import { TUNING } from '../tuning.ts';
-import { airDensity } from './atmosphere.ts';
+import { airDensity, Atmosphere, calmWeather, type WeatherSettings } from './atmosphere.ts';
 import { neutralControls, sanitizeControls, type ControlInputs } from './controls.ts';
 import { LAYOUT } from './layout.ts';
 import type { Telemetry } from './telemetry.ts';
@@ -25,15 +25,24 @@ export function initPhysics(): Promise<void> {
 const RAD = 180 / Math.PI;
 const _tmp = new THREE.Vector3();
 const _tmp2 = new THREE.Vector3();
+const _wind = new THREE.Vector3();
+
+/** A part that broke off and is now its own rigid body. */
+export interface Debris {
+  part: PartDef;
+  body: RAPIER.RigidBody;
+}
 
 /**
- * The headless simulation: Rapier world, ground, one craft, force modules, fixed-step
- * integration. Has no knowledge of rendering or input devices, so it runs in the browser and
- * in Node (see scripts/headless.ts) — the basis for AI pilots and faster-than-real-time races.
+ * The headless simulation: Rapier world, ground, weather, one craft, force modules, fixed-step
+ * integration, structural failure. Has no knowledge of rendering or input devices, so it runs
+ * in the browser and in Node (see scripts/headless.ts): the basis for AI pilots and
+ * faster-than-real-time races.
  */
 export class Simulation {
   readonly dt = 1 / TUNING.physicsHz;
   readonly world: RAPIER.World;
+  readonly atmosphere: Atmosphere;
   craft: Craft;
   time = 0;
   steps = 0;
@@ -41,6 +50,11 @@ export class Simulation {
   lastStepMs = 0;
   /** Set when the NaN/explosion guard had to reset the craft. */
   explosionResets = 0;
+  /** Bumped whenever the craft's structure changes (new craft, part broke off, rebuilt). */
+  version = 0;
+  /** Parts that broke off since the last reset, with the load that broke them. */
+  readonly failures: Array<{ partId: string; load: number; strength: number; time: number }> = [];
+  debris: Debris[] = [];
 
   /** Record per-module forces each step (F3 overlay). Off by default to avoid the overhead. */
   recordForces = false;
@@ -61,12 +75,15 @@ export class Simulation {
   private readonly prevVelocity = new THREE.Vector3();
   private gForceFiltered = 1;
   private readonly ctx: StepContext;
+  private readonly loadsThisStep = new Map<string, number>();
+  private readonly filteredLoads = new Map<string, number>();
 
-  constructor(craftDef: CraftDef) {
+  constructor(craftDef: CraftDef, weather: WeatherSettings = calmWeather()) {
     assertValidCraft(craftDef);
 
     this.world = new RAPIER.World({ x: 0, y: -TUNING.gravity, z: 0 });
     this.world.timestep = this.dt;
+    this.atmosphere = new Atmosphere(weather);
 
     const half = LAYOUT.groundSize / 2;
     const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -5, 0));
@@ -77,7 +94,6 @@ export class Simulation {
 
     const { position, rotation } = this.spawnPose(null);
     this.craft = new Craft(this.world, craftDef, position, rotation);
-    this.resetToRunway();
 
     const self = this;
     this.ctx = {
@@ -85,15 +101,22 @@ export class Simulation {
       world: this.world,
       body: this.craft.body,
       controls: this.controls,
+      atmosphere: this.atmosphere,
       position: this.position,
       rotation: this.rotation,
       com: this.com,
       linvel: this.linvel,
       angvel: this.angvel,
       airDensity,
+      hasFuelSystem: false,
+      groundHeight: () => 0,
       pointVelocity(p, out) {
         _tmp.copy(p).sub(self.com);
         return out.crossVectors(self.angvel, _tmp).add(self.linvel);
+      },
+      airVelocity(p, out) {
+        this.pointVelocity(p, out);
+        return out.sub(self.atmosphere.windAt(p, 0, _wind));
       },
       toWorldPoint(local, out) {
         return out.copy(local).applyQuaternion(self.rotation).add(self.position);
@@ -106,7 +129,25 @@ export class Simulation {
         self.craft.body.addForceAtPoint(force, point, true);
         if (self.recordForces) self.recordForce(kind, force, point);
       },
+      applyTorque(torque) {
+        if (!Number.isFinite(torque.x + torque.y + torque.z)) return;
+        self.craft.body.addTorque(torque, true);
+      },
+      drawFuel(kg) {
+        return self.craft.drawFuel(kg);
+      },
+      structuralLoad(partId, newtons) {
+        if (!Number.isFinite(newtons)) return;
+        self.loadsThisStep.set(partId, (self.loadsThisStep.get(partId) ?? 0) + Math.abs(newtons));
+      },
     };
+    this.bindCraft();
+    this.resetToRunway();
+  }
+
+  private bindCraft(): void {
+    (this.ctx as { body: RAPIER.RigidBody }).body = this.craft.body;
+    (this.ctx as { hasFuelSystem: boolean }).hasFuelSystem = this.craft.fuelTanks.length > 0;
   }
 
   private spawnPose(craft: Craft | null) {
@@ -123,12 +164,19 @@ export class Simulation {
   /** Swap in a different craft (e.g. one just generated). The old body is removed. */
   loadCraft(def: CraftDef): void {
     assertValidCraft(def);
+    this.rebuildCraft(def);
+    this.explosionResets = 0;
+    this.resetToRunway();
+  }
+
+  private rebuildCraft(def: CraftDef): void {
+    const comOffset = this.craft.comOffset.clone();
     this.world.removeRigidBody(this.craft.body);
     const { position, rotation } = this.spawnPose(null);
     this.craft = new Craft(this.world, def, position, rotation);
-    (this.ctx as { body: RAPIER.RigidBody }).body = this.craft.body;
-    this.explosionResets = 0;
-    this.resetToRunway();
+    if (comOffset.lengthSq() > 0) this.craft.setComOffset(comOffset);
+    this.bindCraft();
+    this.version++;
   }
 
   /** True if any airframe collider (not a wheel) is touching the ground: a crash or belly slide. */
@@ -144,8 +192,15 @@ export class Simulation {
   }
 
   resetToRunway(): void {
+    // Broken craft are rebuilt from their definition; debris is cleared away.
+    for (const d of this.debris) this.world.removeRigidBody(d.body);
+    this.debris = [];
+    if (this.craft.detached.size) this.rebuildCraft(this.craft.def);
+    this.failures.length = 0;
+    this.filteredLoads.clear();
     const { position, rotation } = this.spawnPose(this.craft);
     this.craft.reset(position, rotation);
+    this.atmosphere.restart();
     this.controls = neutralControls();
     this.prevVelocity.set(0, 0, 0);
     this.gForceFiltered = 1;
@@ -188,15 +243,19 @@ export class Simulation {
 
     while (this.debugForces.length) this.forcePool.push(this.debugForces.pop()!);
 
+    this.atmosphere.advance(this.dt);
     const body = this.craft.body;
     body.resetForces(false);
     body.resetTorques(false);
     this.readBodyState();
+    this.loadsThisStep.clear();
     for (const m of this.craft.modules) m.step(this.ctx);
 
     this.world.step();
     this.readBodyState();
     this.guardAgainstExplosion();
+    this.checkStructure();
+    this.craft.updateFuelMass();
 
     // Load factor: (acceleration + gravity) projected on craft up, in g.
     _tmp.copy(this.linvel).sub(this.prevVelocity).divideScalar(this.dt);
@@ -208,6 +267,29 @@ export class Simulation {
     this.time += this.dt;
     this.steps++;
     this.lastStepMs = performance.now() - t0;
+  }
+
+  /** Filter each part's load; anything over its strength breaks off and becomes debris. */
+  private checkStructure(): void {
+    const k = 1 - Math.exp(-this.dt / TUNING.loadFilterTime);
+    const broken: Array<[string, number, number]> = [];
+    for (const [partId, load] of this.loadsThisStep) {
+      const f = (this.filteredLoads.get(partId) ?? 0) + (load - (this.filteredLoads.get(partId) ?? 0)) * k;
+      this.filteredLoads.set(partId, f);
+      const strength = this.craft.strength.get(partId) ?? Infinity;
+      if (f > strength) broken.push([partId, f, strength]);
+    }
+    for (const [partId, load, strength] of broken) {
+      if (this.craft.parts.length <= 1) break; // never detach the last piece
+      const part = this.craft.parts.find((p) => p.id === partId);
+      const body = this.craft.detachPart(partId);
+      if (part && body) {
+        this.debris.push({ part, body });
+        this.failures.push({ partId, load: Math.round(load), strength: Math.round(strength), time: this.time });
+        this.filteredLoads.delete(partId);
+        this.version++;
+      }
+    }
   }
 
   /** If anything went non-finite or absurd, put the craft back on the runway. */
@@ -224,9 +306,16 @@ export class Simulation {
     }
   }
 
+  /** Wind at the craft right now (m/s, world). */
+  windAtCraft(out = new THREE.Vector3()): THREE.Vector3 {
+    return this.atmosphere.windAt(this.com, 0, out);
+  }
+
   telemetry(): Telemetry {
     const q = this.rotation;
-    const v = this.linvel;
+    const ground = this.linvel;
+    const wind = this.windAtCraft(new THREE.Vector3());
+    const v = ground.clone().sub(wind); // air-relative
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
@@ -240,26 +329,36 @@ export class Simulation {
     const aoa = speed > 1 ? Math.atan2(-v.dot(up), v.dot(fwd)) * RAD : 0;
     const beta = speed > 1 ? Math.asin(THREE.MathUtils.clamp(v.dot(right) / speed, -1, 1)) * RAD : 0;
 
-    const engines = this.craft.engines;
-    const spool = engines.length ? engines.reduce((s, e) => s + e.spool, 0) / engines.length : 0;
-    // Main wings = surfaces with roll control or the largest horizontal ones; use area-weighted stall.
+    const craft = this.craft;
+    const engines = craft.engines;
+    const rotors = craft.rotors;
+    const spool = engines.length
+      ? engines.reduce((s, e) => s + e.spool, 0) / engines.length
+      : rotors.length
+        ? rotors.reduce((s, r) => s + r.omega / r.maxOmega, 0) / rotors.length
+        : 0;
     let stallW = 0;
     let stallSum = 0;
     const n = new THREE.Vector3();
-    for (const s of this.craft.aeroSurfaces) {
+    for (const s of craft.aeroSurfaces) {
       const w = s.area * Math.abs(s.localNormal(n).y);
       stallW += w;
       stallSum += s.stall * w;
     }
+    const wheels = craft.wheels;
+    const onGround = wheels.length ? wheels.some((w) => w.grounded) : this.airframeTouchingGround() && ground.length() < 3;
 
     const r = (x: number, d = 2) => Math.round(x * 10 ** d) / 10 ** d;
+    const cap = craft.fuelCapacity;
     return {
       time: r(this.time, 3),
       position: [r(this.position.x), r(this.position.y), r(this.position.z)],
-      velocity: [r(v.x), r(v.y), r(v.z)],
+      velocity: [r(ground.x), r(ground.y), r(ground.z)],
       airspeed: r(speed),
-      altitude: r(this.position.y - this.craft.restingHeight() + 0.05),
-      verticalSpeed: r(v.y),
+      groundSpeed: r(Math.hypot(ground.x, ground.z)),
+      wind: [r(wind.x), r(wind.y), r(wind.z)],
+      altitude: r(this.position.y - craft.restingHeight() + 0.05),
+      verticalSpeed: r(ground.y),
       heading: r(heading, 1),
       pitch: r(pitch, 1),
       roll: r(roll, 1),
@@ -268,8 +367,10 @@ export class Simulation {
       gForce: r(this.gForceFiltered),
       throttle: r(this.controls.throttle),
       engineSpool: r(spool),
-      onGround: this.craft.wheels.some((w) => w.grounded),
+      fuel: cap > 0 ? r(craft.fuel / cap) : null,
+      onGround,
       stall: r(stallW > 0 ? stallSum / stallW : 0),
+      brokenParts: [...craft.detached],
       controls: { ...this.controls },
     };
   }

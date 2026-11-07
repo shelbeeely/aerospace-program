@@ -17,6 +17,10 @@ export class Hud {
     spoolBar: $('h-spool-bar'),
     trim: $('h-trim'),
     flags: $('h-flags'),
+    wind: $('h-wind'),
+    windArrow: $('h-wind-arrow'),
+    fuel: $('h-fuel'),
+    fuelRow: $('h-fuel-row'),
     stall: $('stall'),
     help: $('help'),
     debug: $('debug'),
@@ -41,7 +45,26 @@ export class Hud {
     this.el.thrBar.style.width = `${t.throttle * 100}%`;
     this.el.spoolBar.style.width = `${t.engineSpool * 100}%`;
     this.set(this.el.trim, (trim >= 0 ? '+' : '') + (trim * 100).toFixed(0));
-    const flags = [t.onGround ? 'ON GROUND' : '', braking ? 'BRAKES' : ''].filter(Boolean).join('  ');
+    // Wind: speed, and where it comes from relative to the nose (arrow points where it blows).
+    const ws = Math.hypot(t.wind[0], t.wind[2]);
+    this.set(this.el.wind, ws < 0.5 ? 'calm' : `${(ws * MS_TO_KT).toFixed(0)} kt`);
+    if (ws >= 0.5) {
+      const toward = (Math.atan2(t.wind[0], -t.wind[2]) * 180) / Math.PI; // compass dir it blows toward
+      const rel = (((toward - t.heading) % 360) + 360) % 360;
+      this.el.windArrow.style.display = 'inline-block';
+      this.el.windArrow.style.transform = `rotate(${rel}deg)`;
+      this.set(this.el.windArrow, '↑');
+    } else this.set(this.el.windArrow, '');
+    this.el.fuelRow.style.display = t.fuel === null ? 'none' : '';
+    if (t.fuel !== null) this.set(this.el.fuel, (t.fuel * 100).toFixed(0));
+    const flags = [
+      t.onGround ? 'ON GROUND' : '',
+      braking ? 'BRAKES' : '',
+      t.fuel === 0 ? 'OUT OF FUEL' : '',
+      t.brokenParts.length ? `BROKEN: ${t.brokenParts.join(', ')}` : '',
+    ]
+      .filter(Boolean)
+      .join('  ');
     this.set(this.el.flags, flags);
     this.el.stall.classList.toggle('hidden', !(t.stall > 0.35 && !t.onGround && t.airspeed > 5));
   }

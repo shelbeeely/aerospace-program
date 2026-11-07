@@ -4,9 +4,10 @@ import { partQuaternion } from '../craft/massProperties.ts';
 import type { ShapeDef } from '../craft/types.ts';
 import { AeroSurface } from '../modules/AeroSurface.ts';
 import { Engine } from '../modules/Engine.ts';
+import { Rotor } from '../modules/Rotor.ts';
 import { Wheel } from '../modules/Wheel.ts';
 
-function geometryFor(shape: ShapeDef): THREE.BufferGeometry {
+export function geometryFor(shape: ShapeDef): THREE.BufferGeometry {
   switch (shape.type) {
     case 'box':
       return new THREE.BoxGeometry(...shape.size);
@@ -34,8 +35,13 @@ export class CraftView {
   private readonly animated: Animated[] = [];
   private readonly materials = new Map<string, THREE.MeshStandardMaterial>();
   private livery: THREE.Texture | null = null;
+  /** Everything drawn for each part (its mesh and its modules' moving bits), for break-offs. */
+  private readonly partObjects = new Map<string, THREE.Object3D[]>();
+  /** The craft this view was built for. */
+  readonly craft: Craft;
 
   constructor(craft: Craft) {
+    this.craft = craft;
     for (const part of craft.def.parts) {
       const mesh = new THREE.Mesh(geometryFor(part.shape), this.material(part.color));
       mesh.position.set(...part.position);
@@ -43,12 +49,26 @@ export class CraftView {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       this.root.add(mesh);
+      this.track(part.id, mesh);
     }
     for (const m of craft.modules) {
       if (m instanceof AeroSurface && m.def.control) this.addFlap(m);
       else if (m instanceof Engine) this.addProp(m);
       else if (m instanceof Wheel) this.addWheel(m);
+      else if (m instanceof Rotor) this.addRotor(m);
     }
+    this.hideParts(craft.detached);
+  }
+
+  private track(partId: string, o: THREE.Object3D): void {
+    const list = this.partObjects.get(partId) ?? [];
+    list.push(o);
+    this.partObjects.set(partId, list);
+  }
+
+  /** Hide parts that broke off (the debris view draws them from then on). */
+  hideParts(ids: Iterable<string>): void {
+    for (const id of ids) for (const o of this.partObjects.get(id) ?? []) o.visible = false;
   }
 
   private material(color: string): THREE.MeshStandardMaterial {
@@ -60,12 +80,45 @@ export class CraftView {
     return m;
   }
 
-  private moduleFrame(m: { localPosition: THREE.Vector3; localRotation: THREE.Quaternion }): THREE.Group {
+  private moduleFrame(m: { partId: string; localPosition: THREE.Vector3; localRotation: THREE.Quaternion }): THREE.Group {
     const g = new THREE.Group();
     g.position.copy(m.localPosition);
     g.quaternion.copy(m.localRotation);
     this.root.add(g);
+    this.track(m.partId, g);
     return g;
+  }
+
+  private addRotor(r: Rotor): void {
+    const frame = this.moduleFrame(r);
+    const hub = new THREE.Group();
+    frame.add(hub);
+    const R = r.def.radius;
+    const bladeMat = this.material('#1f2228');
+    for (let i = 0; i < r.def.blades; i++) {
+      const arm = new THREE.Group();
+      arm.rotation.y = (i / r.def.blades) * Math.PI * 2;
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(R * 0.92, Math.max(0.01, R * 0.012), Math.max(0.02, r.def.chord)), bladeMat);
+      blade.position.x = R * 0.5;
+      blade.castShadow = true;
+      arm.add(blade);
+      hub.add(arm);
+    }
+    // Motion-blurred disc, fades in with rotor speed.
+    const discMat = new THREE.MeshBasicMaterial({ color: '#202428', transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(R, 40).rotateX(-Math.PI / 2), discMat);
+    frame.add(disc);
+    const tilt = (r.def.cyclicDeg ?? 0) * (Math.PI / 180);
+    this.animated.push({
+      update: () => {
+        const speed = r.omega / Math.max(1, r.maxOmega);
+        hub.rotation.y = r.angle;
+        hub.visible = speed < 0.6;
+        discMat.opacity = Math.min(0.28, speed * 0.4);
+        // Show the cyclic tilt of the disk.
+        frame.children.forEach((c) => c.rotation.set(r.cyclicPitch * tilt, c === hub ? r.angle : 0, -r.cyclicRoll * tilt));
+      },
+    });
   }
 
   private addFlap(s: AeroSurface): void {

@@ -7,8 +7,12 @@ export interface Telemetry {
   time: number;
   position: [number, number, number];
   velocity: [number, number, number];
-  /** Airspeed (m/s). No wind yet, so equal to ground speed. */
+  /** Airspeed (m/s), relative to the moving air. */
   airspeed: number;
+  /** Horizontal speed over the ground (m/s). */
+  groundSpeed: number;
+  /** Wind at the craft (m/s, world: +X east, -Z north, +Y up). */
+  wind: [number, number, number];
   /** Height above ground (m). */
   altitude: number;
   /** m/s, positive up. */
@@ -28,7 +32,11 @@ export interface Telemetry {
   /** Commanded throttle 0..1 and actual engine spool 0..1. */
   throttle: number;
   engineSpool: number;
+  /** Fuel remaining 0..1, or null if the craft has no tanks. */
+  fuel: number | null;
   onGround: boolean;
+  /** Ids of parts that have broken off. */
+  brokenParts: string[];
   /** 0..1, how stalled the main wings are. */
   stall: number;
   /** Current control inputs actually applied. */
