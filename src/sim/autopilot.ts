@@ -97,6 +97,7 @@ export interface HoverTargets {
 export class HoverPilot implements ControlSource {
   targets: HoverTargets;
   private altIntegral = 0;
+  private prevHeading: number | null = null;
 
   constructor(targets: HoverTargets) {
     this.targets = { ...targets };
@@ -116,7 +117,11 @@ export class HoverPilot implements ControlSource {
     const vRight = vx * Math.cos(h) + vz * Math.sin(h);
     const pitch = clamp(-(this.targets.forwardSpeed - vFwd) * 0.12, -1, 1); // forward = nose down
     const roll = clamp(-vRight * 0.15, -1, 1);
-    const yaw = clamp(wrap180(this.targets.heading - t.heading) * 0.03, -1, 1);
+    // Heading loop with rate damping (yaw rate from successive samples), so it settles instead
+    // of swinging past the target.
+    const yawRate = this.prevHeading === null ? 0 : wrap180(t.heading - this.prevHeading) / dt;
+    this.prevHeading = t.heading;
+    const yaw = clamp(wrap180(this.targets.heading - t.heading) * 0.03 - yawRate * 0.012, -1, 1);
     return { pitch, roll, yaw, throttle, brake: 0 };
   }
 }
