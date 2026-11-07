@@ -179,7 +179,11 @@ export class Studio {
     this.root = h(
       'div',
       { id: 'studio', class: 'panel' },
-      h('div', { class: 'studio-head' }, h('h3', {}, '✦ STUDIO'), this.el.spend),
+      h('div', { class: 'studio-head' },
+        h('h3', {}, '✦ STUDIO'),
+        this.el.spend,
+        h('button', { class: 'studio-close', title: 'Close (N)', 'aria-label': 'Close Studio', onclick: () => this.toggle() }, '✕'),
+      ),
       this.el.status,
       h('section', {},
         h('div', { class: 'row spread' }, h('h4', {}, 'Crew'), h('label', { class: 'inline' }, freeOnly, ' Free only')),

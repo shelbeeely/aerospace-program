@@ -1,7 +1,10 @@
 import * as THREE from 'three';
 import { TEST_PLANE } from './craft/testPlane.ts';
 import { Hud } from './hud/Hud.ts';
-import { GamepadDevice, KeyboardDevice, PlayerInput } from './input/PlayerInput.ts';
+import { GamepadDevice, KeyboardDevice, PlayerInput, TouchDevice } from './input/PlayerInput.ts';
+import { ControlsPanel, toast } from './ui/ControlsPanel.ts';
+import { vehicleKind } from './sim/vehicleTests.ts';
+import { BUILTINS } from './craft/builtins.ts';
 import { browserClient } from './gen/openrouter.ts';
 import { Library, type LibraryEntry } from './gen/library.ts';
 import { CameraRig } from './render/CameraRig.ts';
@@ -13,7 +16,7 @@ import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
 import { initPhysics, Simulation } from './sim/Simulation.ts';
 import { TUNING } from './tuning.ts';
-import { CAP_STORAGE, KEY_STORAGE, Studio } from './ui/Studio.ts';
+import { builtinEntry, CAP_STORAGE, KEY_STORAGE, Studio } from './ui/Studio.ts';
 
 async function start() {
   await initPhysics();
@@ -21,8 +24,10 @@ async function start() {
 
   // --- Rendering
   const canvas = document.getElementById('view') as HTMLCanvasElement;
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // Phones/tablets: cap resolution and shadow cost so mid-range devices hold their frame rate.
+  const mobile = matchMedia('(pointer: coarse)').matches;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: !mobile || window.devicePixelRatio < 2, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobile ? 1.5 : 2));
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -32,6 +37,7 @@ async function start() {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.3, 20000);
   const worldView = new WorldView(scene, renderer);
+  if (mobile) worldView.sun.shadow.mapSize.set(1024, 1024);
 
   // --- Simulation
   const sim = new Simulation(TEST_PLANE);
@@ -55,7 +61,19 @@ async function start() {
   const hud = new Hud();
 
   // --- Input. The active pilot is any ControlSource; the human is just one of them.
-  const player = new PlayerInput([new KeyboardDevice(), new GamepadDevice()]);
+  const gamepad = new GamepadDevice();
+  const touch = new TouchDevice();
+  const player = new PlayerInput([new KeyboardDevice(), gamepad, touch]);
+  const controlsPanel = new ControlsPanel(document.getElementById('help')!, player);
+  gamepad.onChange = (pad, connected) => {
+    toast(
+      connected
+        ? `🎮 ${pad?.id.split('(')[0].trim() || 'Gamepad'} connected${pad?.standard ? '' : ' (non-standard mapping: some buttons may differ)'}`
+        : '🎮 Gamepad disconnected',
+    );
+    controlsPanel.render();
+    if (connected) player.rumble(0.4, 150);
+  };
   let pilot: ControlSource = player;
 
   let debugOn = false;
@@ -112,6 +130,8 @@ async function start() {
     comSlider.value = '0';
     comVal.textContent = '0.00';
     currentEntry = entry;
+    player.profile = vehicleKind(sim);
+    controlsPanel.render();
     rig.fitCraft(sim.craft.boundingRadius());
     reset();
     studio.renderHangar();
@@ -128,11 +148,28 @@ async function start() {
     },
   });
 
-  window.addEventListener('resize', () => {
+  // Resize on window changes, phone rotation and mobile browser bars appearing/disappearing.
+  const resize = () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight, false);
-  });
+    document.body.classList.toggle('portrait', window.innerHeight > window.innerWidth);
+  };
+  window.addEventListener('resize', resize);
+  window.visualViewport?.addEventListener('resize', resize);
+  screen.orientation?.addEventListener?.('change', resize);
+  resize();
+  // On phones, start with the screen clear for flying; the ✦ button opens the Studio.
+  if (mobile) studio.toggle();
+
+  /** Built-ins first, then the player's hangar. */
+  const cycleCraft = (dir: 1 | -1) => {
+    const list = [...BUILTINS.map(builtinEntry), ...library.list()];
+    const cur = currentEntry ? list.findIndex((e) => e.id === currentEntry!.id) : 0;
+    const next = list[(Math.max(0, cur) + dir + list.length) % list.length];
+    fly(next);
+    toast(`${next.name}${BUILTINS.find((b) => `builtin:${b.id}` === next.id)?.hint ? ` · ${BUILTINS.find((b) => `builtin:${b.id}` === next.id)!.hint}` : ''}`);
+  };
 
   // Exposed for debugging, automated tests, and future AI-pilot experiments in the console.
   Object.assign(window, {
@@ -162,6 +199,9 @@ async function start() {
   let fps = 0;
   let stepsThisFrame = 0;
   let telemetry = sim.telemetry();
+  let failuresSeen = 0;
+  let wasHardContact = false;
+  let wasStalling = false;
 
   function frame(now: number) {
     requestAnimationFrame(frame);
@@ -171,8 +211,13 @@ async function start() {
     for (const a of player.poll()) {
       if (a === 'reset') reset();
       else if (a === 'camera') rig.toggle(renderPos);
-      else if (a === 'help') hud.toggleHelp();
+      else if (a === 'help') {
+        controlsPanel.render(); // reflect the current profile / devices
+        hud.toggleHelp();
+      }
       else if (a === 'studio') studio.toggle();
+      else if (a === 'nextVehicle') cycleCraft(1);
+      else if (a === 'prevVehicle') cycleCraft(-1);
       else if (a === 'trimReset') player.trim = 0;
       else if (a === 'debug') {
         debugOn = !debugOn;
@@ -201,6 +246,16 @@ async function start() {
       viewVersion = sim.version;
     }
     debrisView.update(sim.debris);
+
+    // Haptics: parts breaking, hitting the ground hard, entering a stall.
+    if (sim.failures.length > failuresSeen) player.rumble(1, 400);
+    failuresSeen = sim.failures.length;
+    const hardContact = telemetry.airspeed > 8 && sim.airframeTouchingGround();
+    if (hardContact && !wasHardContact) player.rumble(0.9, 300);
+    wasHardContact = hardContact;
+    const stalling = telemetry.stall > 0.35 && !telemetry.onGround && telemetry.airspeed > 5;
+    if (stalling && !wasStalling) player.rumble(0.3, 120);
+    wasStalling = stalling;
 
     const alpha = accumulator / sim.dt;
     renderPos.lerpVectors(sim.prevPosition, sim.position, alpha);

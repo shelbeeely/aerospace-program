@@ -90,6 +90,12 @@ Sample output: `crafts/bushmaster-stol.json` was designed by a free model throug
 
 ## Controls
 
+Keyboard, gamepad and touch all work, and you can mix them. Press **H** (or **?** on touch, or
+Back/View on a pad) for the controls of the craft you're flying, plus settings: invert pitch,
+stick expo, haptics, and touch controls auto/on/off.
+
+**Keyboard**
+
 | Key | Action |
 | --- | --- |
 | W / S | pitch down / up |
@@ -101,15 +107,42 @@ Sample output: `crafts/bushmaster-stol.json` was designed by a free model throug
 | T / G, Y | trim nose down / up, reset trim |
 | R | reset to runway |
 | C | chase / orbit camera |
-| F3 | debug: force vectors, CoM/CoL/CoT, stats, CoM slider |
+| [ / ] | previous / next craft |
+| F3 | debug: force vectors, CoM/CoL/CoT, stats, CoM slider, weather |
 | N | toggle the Studio (generate / refine / paint craft, hangar) |
-| H | toggle help |
-
-Gamepad (standard mapping): left stick pitch/roll, right stick or bumpers yaw, triggers
-throttle, A brake, Y reset, Back camera.
+| H | controls & settings |
 
 > Browsers don't let pages block Ctrl+W, so tapping Ctrl for throttle-down next to W can
 > close the tab. Prefer Z/X or a gamepad if that bites you.
+
+**Gamepad** (Gamepad API, standard mapping: Xbox, PlayStation, Switch Pro and most phone pads).
+The layout follows the craft:
+
+| | Airplane / blimp | Rotorcraft (mode 2, like an RC transmitter) |
+| --- | --- | --- |
+| Left stick | pitch / roll | ↕ collective (centred = hover), ↔ yaw |
+| Right stick | ↔ yaw | pitch / roll (tilt) |
+| RT / LT | throttle up / down | fine collective |
+| LB / RB | yaw | |
+| D-pad ↑ / ↓ | trim | |
+
+Common to both: A (hold) brakes, Y resets, B toggles the camera, X or D-pad ←/→ change
+craft, Start opens the Studio, Back/View opens help, L3 resets trim, R3 toggles debug.
+Sticks have a radial deadzone and adjustable expo. Pads rumble on crashes, broken parts and
+stall onset, and a toast announces connect/disconnect.
+
+**Touch** (phones and tablets, portrait or landscape)
+
+- **Left thumb:** a throttle lever. Drag up or down and it **stays** where you leave it; on
+  rotorcraft the middle is hover. Drag sideways for yaw, which springs back.
+- **Right thumb:** a floating stick that centres where you touch. Drag down for nose up, sideways
+  to roll. It springs back.
+- **BRAKE** (hold), and a top bar with reset, camera, previous/next craft, Studio, debug and
+  weather, help, and fullscreen (where the browser supports it).
+- The layout adapts to orientation and notches (safe areas). Portrait gets a compact HUD strip
+  and the Studio as a bottom sheet; landscape gets a corner HUD and the Studio as a side
+  drawer. Phones render at capped resolution with smaller shadow maps to hold the frame
+  rate, and vibrate on crashes.
 
 To fly: press Z, roll down the runway, and pull back gently (S) at about 60 kt. Lift-off comes
 around 65–75 kt. Open F3 and drag the CoM slider aft past the blue CoL marker to watch the plane
@@ -188,7 +221,13 @@ src/
     music.ts             composer: audio model (Lyria) -> soundtrack clip
     library.ts           hangar: saved craft with provenance (localStorage), import/export
   ui/Studio.ts           in-game generation workflow
-  input/PlayerInput.ts   keyboard + gamepad devices -> a ControlSource with smoothing & trim
+  input/
+    PlayerInput.ts       merges devices -> a ControlSource with smoothing, trim, profiles, haptics
+    KeyboardDevice.ts    keyboard
+    GamepadDevice.ts     Gamepad API: per-vehicle mappings, radial deadzone, expo, rumble
+    TouchDevice.ts       on-screen throttle lever + floating stick + buttons (Pointer Events)
+    types.ts             RawInput, actions, settings (persisted)
+  ui/ControlsPanel.ts    help panel: controls per device and profile, input settings, toasts
   render/                WorldView, CraftView, CameraRig, DebugOverlay (three.js only)
   hud/Hud.ts             plain-DOM HUD
   main.ts                wires it together: fixed-step accumulator + render interpolation
