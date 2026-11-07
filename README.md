@@ -45,8 +45,8 @@ npm run build          # typecheck + production build
 
 | Job | Default (free) | Free backups | What it does |
 | --- | --- | --- | --- |
-| Designer | Nemotron 3 Ultra 550B | Crouton (stealth), Nemotron 3.5 Super | Drafts craft from your description |
-| Engineer | Nemotron 3.5 Super VL | Nemotron 3 Ultra, Dots 3 | Repairs designs from validator and flight-test feedback |
+| Designer | Nemotron 3 Ultra 550B | Nemotron 3 Nano Omni, Dots 3 Note | Drafts craft from your description |
+| Engineer | Dots 3 Note | Nemotron 3 Nano Omni, Nemotron 3 Ultra | Repairs designs from validator and flight-test feedback |
 | Painter | Cohere North Mini | Nemotron 3.5 Super, Dots 3 | Text models design a pattern (stripes, camo, sunburst…) that the game draws. Pick an image model to paint a texture instead (paid). |
 | Composer | Lyria 3 Clip | Lyria 3 Pro | Soundtrack clip (audio output) |
 
@@ -62,7 +62,8 @@ npm run build          # typecheck + production build
   refuses them on a key that is over its credit limit, so the key needs some headroom.
 - **Reasoning effort:** free reasoning models can spend their whole output budget thinking and
   get cut off mid-answer. The Designer runs at medium effort, and the Engineer and Painter at
-  low effort. A model that ignores the setting (e.g. Flint) was dropped from the backups.
+  low effort. The defaults were picked by testing each free model on a real repair; ones that still ran out
+  of budget (Flint, Nemotron 3.5 Super, Cohere on long jobs) were dropped from those jobs.
 - **CLI:** `npm run design -- "..." --designer <id> --engineer <id>`.
 
 ### Where the API key lives

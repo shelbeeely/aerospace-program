@@ -1,0 +1,411 @@
+{
+  "craft": {
+    "name": "Canard Racer X-1",
+    "formatVersion": 1,
+    "parts": [
+      {
+        "id": "fuselage",
+        "kind": "fuselage",
+        "mass": 320,
+        "position": [
+          0,
+          0.5,
+          -1.5
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.9,
+            1,
+            5.5
+          ]
+        },
+        "color": "#e8e4da",
+        "modules": [
+          {
+            "type": "drag",
+            "cdA": 0.3
+          }
+        ]
+      },
+      {
+        "id": "canard",
+        "kind": "canard",
+        "mass": 20,
+        "position": [
+          0,
+          1,
+          -3
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            2,
+            0.12,
+            0.8
+          ]
+        },
+        "color": "#f2c14e",
+        "modules": [
+          {
+            "type": "aero",
+            "offset": [
+              0,
+              0,
+              0
+            ],
+            "span": 2,
+            "chord": 0.8,
+            "aspectRatio": 5,
+            "incidenceDeg": 2.5,
+            "control": {
+              "channel": "pitch",
+              "maxDeflectionDeg": 20,
+              "gain": 1,
+              "chordFraction": 0.4
+            }
+          }
+        ]
+      },
+      {
+        "id": "wing.left",
+        "kind": "wing",
+        "mass": 40,
+        "position": [
+          -2,
+          1,
+          -0.2
+        ],
+        "rotationDeg": [
+          0,
+          0,
+          -3.5
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            4,
+            0.15,
+            1.5
+          ]
+        },
+        "color": "#f2c14e",
+        "modules": [
+          {
+            "type": "aero",
+            "offset": [
+              1,
+              0,
+              0
+            ],
+            "span": 2,
+            "chord": 1.3,
+            "aspectRatio": 7,
+            "incidenceDeg": 3
+          },
+          {
+            "type": "aero",
+            "offset": [
+              -1,
+              0,
+              0
+            ],
+            "span": 2,
+            "chord": 0.9,
+            "aspectRatio": 7,
+            "incidenceDeg": 0.5,
+            "control": {
+              "channel": "roll",
+              "maxDeflectionDeg": 18,
+              "gain": 1,
+              "chordFraction": 0.28,
+              "spanFraction": 0.9
+            }
+          }
+        ]
+      },
+      {
+        "id": "wing.right",
+        "kind": "wing",
+        "mass": 40,
+        "position": [
+          2,
+          1,
+          -0.2
+        ],
+        "rotationDeg": [
+          0,
+          0,
+          3.5
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            4,
+            0.15,
+            1.5
+          ]
+        },
+        "color": "#f2c14e",
+        "modules": [
+          {
+            "type": "aero",
+            "offset": [
+              -1,
+              0,
+              0
+            ],
+            "span": 2,
+            "chord": 1.3,
+            "aspectRatio": 7,
+            "incidenceDeg": 3
+          },
+          {
+            "type": "aero",
+            "offset": [
+              1,
+              0,
+              0
+            ],
+            "span": 2,
+            "chord": 0.9,
+            "aspectRatio": 7,
+            "incidenceDeg": 0.5,
+            "control": {
+              "channel": "roll",
+              "maxDeflectionDeg": 18,
+              "gain": -1,
+              "chordFraction": 0.28,
+              "spanFraction": 0.9
+            }
+          }
+        ]
+      },
+      {
+        "id": "tailboom",
+        "kind": "tailboom",
+        "mass": 10,
+        "position": [
+          0,
+          1.2,
+          2
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.4,
+            0.4,
+            1.5
+          ]
+        },
+        "color": "#e8e4da",
+        "modules": [
+          {
+            "type": "drag",
+            "cdA": 0.05
+          }
+        ]
+      },
+      {
+        "id": "fin",
+        "kind": "vertical_fin",
+        "mass": 8,
+        "position": [
+          0,
+          1.8,
+          2.5
+        ],
+        "rotationDeg": [
+          0,
+          0,
+          90
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1,
+            0.1,
+            1.2
+          ]
+        },
+        "color": "#c94f3d",
+        "modules": [
+          {
+            "type": "aero",
+            "span": 1,
+            "chord": 1.2,
+            "control": {
+              "channel": "yaw",
+              "maxDeflectionDeg": 20,
+              "gain": 1,
+              "chordFraction": 0.4
+            }
+          }
+        ]
+      },
+      {
+        "id": "engine",
+        "kind": "engine.prop",
+        "mass": 90,
+        "position": [
+          0,
+          1,
+          1.8
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.8,
+            0.8,
+            1
+          ]
+        },
+        "color": "#c94f3d",
+        "modules": [
+          {
+            "type": "engine",
+            "offset": [
+              0,
+              0,
+              -0.5
+            ],
+            "maxThrust": 4000,
+            "propMaxSpeed": 130,
+            "propRadius": 0.85,
+            "spoolTime": 0.5
+          },
+          {
+            "type": "drag",
+            "cdA": 0.02
+          }
+        ]
+      },
+      {
+        "id": "gear.nose",
+        "kind": "gear",
+        "mass": 10,
+        "position": [
+          0,
+          0,
+          -3.5
+        ],
+        "collider": false,
+        "shape": {
+          "type": "box",
+          "size": [
+            0.1,
+            0.2,
+            0.1
+          ]
+        },
+        "color": "#555555",
+        "modules": [
+          {
+            "type": "wheel",
+            "offset": [
+              0,
+              0.1,
+              0
+            ],
+            "radius": 0.2,
+            "restLength": 0.4,
+            "stiffness": 15000,
+            "damping": 1500,
+            "maxSteerDeg": 25
+          },
+          {
+            "type": "drag",
+            "cdA": 0.04
+          }
+        ]
+      },
+      {
+        "id": "gear.left",
+        "kind": "gear",
+        "mass": 15,
+        "position": [
+          -1,
+          0,
+          0
+        ],
+        "collider": false,
+        "shape": {
+          "type": "box",
+          "size": [
+            0.1,
+            0.2,
+            0.1
+          ]
+        },
+        "color": "#555555",
+        "modules": [
+          {
+            "type": "wheel",
+            "offset": [
+              0,
+              0.1,
+              0
+            ],
+            "radius": 0.25,
+            "restLength": 0.4,
+            "stiffness": 25000,
+            "damping": 2750,
+            "brakes": true
+          },
+          {
+            "type": "drag",
+            "cdA": 0.04
+          }
+        ]
+      },
+      {
+        "id": "gear.right",
+        "kind": "gear",
+        "mass": 15,
+        "position": [
+          1,
+          0,
+          0
+        ],
+        "collider": false,
+        "shape": {
+          "type": "box",
+          "size": [
+            0.1,
+            0.2,
+            0.1
+          ]
+        },
+        "color": "#555555",
+        "modules": [
+          {
+            "type": "wheel",
+            "offset": [
+              0,
+              0.1,
+              0
+            ],
+            "radius": 0.25,
+            "restLength": 0.4,
+            "stiffness": 25000,
+            "damping": 2750,
+            "brakes": true
+          },
+          {
+            "type": "drag",
+            "cdA": 0.04
+          }
+        ]
+      }
+    ]
+  },
+  "provenance": {
+    "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "prompt": "a canard racer with a pusher prop",
+    "notes": "A fast pusher-prop canard racer with a 8 m span main wing, forward canard for pitch control, and a dorsal vertical fin. The CoM is positioned ahead of the neutral point for positive static margin; washout on the outer wing panels ensures tip stall resistance.",
+    "score": 100,
+    "rounds": 1,
+    "costUsd": 0,
+    "createdAt": "2026-11-07T21:10:41.400Z"
+  }
+}

@@ -194,7 +194,7 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
       messages.push({ role: 'assistant', content: reply });
       engineerStuck = false;
     } catch (e) {
-      attempt.error = `Could not parse JSON${reply ? '' : ' (empty reply)'}: ${e instanceof Error ? e.message : e}`;
+      attempt.error = `Could not parse JSON${reply ? "" : reasoning ? " (answer was only in its reasoning, and malformed)" : " (empty reply)"}: ${e instanceof Error ? e.message : e}`;
       emit({ type: 'attempt', attempt });
       // Don't leave an empty assistant turn in the thread; hand the next round to the designer.
       if (role === 'engineer') engineerStuck = true;

@@ -23,10 +23,11 @@ export const JOBS: Record<JobId, JobInfo> = {
     label: 'Designer',
     description: 'Turns your description into a craft (JSON part graph). Needs strong reasoning.',
     outputs: ['text'],
+    // Tested on full craft drafts; models that thought past their output budget were dropped.
     free: [
       'nvidia/nemotron-3-ultra-550b-a55b:free',
-      'stealth/crouton-alpha',
-      'nvidia/nemotron-3.5-super-vl:free',
+      'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
+      'dots-studio/dots-3-note-preview:free',
       'google/gemma-4-31b-it:free',
     ],
     paid: ['anthropic/claude-sonnet-5.5', 'openai/gpt-6.1-sol', 'google/gemini-3.8-flash'],
@@ -35,10 +36,11 @@ export const JOBS: Record<JobId, JobInfo> = {
     label: 'Engineer',
     description: 'Fixes designs that fail validation or the flight test, using the test report.',
     outputs: ['text'],
+    // Tested on repairing a failed canard design: these returned complete JSON.
     free: [
-      'nvidia/nemotron-3.5-super-vl:free',
-      'nvidia/nemotron-3-ultra-550b-a55b:free',
       'dots-studio/dots-3-note-preview:free',
+      'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
     ],
     paid: ['anthropic/claude-sonnet-5.5', 'openai/gpt-6.1-sol', 'google/gemini-3.8-flash'],
   },
