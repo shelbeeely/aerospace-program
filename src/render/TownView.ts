@@ -107,7 +107,18 @@ export class TownView {
   private poolVersion = -1;
   private destroyedSeen = 0;
 
-  private readonly sparks: Spark[] = [];
+  private readonly sparks: Spark[] = Array.from({ length: MAX_SPARKS }, () => ({
+    pos: new THREE.Vector3(),
+    vel: new THREE.Vector3(),
+    dir: new THREE.Vector3(),
+    color: new THREE.Color(),
+    age: 1,
+    life: 0,
+  }));
+  /** Next ring slot to overwrite. */
+  private sparkNext = 0;
+  private resetsSeen = 0;
+  private readonly _color = new THREE.Color();
   private readonly sparkGeo = new THREE.BufferGeometry();
   private readonly sparkPos = new Float32Array(MAX_SPARKS * 6);
   private readonly sparkCol = new Float32Array(MAX_SPARKS * 6);
@@ -200,36 +211,35 @@ export class TownView {
 
   private updateSparks(dt: number): void {
     const town = this.town;
-    if (town.destroyed < this.destroyedSeen) this.destroyedSeen = 0; // town was reset
+    if (town.resets !== this.resetsSeen) {
+      // The town was reset (maybe followed by new breaks in the same frame): start over.
+      this.resetsSeen = town.resets;
+      this.destroyedSeen = 0;
+      for (const s of this.sparks) s.age = s.life;
+    }
     const fresh = Math.min(town.destroyed - this.destroyedSeen, town.breaks.length);
     this.destroyedSeen = town.destroyed;
-    if (town.destroyed === 0) this.sparks.length = 0;
-    // Shards for the newest breaks only (a whole chunk shattering is plenty at ~4 per block).
+    // A whole chunk shattering is plenty at 2 shards per block.
     const perBlock = fresh > 60 ? 2 : 6;
     for (let i = town.breaks.length - fresh; i < town.breaks.length; i++) {
       const br = town.breaks[i];
-      const color = new THREE.Color(br.color).multiplyScalar(EDGE_INTENSITY * 1.5);
+      this._color.set(br.color).multiplyScalar(EDGE_INTENSITY * 1.5);
       for (let k = 0; k < perBlock; k++) {
-        if (this.sparks.length >= MAX_SPARKS) this.sparks.shift();
-        const vel = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.8 + 0.1, Math.random() - 0.5).normalize().multiplyScalar(6 + Math.random() * 14);
-        this.sparks.push({
-          pos: new THREE.Vector3(br.x, br.y, br.z).addScaledVector(vel, 0.08),
-          vel,
-          dir: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize().multiplyScalar(0.6 + Math.random() * 1.2),
-          color,
-          age: 0,
-          life: 1.2 + Math.random() * 1.2,
-        });
+        const s = this.sparks[this.sparkNext];
+        this.sparkNext = (this.sparkNext + 1) % MAX_SPARKS;
+        s.vel.set(Math.random() - 0.5, Math.random() * 0.8 + 0.1, Math.random() - 0.5).normalize().multiplyScalar(6 + Math.random() * 14);
+        s.pos.set(br.x, br.y, br.z).addScaledVector(s.vel, 0.08);
+        s.dir.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize().multiplyScalar(0.6 + Math.random() * 1.2);
+        s.color.copy(this._color);
+        s.age = 0;
+        s.life = 1.2 + Math.random() * 1.2;
       }
     }
     let n = 0;
-    for (let i = this.sparks.length - 1; i >= 0; i--) {
-      const s = this.sparks[i];
+    for (const s of this.sparks) {
+      if (s.age >= s.life) continue;
       s.age += dt;
-      if (s.age >= s.life || s.pos.y < -1) {
-        this.sparks.splice(i, 1);
-        continue;
-      }
+      if (s.age >= s.life) continue;
       s.vel.y -= 9.81 * dt;
       s.pos.addScaledVector(s.vel, dt);
       if (s.pos.y < 0.05) {

@@ -142,7 +142,7 @@ function crash(def: CraftDef, label: string, wingReach: number) {
     sim.step(idle);
     steps++;
     sumStepMs += sim.lastStepMs;
-    maxStepMs = Math.max(maxStepMs, sim.lastStepMs);
+    if (i > 0) maxStepMs = Math.max(maxStepMs, sim.lastStepMs); // first step: WASM warm-up
     peakDyn = Math.max(peakDyn, sim.town.pool.dynamicChunks);
     peakDynCols = Math.max(peakDynCols, sim.town.pool.dynamicColliders);
     if (impactTime < 0 && sim.failures.length) impactTime = sim.time;
@@ -206,23 +206,60 @@ console.log('\n--- rubble capacity');
   const pool = sim.town.pool;
   const block = b.list[0];
   b.remove(block);
-  // More than one chunk per permitted slot must freeze the oldest chunks, never overflow.
+  // More than one chunk per permitted slot must evict the oldest moving chunks (never freeze
+  // them mid-air), never overflow.
   let capsHeld = true;
   for (let i = 0; i < TUNING.maxDynamicChunks + 8; i++) {
     pool.spawn(b, [block], sim.time);
     capsHeld &&= pool.dynamicChunks <= TUNING.maxDynamicChunks && pool.dynamicColliders <= TUNING.maxDynamicChunkColliders;
   }
-  check(capsHeld && pool.chunks.some((c) => c.frozen), 'chunk cap freezes oldest rubble without overflowing');
+  check(capsHeld && pool.chunks.length === TUNING.maxDynamicChunks && !pool.chunks.some((c) => c.frozen), 'chunk cap evicts oldest rubble without overflowing', `${pool.chunks.length} chunks, ${sim.town.destroyed} evicted blocks recorded`);
   pool.clear();
   // Three large groups force eviction on the collider limit before the chunk limit.
   const group = b.list.slice(0, 180);
   for (const block of group) b.remove(block);
   for (let i = 0; i < 3; i++) pool.spawn(b, group, sim.time);
-  check(pool.dynamicChunks === 2 && pool.dynamicColliders === group.length * 2 && pool.chunks[0].frozen, 'collider cap freezes oldest compound rubble');
+  check(pool.dynamicChunks === 2 && pool.dynamicColliders === group.length * 2 && pool.chunks.length === 2, 'collider cap evicts oldest compound rubble');
   const before = pool.chunks.length;
   check(pool.spawn(b, Array.from({ length: TUNING.maxDynamicChunkColliders + 1 }, () => block), sim.time) === null && pool.chunks.length === before, 'oversized groups cannot bypass collider cap');
   sim.resetToRunway();
   check(pool.chunks.length === 0 && b.aliveCount === b.list.length, 'reset removes frozen and dynamic rubble and restores blocks');
+}
+
+// Earthquake: shaking knocks out weak blocks, the support check drops what they held up.
+console.log('\n--- earthquake');
+{
+  const sim = new Simulation(TEST_PLANE);
+  const idle0: ControlInputs = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 };
+  sim.atmosphere.events.trigger('earthquake', { duration: 12 });
+  let peakDyn = 0;
+  let peakCols = 0;
+  let spawned = 0;
+  let lastVersion = sim.town.pool.version;
+  const t0 = performance.now();
+  for (let i = 0; i < Math.round(15 / sim.dt); i++) {
+    sim.step(idle0);
+    peakDyn = Math.max(peakDyn, sim.town.pool.dynamicChunks);
+    peakCols = Math.max(peakCols, sim.town.pool.dynamicColliders);
+    if (sim.town.pool.version !== lastVersion) spawned++;
+    lastVersion = sim.town.pool.version;
+  }
+  const ms = (performance.now() - t0) / Math.round(15 / sim.dt);
+  const standing = sim.town.buildings.filter((b) => b.aliveCount > 0).length;
+  check(sim.town.destroyed > 0, 'the quake destroys blocks', `${sim.town.destroyed} destroyed, ${standing}/${sim.town.buildings.length} buildings still standing`);
+  check(spawned > 0, 'the quake brings down rubble', `${spawned} pool changes`);
+  check(peakDyn <= TUNING.maxDynamicChunks && peakCols <= TUNING.maxDynamicChunkColliders, 'rubble within the pool caps', `peak ${peakDyn} chunks / ${peakCols} colliders`);
+  check(ms < 4, 'step time during the collapse', `avg ${ms.toFixed(3)} ms`);
+  const slender = (b: BlockBuilding) => b.def.size[1] / Math.min(b.def.size[0], b.def.size[2]);
+  const loss = (b: BlockBuilding) => 1 - b.aliveCount / b.list.length;
+  const bySlender = [...sim.town.buildings].sort((a, b) => slender(a) - slender(b));
+  const stout = bySlender[0];
+  const thin = bySlender[bySlender.length - 1];
+  check(loss(stout) < loss(thin), 'stout buildings fare better than slender towers', `stoutest ${stout.def.size.join('x')} lost ${(loss(stout) * 100).toFixed(0)}%, slenderest ${thin.def.size.join('x')} lost ${(loss(thin) * 100).toFixed(0)}%`);
+  sim.resetToRunway();
+  check(sim.town.buildings.every((b) => b.aliveCount === b.list.length) && sim.town.pool.chunks.length === 0, 'reset restores the town after the quake');
+  const targets = sim.lightningTargets().filter((t) => t.id.startsWith('building:'));
+  check(targets.length === sim.town.buildings.length, 'every building is a lightning strike target', `${targets.length} building targets`);
 }
 
 if (failed) {

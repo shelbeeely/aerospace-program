@@ -375,6 +375,7 @@ export class Simulation {
     this.guardAgainstExplosion();
     // After an explosion reset the step's contacts belong to a craft that's gone: drop them.
     this.dispatchContactForces(resets === this.explosionResets);
+    if (this.groundMoving) this.town.shake(this.atmosphere.events.groundAcceleration(_tmp));
     this.town.update(this.time);
     this.stepHazards();
     this.checkStructure();

@@ -1,20 +1,10 @@
 import RAPIER from '@dimforge/rapier3d-compat';
+import { mulberry32 } from '../sim/atmosphere.ts';
 import type { ContactForceInfo } from '../sim/damage.ts';
 import { TOWN } from '../sim/layout.ts';
 import { TUNING } from '../tuning.ts';
 import { BlockBuilding, connectedGroups, type Block, type BuildingDef } from './BlockBuilding.ts';
 import { DebrisPool, type Chunk } from './DebrisPool.ts';
-
-/** Deterministic PRNG (same town on every load). */
-function mulberry32(seed: number) {
-  return () => {
-    seed |= 0;
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 /** The seeded building list of the town in LAYOUT's TOWN (one building per lot). */
 export function townBuildings(town = TOWN, blockSize = TUNING.blockSize): BuildingDef[] {
@@ -76,10 +66,15 @@ export class Town {
   destroyed = 0;
   /** Bumped on every change to any building or the rubble (renderers watch it). */
   version = 0;
+  /** Bumped by every reset (renderers drop their effects). */
+  resets = 0;
   /** Collider handle -> what it belongs to. */
   private readonly owners = new Map<number, Owner>();
   private readonly blockImpulse = new Map<Block, number>();
-  private readonly shatter = new Set<Chunk>();
+  /** Impulse taken by each chunk this step (N·s). */
+  private readonly chunkImpulse = new Map<Chunk, number>();
+  private readonly touched = new Set<BlockBuilding>();
+  private readonly _p = { x: 0, y: 0, z: 0 };
 
   constructor(
     world: RAPIER.World,
@@ -93,6 +88,7 @@ export class Town {
     this.pool = new DebrisPool(world, {
       addChunkCollider: (c, chunk) => void this.owners.set(c.handle, { chunk }),
       deleteChunkCollider: (c) => void this.owners.delete(c.handle),
+      evicted: (chunk) => this.breakChunk(chunk, this.lastTime),
     });
   }
 
@@ -120,43 +116,75 @@ export class Town {
   /** One contact-force event (the object is reused by the sender: nothing is kept). */
   onContact(e: ContactForceInfo): void {
     const impulse = e.totalForceMagnitude * e.dt;
-    this.hit(e.collider1, impulse);
-    this.hit(e.collider2, impulse);
+    const a = this.owners.get(e.collider1);
+    const b = this.owners.get(e.collider2);
+    if (a) this.hit(a, b, impulse);
+    if (b) this.hit(b, a, impulse);
   }
 
-  private hit(handle: number, impulse: number): void {
-    const o = this.owners.get(handle);
-    if (!o) return;
+  private hit(o: Owner, other: Owner | undefined, impulse: number): void {
     if (o.block) {
+      // Rubble merely lying on a block (its weight, step after step) doesn't wear it down;
+      // only a real impact from it counts.
+      if (other?.chunk && impulse < 0.5 * TUNING.blockMass * TUNING.chunkShatterSpeed) return;
       if (o.block.alive) this.blockImpulse.set(o.block, (this.blockImpulse.get(o.block) ?? 0) + impulse);
-    } else if (impulse > TUNING.blockMass * TUNING.chunkShatterSpeed) this.shatter.add(o.chunk);
+    } else {
+      this.chunkImpulse.set(o.chunk, (this.chunkImpulse.get(o.chunk) ?? 0) + impulse);
+    }
+  }
+
+  private lastTime = 0;
+
+  /**
+   * Earthquake shaking (ground acceleration, m/s²). Upper floors of slender buildings sway more
+   * (amplification 1 + 0.6 × floor / footprint); a block whose amplified horizontal acceleration
+   * beats `quakeBlockStrength` × its fragility gives way, and the support check does the rest.
+   */
+  shake(accel: { x: number; z: number }): void {
+    const a = Math.hypot(accel.x, accel.z);
+    const weakest = TUNING.quakeBlockStrength * 0.7;
+    if (a < weakest / 4) return;
+    for (let bi = 0; bi < this.buildings.length; bi++) {
+      const building = this.buildings[bi];
+      const [w, h, d] = building.def.size;
+      const footprint = Math.max(1, Math.min(w, d));
+      if (a * (1 + (0.6 * (h - 1)) / footprint) < weakest) continue;
+      for (const b of building.list) {
+        if (!b.alive) continue;
+        const amp = 1 + (0.6 * b.y) / footprint;
+        if (a * amp > TUNING.quakeBlockStrength * fragility(bi, b.index)) this.blockImpulse.set(b, Infinity);
+      }
+    }
   }
 
   /** Apply this step's hits: destroy blocks, drop what lost support, shatter hard landings. */
   update(time: number): void {
-    const touched = new Set<BlockBuilding>();
+    this.lastTime = time;
+    if (!this.blockImpulse.size && !this.chunkImpulse.size && !this.pool.chunks.length) return;
+    const touched = this.touched;
+    touched.clear();
+    const s = TUNING.blockSize;
     if (this.blockImpulse.size) {
       for (const [b, j] of this.blockImpulse) {
         if (!b.alive || j <= TUNING.blockBreakImpulse) continue;
         b.building.remove(b);
-        this.recordBreak(b.building, b, time);
+        const p = this.recordBreak(b.building, b, time);
+        this.pool.wake(p.x, p.y, p.z, s * 1.5);
         touched.add(b.building);
       }
       this.blockImpulse.clear();
     }
-    if (this.shatter.size) {
-      const p = { x: 0, y: 0, z: 0 };
-      for (const c of this.shatter) {
-        if (!this.pool.chunks.includes(c)) continue;
+    if (this.chunkImpulse.size) {
+      // A chunk shatters when the step's impulse would change its whole velocity by more than
+      // `chunkShatterSpeed`: the same drop height smashes a lone block or a ten-storey slab.
+      for (const [c, j] of this.chunkImpulse) {
+        if (j / c.mass <= TUNING.chunkShatterSpeed || !this.pool.chunks.includes(c)) continue;
         const t = c.body.translation();
-        const r = c.body.rotation();
-        for (let i = 0; i < c.blocks.length; i++) {
-          rotate(r, c.offsets[i * 3], c.offsets[i * 3 + 1], c.offsets[i * 3 + 2], p);
-          this.pushBreak(t.x + p.x, t.y + p.y, t.z + p.z, c.building.def.color, time);
-        }
+        this.breakChunk(c, time);
         this.pool.remove(c);
+        this.pool.wake(t.x, t.y, t.z, c.radius + s);
       }
-      this.shatter.clear();
+      this.chunkImpulse.clear();
       this.version++;
     }
     for (const building of touched) {
@@ -174,9 +202,22 @@ export class Town {
     if (pv !== this.pool.version) this.version++;
   }
 
-  private recordBreak(building: BlockBuilding, b: Block, time: number): void {
-    const p = building.worldCentre(b, { x: 0, y: 0, z: 0 });
+  /** Record every block of a chunk as destroyed (the caller removes the chunk). */
+  private breakChunk(c: Chunk, time: number): void {
+    const t = c.body.translation();
+    const r = c.body.rotation();
+    const p = this._p;
+    for (let i = 0; i < c.blocks.length; i++) {
+      rotate(r, c.offsets[i * 3], c.offsets[i * 3 + 1], c.offsets[i * 3 + 2], p);
+      this.pushBreak(t.x + p.x, t.y + p.y, t.z + p.z, c.building.def.color, time);
+    }
+    this.version++;
+  }
+
+  private recordBreak(building: BlockBuilding, b: Block, time: number): { x: number; y: number; z: number } {
+    const p = building.worldCentre(b, this._p);
     this.pushBreak(p.x, p.y, p.z, building.def.color, time);
+    return p;
   }
 
   private pushBreak(x: number, y: number, z: number, color: string, time: number): void {
@@ -190,11 +231,20 @@ export class Town {
     this.pool.clear();
     for (const b of this.buildings) b.restore();
     this.blockImpulse.clear();
-    this.shatter.clear();
+    this.chunkImpulse.clear();
     this.breaks.length = 0;
     this.destroyed = 0;
     this.version++;
+    this.resets++;
   }
+}
+
+/** Seeded per-block strength factor 0.7..1.3 (same every run). */
+function fragility(building: number, block: number): number {
+  let h = Math.imul(building + 1, 0x9e3779b1) ^ Math.imul(block + 1, 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  h ^= h >>> 13;
+  return 0.7 + 0.6 * ((h >>> 0) / 4294967296);
 }
 
 /** Rotate (x, y, z) by quaternion q into out. */
