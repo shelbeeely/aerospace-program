@@ -348,3 +348,36 @@ body.touch-ui .lever { margin-bottom: 56px; }
 body.touch-ui .tz-left .tz-hint { left: max(10px, env(safe-area-inset-left)); font-size: 10px; }
 #hangar-bar > label.panel { position: static; }
 body.touch-ui #hangar-bar > label.panel { display: none; }
+
+/* ---------------------------------------------------------------- touch layout fixes */
+/* The throttle zone covers only the lever column; BRAKE sits beside it, outside the zone, so a
+   thumb reaching for the lever never lands on the brake (and vice versa). */
+body.touch-ui .tz-left, body.touch-ui.portrait .tz-left {
+  width: calc(max(10px, env(safe-area-inset-left)) + 112px); min-width: 0;
+}
+body.touch-ui .tbtn-brake, body.touch-ui.portrait .tbtn-brake {
+  left: calc(max(10px, env(safe-area-inset-left)) + 122px); bottom: max(40px, env(safe-area-inset-bottom));
+}
+/* The stick zone starts after the brake, so the two never overlap either. */
+body.touch-ui .tz-right, body.touch-ui.portrait .tz-right {
+  width: calc(100% - max(10px, env(safe-area-inset-left)) - 230px);
+}
+/* Landscape: HUD top-left, action bar top-right (it used to sit on top of the HUD). */
+body.touch-ui:not(.portrait) .tbar {
+  left: auto; right: max(10px, env(safe-area-inset-right)); width: min(440px, 50vw);
+}
+body.touch-ui:not(.portrait) #hud { max-width: calc(50vw - 30px); }
+/* Portrait: BRAKE sits right above the lever column so the stick zone gets the full width. */
+body.touch-ui.portrait .tbtn-brake {
+  left: max(10px, env(safe-area-inset-left)); bottom: calc(48% + 10px);
+}
+body.touch-ui.portrait .tz-right { width: calc(100% - max(10px, env(safe-area-inset-left)) - 122px); }
+/* Landscape: the lever zone spans the full height below the action bar, so the whole lever is
+   grabbable. */
+body.touch-ui:not(.portrait) .tz-left { height: calc(100% - 64px); }
+/* Short landscape screens: keep the lever (and its POWER label) below the HUD. */
+@media (max-height: 500px) {
+  body.touch-ui:not(.portrait) .lever { --lever-h: min(36vh, 200px); }
+}
+/* The knob rides up to the top at full power: keep the POWER/LIFT readout above it. */
+body.touch-ui .lever-label { top: -46px; }
