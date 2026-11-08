@@ -37,7 +37,7 @@ export function townBuildings(town = TOWN, blockSize = TUNING.blockSize): Buildi
         id: `b${out.length}`,
         origin: [Math.round(x * 10) / 10, 0, Math.round(z * 10) / 10],
         size: [w, h, d],
-        color: town.colors[Math.floor(rnd() * town.colors.length)],
+        color: town.colors[(col * 2 + row * 3) % town.colors.length],
       });
     }
   return out;
