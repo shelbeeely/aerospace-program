@@ -138,6 +138,29 @@ export const TUNING = {
   /** Debris faster than this (m/s) gets continuous collision detection. */
   debrisCcdSpeed: 30,
 
+  // ---------------------------------------------------------------- electrical
+  /** Battery temperature at spawn and the air it cools into (°C). */
+  batteryAmbientC: 20,
+  /** Battery convective cooling time constant (s). */
+  batteryCoolingTime: 600,
+  /** A cell must sit below its Vmin under load this long (s) before the pack cuts off. */
+  batteryCutoffDelay: 0.5,
+  /**
+   * Generator regulator setpoint as a multiple of the battery's full open-circuit voltage: a
+   * little above it, so the battery recharges and then floats at a trickle.
+   */
+  generatorRegulation: 1.02,
+  /** Generator source resistance in regulation (Ω): how stiffly it holds the setpoint. */
+  generatorResistance: 0.01,
+  /** Avionics drop out below this fraction of the battery's full voltage. */
+  avionicsMinVoltage: 0.7,
+  /** Spike energy (J) that burns out a non-essential avionics box; essential ones take 4×. */
+  avionicsSpikeTolerance: 2000,
+  /** Fraction of a spike's energy that ends up as heat in the battery. */
+  batterySpikeHeatFraction: 0.3,
+  /** Spike energy (J) that doubles the battery's internal resistance (cell damage). */
+  batterySpikeDamageJ: 50000,
+
   // ---------------------------------------------------------------- rigid body
   /** Tiny angular damping so a craft at rest settles. Real damping comes from aero. */
   angularDamping: 0.05,

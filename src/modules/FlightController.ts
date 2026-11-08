@@ -42,6 +42,8 @@ export class FlightController implements ForceModule {
   hoverFraction = 0.5;
   private yawIntegral = 0;
   private massKg = 1;
+  /** Set by the craft's ElectricalSystem each step. Unpowered, it commands nothing. */
+  powered = true;
 
   constructor(
     readonly partId: string,
@@ -86,9 +88,22 @@ export class FlightController implements ForceModule {
 
   reset(): void {
     this.yawIntegral = 0;
+    this.powered = true;
   }
 
   step(ctx: StepContext): void {
+    if (!this.powered) {
+      // Dead flight computer: every rotor it drives gets no command (motors stop, governed
+      // rotors are left to windmill).
+      for (const m of this.mix) m.rotor.command = 0;
+      for (const r of this.mainRotors) {
+        r.command = 0;
+        r.cyclicPitch = r.cyclicRoll = 0;
+      }
+      for (const r of this.tailRotors) r.command = 0;
+      this.yawIntegral = 0;
+      return;
+    }
     const c = ctx.controls;
     // Attitude from the body rotation (same conventions as telemetry).
     _fwd.set(0, 0, -1).applyQuaternion(ctx.rotation);

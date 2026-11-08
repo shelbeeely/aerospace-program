@@ -3,6 +3,7 @@ import type { RotorDef } from '../craft/types.ts';
 import { DEG, TUNING } from '../tuning.ts';
 import { liftDragCoefficients } from './AeroSurface.ts';
 import type { ForceModule, StepContext } from './ForceModule.ts';
+import { Motor } from './Motor.ts';
 
 const STATIONS = 8;
 const SECTION_LIFT_SLOPE = 5.7; // per rad, typical rotor airfoil
@@ -92,6 +93,8 @@ export class Rotor implements ForceModule {
   private neighbours: number[] = [];
   private bodyDistance = 0;
   private readonly vrsPhase: number;
+  /** Electric motor on the same part (powered from the craft's battery bus), if any. */
+  motor: Motor | null = null;
 
   constructor(
     readonly partId: string,
@@ -113,6 +116,7 @@ export class Rotor implements ForceModule {
 
   /** Find parallel rotors in roughly the same plane (multirotor ground effect). */
   link(modules: readonly ForceModule[]): void {
+    this.motor = modules.find((m): m is Motor => m instanceof Motor && m.partId === this.partId) ?? null;
     const axis = _n.copy(UP).applyQuaternion(this.localRotation);
     const group: Rotor[] = [];
     for (const m of modules) {
@@ -178,9 +182,11 @@ export class Rotor implements ForceModule {
    * Torque available at rotor speed ω. Electric motor (rpm mode): linear torque-speed line,
    * sized so it can just hold max rpm with 15% margin in clean sea-level air, with plenty of
    * torque at lower rpm for fast control. Governed engine: constant power (25% margin),
-   * torque-limited at low rpm.
+   * torque-limited at low rpm. With a linked Motor module, its Kv/R/current-limit line at the
+   * live bus voltage instead (a sagging or dead battery costs torque).
    */
   private availableTorque(omega: number): number {
+    if (this.motor) return this.motor.availableTorque(omega);
     const q = this.reference().torque;
     if (this.def.mode === 'rpm') {
       const noLoad = 1.25 * this.maxOmega;
@@ -317,8 +323,10 @@ export class Rotor implements ForceModule {
     this.motorLimit = target > 0 ? this.availableTorque(this.omega) : 0;
     const want = (this.inertia * (target - this.omega)) / tau + load;
     // ESCs brake actively (rpm mode); a governed engine can only drive (freewheel unit).
-    const floor = d.mode === 'rpm' && target > 0 ? -0.5 * this.motorLimit : 0;
+    const brake = this.motor ? this.motor.brakingTorque() : 0.5 * this.motorLimit;
+    const floor = d.mode === 'rpm' && target > 0 ? -brake : 0;
     this.motorTorque = Math.min(this.motorLimit, Math.max(floor, want));
+    this.motor?.setOperatingPoint(this.motorTorque, this.omega);
     const omegaPrev = this.omega;
     this.omega += ((this.motorTorque - load) / this.inertia) * ctx.dt;
     // Unpowered and slow: friction stops it (avoids creeping forever).

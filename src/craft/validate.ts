@@ -38,7 +38,27 @@ export function validateCraft(input: unknown): string[] {
     errors.push(...validateShape(p.shape, at));
     (p.modules ?? []).forEach((m, j) => errors.push(...validateModule(m, `${at}.modules[${j}]`)));
   });
+  errors.push(...validateElectrical(c.parts));
   return errors;
+
+  /** Cross-part rules: motors need a battery and a rotor to drive, generators an engine. */
+  function validateElectrical(parts: Partial<PartDef>[]): string[] {
+    const e: string[] = [];
+    const all = parts.flatMap((p) => (Array.isArray(p?.modules) ? p.modules : []));
+    const has = (t: ModuleDef['type']) => all.some((m) => m?.type === t);
+    parts.forEach((p, i) => {
+      const mods = Array.isArray(p?.modules) ? p.modules : [];
+      const at = `parts[${i}]${p?.id ? ` (${p.id})` : ''}`;
+      if (mods.some((m) => m?.type === 'motor')) {
+        if (!has('battery')) e.push(`${at}: a motor needs a battery somewhere on the craft`);
+        if (!mods.some((m) => m?.type === 'rotor')) e.push(`${at}: a motor drives the rotor on its own part: add a rotor to this part`);
+        if (mods.filter((m) => m?.type === 'motor').length > 1) e.push(`${at}: at most one motor per part`);
+      }
+      if (mods.some((m) => m?.type === 'generator') && !has('engine')) e.push(`${at}: a generator needs an engine on the craft to drive it`);
+    });
+    if (has('avionics') && !has('battery') && !has('generator')) e.push('avionics need a battery or a generator to power them');
+    return e;
+  }
 
   function validateShape(s: ShapeDef | undefined, at: string): string[] {
     if (!s) return [`${at}: shape required`];
@@ -123,6 +143,29 @@ export function validateCraft(input: unknown): string[] {
         // Tip speed above ~Mach 0.9 isn't something this model handles.
         if (isNum(m.radius) && isNum(m.maxRpm) && ((m.maxRpm * Math.PI * 2) / 60) * m.radius > 300)
           e.push(`${at}: tip speed over 300 m/s (lower maxRpm or radius)`);
+        break;
+      case 'battery':
+        if (!isNum(m.cells, 1, 400) || !Number.isInteger(m.cells)) e.push(`${at}: battery cells must be an integer 1..400`);
+        if (!isNum(m.capacityAh, 1e-3, 1e5) || m.capacityAh <= 0) e.push(`${at}: capacityAh must be > 0`);
+        if (!isNum(m.cellResistance, 1e-6, 10) || m.cellResistance <= 0) e.push(`${at}: cellResistance must be > 0 (Ω per cell)`);
+        if (!isNum(m.cellVmax, 0.5, 10) || !isNum(m.cellVmin, 0.1, 10) || !(m.cellVmax > m.cellVmin))
+          e.push(`${at}: cellVmax/cellVmin must be volts with cellVmax > cellVmin (LiPo 4.2/3.3)`);
+        if (m.thermalMass !== undefined && !isNum(m.thermalMass, 1, 1e8)) e.push(`${at}: thermalMass 1..1e8 J/K`);
+        if (m.maxTempC !== undefined && !isNum(m.maxTempC, 0, 200)) e.push(`${at}: maxTempC 0..200`);
+        if (m.soc !== undefined && !isNum(m.soc, 0, 1)) e.push(`${at}: soc 0..1`);
+        break;
+      case 'motor':
+        if (!isNum(m.kv, 1e-3, 1e5) || m.kv <= 0) e.push(`${at}: motor kv must be > 0 (rpm/V)`);
+        if (!isNum(m.rWinding, 1e-6, 100) || m.rWinding <= 0) e.push(`${at}: motor rWinding must be > 0 Ω`);
+        if (!isNum(m.maxCurrent, 1e-3, 1e5) || m.maxCurrent <= 0) e.push(`${at}: motor maxCurrent must be > 0 A`);
+        break;
+      case 'generator':
+        if (!isNum(m.ratedAmps, 1e-3, 1e5) || m.ratedAmps <= 0) e.push(`${at}: generator ratedAmps must be > 0`);
+        if (m.minRpmFraction !== undefined && !isNum(m.minRpmFraction, 0, 0.85)) e.push(`${at}: minRpmFraction 0..0.85`);
+        break;
+      case 'avionics':
+        if (!isNum(m.loadW, 0, 1e6)) e.push(`${at}: avionics loadW 0..1e6 W`);
+        if (m.essential !== undefined && typeof m.essential !== 'boolean') e.push(`${at}: essential must be true or false`);
         break;
       case 'flightController':
         if (m.mode !== 'multirotor' && m.mode !== 'helicopter') e.push(`${at}: mode must be "multirotor" or "helicopter"`);
