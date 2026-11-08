@@ -74,5 +74,14 @@ sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
 check('combustion consumes actual aircraft fuel', sim.craft.fuel < fuelBefore);
 sim.resetToRunway();
 check('reset clears leaders and fire without retaining damage', sim.lightning.strikes.length === 0 && [...sim.fire.parts.values()].every((p) => !p.burning) && !sim.damage.damaged && sim.fire.parts.get('tank')!.fuel === 3);
+// Integrated disaster and hazard paths must coexist with otherwise calm presets.
+sim.atmosphere.events.trigger('hurricane', { x: sim.position.x - 1200, z: sim.position.z });
+for (let i = 0; i < 240; i++) sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
+check('hurricane rain charges the aircraft in otherwise calm presets', sim.lightning.staticCharge > 0.01);
+sim.resetToRunway();
+sim.fire.ignite('tank');
+const plumePoint = sim.position.clone().add(new THREE.Vector3(0, 4, 0));
+const actualSmokeWind = sim.atmosphere.windAt(plumePoint, 0, new THREE.Vector3());
+check('fire smoke contributes through actual shared atmosphere wind hook', actualSmokeWind.y > 0 && Number.isFinite(actualSmokeWind.length()));
 console.log(failures ? `${failures} hazard checks failed` : 'all hazard checks passed');
 process.exit(failures ? 1 : 0);

@@ -483,7 +483,8 @@ export class Simulation {
   }
 
   private stepHazards(): void {
-    const intensity = this.atmosphere.settings.storm ?? 0;
+    const intensity = Math.max(this.atmosphere.settings.storm ?? 0,
+      Math.min(1, this.atmosphere.events.rainAt(this.position.x, this.position.z) / 50));
     const strike = this.lightning.step(this.dt, this.time, intensity, this.position,
       () => this.lightningTargets(), this.atmosphere.settings.cloudBase,
       (this.atmosphere.settings.precipitation ?? 0) * this.linvel.length() * 0.00001);
