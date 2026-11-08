@@ -146,6 +146,11 @@ export const TUNING = {
   /** A cell must sit below its Vmin under load this long (s) before the pack cuts off. */
   batteryCutoffDelay: 0.5,
   /**
+   * Under-load cutoff per cell as a fraction of cellVmin (the empty resting voltage): 0.9 puts
+   * a LiPo's at ~3.0 V, so hard climbs on a part-charged pack sag without tripping it.
+   */
+  batteryCutoffFraction: 0.9,
+  /**
    * Generator regulator setpoint as a multiple of the battery's full open-circuit voltage: a
    * little above it, so the battery recharges and then floats at a trickle.
    */

@@ -56,10 +56,11 @@ for (const amps of [20, 60]) {
   let t = 0;
   for (; t < 3600 && bat.connected; t += 0.1) {
     bus.step(0.1);
-    if (!(bat.soc < prev)) monotonic = false;
+    // Strictly falling until empty (it then sits at 0 until the cutoff latches).
+    if (prev > 0 ? !(bat.soc < prev) : bat.soc > 0) monotonic = false;
     prev = bat.soc;
   }
-  check('SoC falls monotonically under load', monotonic && bat.soc < 0.1, `cut off (${bat.cutoff || 'none'}) after ${(t / 60).toFixed(1)} min at SoC ${(bat.soc * 100).toFixed(1)}%, pack ${bat.tempC.toFixed(1)} °C`);
+  check('SoC falls monotonically under load', monotonic && bat.soc < 0.05, `cut off (${bat.cutoff || 'none'}) after ${(t / 60).toFixed(1)} min at SoC ${(bat.soc * 100).toFixed(1)}%, pack ${bat.tempC.toFixed(1)} °C`);
   check('pack heats by I²R', bat.tempC > 22, `${bat.tempC.toFixed(1)} °C after a 60 A discharge`);
 }
 

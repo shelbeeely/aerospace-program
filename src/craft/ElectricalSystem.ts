@@ -159,14 +159,13 @@ export class ElectricalSystem {
     this.generators.forEach((g, i) => (g.current = genMax > 0 ? (iGen * genAvail[i]) / genMax : 0));
 
     // --- Loads.
-    for (const m of this.motors) {
-      m.busVoltage = v;
-      m.supply = res.supply;
-    }
+    // A brownout already shows as a sagging bus, which limits motor torque by itself.
+    for (const m of this.motors) m.busVoltage = v;
     let essentialFitted = false;
     let essentialOn = false;
     for (const a of this.avionics) {
-      a.powered = this.powered && a.demand > 0;
+      // Brownout (sources saturated) starves the electronics too.
+      a.powered = this.powered && res.supply >= 0.9 && !a.failed && !a.shed;
       if (a.essential) {
         essentialFitted = true;
         if (a.powered) essentialOn = true;

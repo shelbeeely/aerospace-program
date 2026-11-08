@@ -344,7 +344,11 @@ export class Craft {
     }
     // The bus is stateless apart from what its modules hold (SoC, failures), so relinking after
     // mass updates or lost parts keeps the charge.
-    if (!ElectricalSystem.needed(this.modules)) this.electrical = null;
+    if (!ElectricalSystem.needed(this.modules)) {
+      // Lost its last electrical part (or never had one): the flight computer is self-powered.
+      this.electrical = null;
+      for (const m of this.modules) if (m instanceof FlightController) m.powered = true;
+    }
     else if (this.electrical) this.electrical.link(this.modules);
     else this.electrical = new ElectricalSystem(this.modules);
   }

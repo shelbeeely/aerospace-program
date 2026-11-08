@@ -200,8 +200,9 @@ export interface DragDef {
 /**
  * Rechargeable battery pack (LiPo, lead-acid...). Open-circuit voltage follows the state of
  * charge between cellVmin (empty) and cellVmax (full); under load the terminal voltage sags
- * by I·R and the pack heats by I²R. It disconnects (protection cutoff) when a cell's terminal
- * voltage drops below cellVmin under load, or when it overheats. Mass belongs to the part.
+ * by I·R and the pack heats by I²R. It disconnects (protection cutoff) when it is empty, when a
+ * cell's terminal voltage sags below cellVmin under load (with a small margin, see
+ * TUNING.batteryCutoffFraction), or when it overheats. Mass belongs to the part.
  */
 export interface BatteryDef {
   type: 'battery';
@@ -243,7 +244,7 @@ export interface GeneratorDef {
   offset?: Vec3Tuple;
   /** Rated output current (A). */
   ratedAmps: number;
-  /** Engine spool (0..1) below which it gives nothing; full output 0.15 above it. Default 0.2. */
+  /** Engine spool (0..1) below which it gives nothing; full output 0.15 above it. Default 0.05. */
   minRpmFraction?: number;
 }
 

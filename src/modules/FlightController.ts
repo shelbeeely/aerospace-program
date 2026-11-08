@@ -35,6 +35,8 @@ export class FlightController implements ForceModule {
   readonly def: FlightControllerDef;
 
   private mix: MixEntry[] = [];
+  /** Every rotor this controller drives (all of them get nothing when it loses power). */
+  private managed: Rotor[] = [];
   private mainRotors: Rotor[] = [];
   private tailRotors: Rotor[] = [];
   private tailSigns: number[] = [];
@@ -58,6 +60,7 @@ export class FlightController implements ForceModule {
   link(modules: readonly ForceModule[], com?: THREE.Vector3, mass?: number): void {
     const rotors = modules.filter((m): m is Rotor => m instanceof Rotor);
     for (const r of rotors) r.managed = true;
+    this.managed = rotors;
     const c = com ?? new THREE.Vector3();
     this.massKg = mass ?? this.massKg;
     if (this.def.mode === 'multirotor') {
@@ -95,12 +98,10 @@ export class FlightController implements ForceModule {
     if (!this.powered) {
       // Dead flight computer: every rotor it drives gets no command (motors stop, governed
       // rotors are left to windmill).
-      for (const m of this.mix) m.rotor.command = 0;
-      for (const r of this.mainRotors) {
+      for (const r of this.managed) {
         r.command = 0;
         r.cyclicPitch = r.cyclicRoll = 0;
       }
-      for (const r of this.tailRotors) r.command = 0;
       this.yawIntegral = 0;
       return;
     }

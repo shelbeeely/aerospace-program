@@ -120,8 +120,9 @@ export class Battery implements ForceModule {
     const heat = amps * amps * this.resistance;
     const cooling = (this.thermalMass / TUNING.batteryCoolingTime) * (this.tempC - ambientC);
     this.tempC += ((heat - cooling) / this.thermalMass) * dt;
-    // Under-voltage: a cell below Vmin under load for longer than a short transient, or empty.
-    if (amps > 0 && (volts / d.cells < d.cellVmin || this.soc <= 0)) this.lowTime += dt;
+    // Under-voltage: a cell sagging below the protection threshold (a little under its empty
+    // resting voltage, ~3.0 V for LiPo) for longer than a short transient, or the pack is empty.
+    if (amps > 0 && (volts / d.cells < TUNING.batteryCutoffFraction * d.cellVmin || this.soc <= 0)) this.lowTime += dt;
     else this.lowTime = 0;
     if (this.lowTime > TUNING.batteryCutoffDelay) this.cutoff = 'undervoltage';
     if (this.tempC > this.maxTempC) this.cutoff = 'overheat';

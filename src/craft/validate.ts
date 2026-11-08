@@ -51,7 +51,7 @@ export function validateCraft(input: unknown): string[] {
       const at = `parts[${i}]${p?.id ? ` (${p.id})` : ''}`;
       if (mods.some((m) => m?.type === 'motor')) {
         if (!has('battery')) e.push(`${at}: a motor needs a battery somewhere on the craft`);
-        if (!mods.some((m) => m?.type === 'rotor')) e.push(`${at}: a motor drives the rotor on its own part: add a rotor to this part`);
+        if (mods.filter((m) => m?.type === 'rotor').length !== 1) e.push(`${at}: a motor drives the one rotor on its own part: put exactly one rotor on this part`);
         if (mods.filter((m) => m?.type === 'motor').length > 1) e.push(`${at}: at most one motor per part`);
       }
       if (mods.some((m) => m?.type === 'generator') && !has('engine')) e.push(`${at}: a generator needs an engine on the craft to drive it`);
@@ -146,8 +146,8 @@ export function validateCraft(input: unknown): string[] {
         break;
       case 'battery':
         if (!isNum(m.cells, 1, 400) || !Number.isInteger(m.cells)) e.push(`${at}: battery cells must be an integer 1..400`);
-        if (!isNum(m.capacityAh, 1e-3, 1e5) || m.capacityAh <= 0) e.push(`${at}: capacityAh must be > 0`);
-        if (!isNum(m.cellResistance, 1e-6, 10) || m.cellResistance <= 0) e.push(`${at}: cellResistance must be > 0 (Ω per cell)`);
+        if (!isNum(m.capacityAh, 1e-3, 1e5)) e.push(`${at}: capacityAh must be 0.001..1e5 Ah`);
+        if (!isNum(m.cellResistance, 1e-6, 10)) e.push(`${at}: cellResistance must be 1e-6..10 Ω per cell`);
         if (!isNum(m.cellVmax, 0.5, 10) || !isNum(m.cellVmin, 0.1, 10) || !(m.cellVmax > m.cellVmin))
           e.push(`${at}: cellVmax/cellVmin must be volts with cellVmax > cellVmin (LiPo 4.2/3.3)`);
         if (m.thermalMass !== undefined && !isNum(m.thermalMass, 1, 1e8)) e.push(`${at}: thermalMass 1..1e8 J/K`);
@@ -155,12 +155,12 @@ export function validateCraft(input: unknown): string[] {
         if (m.soc !== undefined && !isNum(m.soc, 0, 1)) e.push(`${at}: soc 0..1`);
         break;
       case 'motor':
-        if (!isNum(m.kv, 1e-3, 1e5) || m.kv <= 0) e.push(`${at}: motor kv must be > 0 (rpm/V)`);
-        if (!isNum(m.rWinding, 1e-6, 100) || m.rWinding <= 0) e.push(`${at}: motor rWinding must be > 0 Ω`);
-        if (!isNum(m.maxCurrent, 1e-3, 1e5) || m.maxCurrent <= 0) e.push(`${at}: motor maxCurrent must be > 0 A`);
+        if (!isNum(m.kv, 1e-3, 1e5)) e.push(`${at}: motor kv must be 0.001..1e5 rpm/V`);
+        if (!isNum(m.rWinding, 1e-6, 100)) e.push(`${at}: motor rWinding must be 1e-6..100 Ω`);
+        if (!isNum(m.maxCurrent, 1e-3, 1e5)) e.push(`${at}: motor maxCurrent must be 0.001..1e5 A`);
         break;
       case 'generator':
-        if (!isNum(m.ratedAmps, 1e-3, 1e5) || m.ratedAmps <= 0) e.push(`${at}: generator ratedAmps must be > 0`);
+        if (!isNum(m.ratedAmps, 1e-3, 1e5)) e.push(`${at}: generator ratedAmps must be 0.001..1e5 A`);
         if (m.minRpmFraction !== undefined && !isNum(m.minRpmFraction, 0, 0.85)) e.push(`${at}: minRpmFraction 0..0.85`);
         break;
       case 'avionics':

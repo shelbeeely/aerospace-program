@@ -37,7 +37,7 @@ export class Generator implements ForceModule {
   /** Current the generator could deliver right now (A). */
   get available(): number {
     if (this.failed || !this.engine || this.engine.starved) return 0;
-    const min = this.def.minRpmFraction ?? 0.2;
+    const min = this.def.minRpmFraction ?? 0.05;
     return this.def.ratedAmps * Math.min(1, Math.max(0, (this.engine.spool - min) / 0.15));
   }
 

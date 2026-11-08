@@ -20,8 +20,6 @@ export class Motor implements ForceModule {
 
   /** Bus voltage available to the ESC (V), set by the ElectricalSystem each step. */
   busVoltage = 0;
-  /** Fraction of the requested power the bus could deliver (brownout < 1). */
-  supply = 1;
   /** Operating point from the last rotor step. */
   current = 0;
   torque = 0;
@@ -43,8 +41,7 @@ export class Motor implements ForceModule {
 
   /** Winding current available at full duty at rotor speed ω (A, ≥ 0). */
   maxCurrentAt(omega: number): number {
-    const v = this.busVoltage * this.supply;
-    return Math.min(this.def.maxCurrent, Math.max(0, (v - omega * this.kt) / this.def.rWinding));
+    return Math.min(this.def.maxCurrent, Math.max(0, (this.busVoltage - omega * this.kt) / this.def.rWinding));
   }
 
   /** Driving torque available at ω with full duty (N·m). */
@@ -69,7 +66,6 @@ export class Motor implements ForceModule {
 
   reset(): void {
     this.current = this.torque = this.omega = this.power = this.duty = 0;
-    this.supply = 1;
   }
 
   step(): void {}
