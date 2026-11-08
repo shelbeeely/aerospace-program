@@ -10,6 +10,7 @@ import { FuelTank } from '../modules/FuelTank.ts';
 import { createModule, stepOrder } from '../modules/registry.ts';
 import { Rotor } from '../modules/Rotor.ts';
 import { Wheel } from '../modules/Wheel.ts';
+import { ElectricalSystem } from './ElectricalSystem.ts';
 import { computeMassProperties, partQuaternion, type MassProperties } from './massProperties.ts';
 import type { CraftDef, PartDef } from './types.ts';
 
@@ -34,6 +35,9 @@ export class Craft {
   readonly detached = new Set<string>();
   /** Structural strength per part id (N). Infinity = unbreakable. */
   readonly strength = new Map<string, number>();
+
+  /** The craft's DC bus (batteries, generators, motors, avionics), or null if it has none. */
+  electrical: ElectricalSystem | null = null;
 
   private readonly colliders = new Map<string, RAPIER.Collider>();
   /** Reverse map: Rapier collider handle -> part id (for contact events). */
@@ -338,6 +342,27 @@ export class Craft {
       if (m instanceof FlightController) m.link(this.modules, this.massProps.com, this.massProps.mass);
       else m.link?.(this.modules);
     }
+    // The bus is stateless apart from what its modules hold (SoC, failures), so relinking after
+    // mass updates or lost parts keeps the charge.
+    if (this.electrical) {
+      // Keep an empty bus after the last electrical part breaks off: losing the battery must
+      // not turn the remaining flight computer into a legacy, self-powered controller.
+      this.electrical.link(this.modules);
+    } else if (ElectricalSystem.needed(this.modules)) this.electrical = new ElectricalSystem(this.modules);
+    else for (const m of this.modules) if (m instanceof FlightController) m.powered = true;
+  }
+
+  /** Solve the electrical bus for this step. Call before the force modules step. */
+  stepElectrical(dt: number, ambientC?: number): void {
+    this.electrical?.step(dt, ambientC);
+  }
+
+  /**
+   * An electrical surge of `energyJ` coupled into the craft's wiring (lightning strike, short):
+   * may burn out avionics and heats/damages the batteries. No effect without an electrical bus.
+   */
+  onElectricalSpike(energyJ: number): void {
+    this.electrical?.spike(energyJ);
   }
 
   // ---------------------------------------------------------------- geometry helpers
@@ -414,6 +439,7 @@ export class Craft {
     this.body.resetForces(true);
     this.body.resetTorques(true);
     for (const m of this.modules) m.reset();
+    this.electrical?.reset();
     this.water = 0;
     this.applyMass();
   }

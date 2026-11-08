@@ -197,6 +197,69 @@ export interface DragDef {
   cdA: number;
 }
 
+/**
+ * Rechargeable battery pack (LiPo, lead-acid...). Open-circuit voltage follows the state of
+ * charge between cellVmin (empty) and cellVmax (full); under load the terminal voltage sags
+ * by I·R and the pack heats by I²R. It disconnects (protection cutoff) when it is empty, when a
+ * cell's terminal voltage sags below cellVmin under load (with a small margin, see
+ * TUNING.batteryCutoffFraction), or when it overheats. Mass belongs to the part.
+ */
+export interface BatteryDef {
+  type: 'battery';
+  offset?: Vec3Tuple;
+  /** Cells in series (e.g. 12 for a 12S LiPo, 12 for a 24 V lead-acid). */
+  cells: number;
+  capacityAh: number;
+  /** Internal resistance per cell (Ω). LiPo ~0.002-0.01, lead-acid ~0.003-0.01. */
+  cellResistance: number;
+  /** Cell open-circuit voltage full / empty (LiPo 4.2 / 3.3, lead-acid 2.13 / 1.85). */
+  cellVmax: number;
+  cellVmin: number;
+  /** Heat capacity of the pack (J/K), ≈ 1000 × pack kg. Default from capacity and voltage. */
+  thermalMass?: number;
+  /** Over-temperature cutoff (°C). Default 70. */
+  maxTempC?: number;
+  /** Initial state of charge 0..1. Default 1. */
+  soc?: number;
+}
+
+/**
+ * Brushless motor driving the rotor on the same part, powered from the craft's battery bus.
+ * Kt = 60/(2π·kv) N·m/A; at full throttle I = (V − ω/Kv)/R, clipped to maxCurrent; τ = Kt·I.
+ */
+export interface MotorDef {
+  type: 'motor';
+  offset?: Vec3Tuple;
+  /** Speed constant (rpm per volt, no load). */
+  kv: number;
+  /** Winding resistance (Ω). */
+  rWinding: number;
+  /** Current limit (ESC/motor), A. */
+  maxCurrent: number;
+}
+
+/** Engine-driven generator/alternator: charges the battery and runs the bus once the engine turns. */
+export interface GeneratorDef {
+  type: 'generator';
+  offset?: Vec3Tuple;
+  /** Rated output current (A). */
+  ratedAmps: number;
+  /** Engine spool (0..1) below which it gives nothing; full output 0.15 above it. Default 0.05. */
+  minRpmFraction?: number;
+}
+
+/**
+ * Electrical load: instruments, radios, flight computer, lights. Non-essential loads are shed
+ * automatically when no generator is online, so the battery keeps the essentials running.
+ */
+export interface AvionicsDef {
+  type: 'avionics';
+  offset?: Vec3Tuple;
+  loadW: number;
+  /** Essential bus (flight instruments, flight controller). Default true. */
+  essential?: boolean;
+}
+
 export type ModuleDef =
   | AeroSurfaceDef
   | EngineDef
@@ -206,7 +269,11 @@ export type ModuleDef =
   | FuelTankDef
   | BuoyancyDef
   | RotorDef
-  | FlightControllerDef;
+  | FlightControllerDef
+  | BatteryDef
+  | MotorDef
+  | GeneratorDef
+  | AvionicsDef;
 
 export interface PartDef {
   id: string;

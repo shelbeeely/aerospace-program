@@ -315,6 +315,7 @@ export class Simulation {
     body.resetTorques(false);
     this.readBodyState();
     this.loadsThisStep.clear();
+    this.craft.stepElectrical(this.dt, this.atmosphere.air(this.com.y).temperature - 273.15);
     for (const m of this.craft.modules) m.step(this.ctx);
     this.craft.updateSoftCcd(this.dt);
 
@@ -499,6 +500,7 @@ export class Simulation {
       oat: r(air.temperature - 273.15, 1),
       densityAltitude: Math.round(densityAltitude(air.density)),
       vortexRing: r(rotors.reduce((a, x) => Math.max(a, x.vortexRing), 0)),
+      electrical: craft.electrical?.telemetry() ?? null,
       weather: {
         precipitation: r(precip.rate, 1),
         precipitationKind: precip.kind,
