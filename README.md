@@ -139,8 +139,12 @@ stall onset, and a toast announces connect/disconnect.
   rotorcraft the middle is hover. Drag sideways for yaw, which springs back.
 - **Right thumb:** a floating stick that centres where you touch. Drag down for nose up, sideways
   to roll. It springs back.
-- **BRAKE** (hold), and a top bar with reset, camera, previous/next craft, Studio, debug and
-  weather, help, and fullscreen (where the browser supports it).
+- **BRAKE** (hold). The top bar has **Hangar**, **Camera**, **Controls**, and **More**.
+  **More** contains reset, craft selection, weather, flaps, sound, photos and fullscreen.
+- **Create / Studio:** in the hangar, tap **Create**, type in **Describe your aircraft**, then
+  tap **Generate aircraft**. GitHub Pages requires your OpenRouter key under **Key & spend**.
+  Model choices are under **Models & generation settings**. Studio stays closed on mobile
+  until opened; its ✕ closes it. Controls and weather panels have labeled close buttons.
 - The layout adapts to orientation and notches (safe areas). Portrait gets a compact HUD strip
   and the Studio as a bottom sheet; landscape gets a corner HUD and the Studio as a side
   drawer. Phones render at capped resolution with smaller shadow maps to hold the frame

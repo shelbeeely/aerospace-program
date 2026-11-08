@@ -20,7 +20,7 @@ Separate Hangar editor and Flight modes; neon synthwave wireframe visuals; exact
 | 8 | Seeded lightning/strike geometry, electrical spike hook, fuel ignition, heat/spread/burnout, smoke wind and thunder | Merged; 22 hazard and cross-system checks passed |
 | 9 | Coast x > 2500; shared CPU/TSL Gerstner waves/surge; water drag/buoyancy/damage | Merged; 15 ocean checks including spatial surge and quake integration passed |
 | 10 | Analytic box/sphere/cylinder/plane ray tracer; RGBA32F packed shapes <=256; shadows, 1–2 reflections, Fresnel and accumulation | Merged; CPU intersections/packing and targeted WebGPU/WebGL2 readback passed |
-| 11 | Raster/RT selector, desktop hangar default, flight headroom, raster fallback, converged P capture | Implemented on batch/raytrace-mode; final validation underway |
+| 11 | Raster/RT selector, desktop hangar default, flight headroom, raster fallback, converged P capture | Merged; both backends, adaptive fallback, capture state and 16-sample P photo verified |
 
 ## Execution and preservation
 
@@ -38,6 +38,10 @@ The old plan said all workers were lost at c84027d. Remote inspection during thi
 
 ## Current checkpoint
 
-Units 1–10 merged and pushed through 86cf3a4. Unit 11 implemented/pushed separately and in final validation. Independent review fixed generator power conservation/controller brownouts, last-source detach behavior, GPU box parallel-boundary intersections, event-reset rendering, and cross-system shoreline origin preservation. Spatial TSL surge matches headless hurricane physics (tested error < 1e-12 m). Hurricane convection drives lightning; smoke uses the shared atmosphere contributor path. No new npm dependencies.
+All 11 units are integrated on `ccr-3c559407-13celq`. No npm dependencies added. Final combined validation passed: typecheck, sim (all 10 vehicle cards100/100), weather9, destruction11, electric26, buildings33, events22, ocean15, hazards24, raytrace22, raymode8, production build. Actual WebGPU and WebGL2 checks passed hangar/flight raster/RT selectors, traced capture, power-saver fallback and renderer target restoration. P downloaded a1280px PNG from16 accumulated samples at768px trace resolution, restoring orbit controls and render target. Ray tracing uses analytic scenery approximations; raster shows the full weather/effect/ocean-wave detail.
 
-Optional live OpenRouter catalog access is blocked in this environment. Browser visual checks use a catalog fixture and do not claim AI generation validation. All baseline 10 vehicle cards continue scoring 100/100. Final combined-branch regression and rendering checks follow the remaining merge.
+User's mobile feedback addressed: Studio stays closed in mobile hangar until Create is tapped, prompt and Generate aircraft come first, model settings collapse, controls toolbar has four readable44px actions, More holds secondary actions, help/weather have close buttons, and stale panels clear on mode changes. Portrait390x844 and landscape844x390 tested with touch emulation, prompt entry, open/close, Fly and throttle dragging. Render selector cannot cover mobile Fly. Instructions updated in README and the controls panel.
+
+Independent review fixed generator power conservation/controller brownouts, last-source detach behavior, GPU box boundary intersections, axis-aware lightning conductors, event-reset rendering, and shoreline origin preservation. Spatial TSL surge matches headless hurricane physics (tested error<1e-12m). Hurricane convection drives lightning; smoke uses the shared atmosphere contributor path.
+
+Optional live OpenRouter access is blocked in this environment. Browser checks use a catalog fixture; paid/live AI generation is not validated. Changes are pushed to the development branch; GitHub Pages deploys from main, so the public site remains unchanged until this branch is merged there.

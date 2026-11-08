@@ -23,7 +23,9 @@ const TOUCH: Array<[string, string]> = [
   ['Left thumb ↔', 'yaw'],
   ['Right thumb', 'stick: drag down = nose up, sideways = roll'],
   ['BRAKE', 'hold to brake'],
-  ['↺ ◎ ‹ › ✦ ⚙', 'reset, camera, craft, Studio, debug'],
+  ['Hangar', 'choose a craft or open Create / Studio'],
+  ['Camera', 'switch chase / orbit view'],
+  ['More', 'reset, craft selection, weather, flaps, sound and photos'],
 ];
 
 const PROFILE_TIPS: Record<string, string> = {
