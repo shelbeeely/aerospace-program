@@ -36,6 +36,8 @@ export class Craft {
   readonly strength = new Map<string, number>();
 
   private readonly colliders = new Map<string, RAPIER.Collider>();
+  /** Reverse map: Rapier collider handle -> part id (for contact events). */
+  private readonly partByCollider = new Map<number, string>();
   private massAtLastUpdate = 0;
 
   constructor(
@@ -68,13 +70,42 @@ export class Craft {
       .setCanSleep(false)
       .setCcdEnabled(true);
     this.body = world.createRigidBody(bodyDesc);
+    // Contact force events above ~3 g of the craft's weight feed the impact damage model.
+    const eventThreshold = TUNING.impactForceThreshold * mp.mass * TUNING.gravity;
     for (const part of def.parts) {
-      if (part.collider !== false) this.colliders.set(part.id, world.createCollider(colliderFor(part), this.body));
+      if (part.collider === false) continue;
+      const desc = colliderFor(part)
+        .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+        .setContactForceEventThreshold(eventThreshold);
+      const col = world.createCollider(desc, this.body);
+      this.colliders.set(part.id, col);
+      this.partByCollider.set(col.handle, part.id);
     }
     this.massAtLastUpdate = mp.mass;
     this.computeStrengths();
     this.linkModules();
   }
+
+  /** Part id owning a collider handle, or undefined if it isn't (any longer) one of ours. */
+  partIdForCollider(handle: number): string | undefined {
+    return this.partByCollider.get(handle);
+  }
+
+  /**
+   * Soft CCD: when fast, predict contacts about a step and a half ahead so thin obstacles are
+   * met before the body tunnels into them (hard CCD is always on as the backstop).
+   */
+  updateSoftCcd(dt: number): void {
+    const v = this.body.linvel();
+    const speed = Math.hypot(v.x, v.y, v.z);
+    // Quantised to 0.5 m so the WASM setter isn't called on every step.
+    const prediction = speed > TUNING.softCcdMinSpeed ? Math.min(50, Math.ceil(speed * dt * 3) / 2) : 0;
+    if (prediction !== this.softCcd) {
+      this.body.setSoftCcdPrediction(prediction);
+      this.softCcd = prediction;
+    }
+  }
+  private softCcd = 0;
 
   // ---------------------------------------------------------------- module views
   get aeroSurfaces(): AeroSurface[] {
@@ -184,6 +215,8 @@ export class Craft {
     const mp = this.massProps;
     this.body.setAdditionalMassProperties(mp.mass, mp.com, mp.principal, mp.principalFrame, true);
     this.massAtLastUpdate = mp.mass;
+    const eventThreshold = TUNING.impactForceThreshold * mp.mass * TUNING.gravity;
+    for (const col of this.colliders.values()) col.setContactForceEventThreshold(eventThreshold);
     this.linkModules();
   }
 
@@ -274,7 +307,10 @@ export class Craft {
     const vel = new THREE.Vector3(lv.x, lv.y, lv.z).add(w.clone().cross(r));
 
     const col = this.colliders.get(partId);
-    if (col) this.world.removeCollider(col, true);
+    if (col) {
+      this.partByCollider.delete(col.handle);
+      this.world.removeCollider(col, true);
+    }
     this.colliders.delete(partId);
     this.parts = this.parts.filter((p) => p.id !== partId);
     this.modules = this.modules.filter((m) => m.partId !== partId);
@@ -288,7 +324,9 @@ export class Craft {
         .setLinvel(vel.x, vel.y, vel.z)
         .setAngvel(w)
         .setLinearDamping(0.05)
-        .setAngularDamping(0.3),
+        .setAngularDamping(0.3)
+        // Fast debris (a wing shed at 300 m/s) must not tunnel through walls or the ground.
+        .setCcdEnabled(vel.length() > TUNING.debrisCcdSpeed),
     );
     const desc = colliderFor({ ...part, position: [0, 0, 0], rotationDeg: [0, 0, 0] }).setDensity(0).setMass(part.mass);
     this.world.createCollider(desc, debris);

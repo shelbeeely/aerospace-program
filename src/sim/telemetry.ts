@@ -37,6 +37,8 @@ export interface Telemetry {
   onGround: boolean;
   /** Ids of parts that have broken off. */
   brokenParts: string[];
+  /** Remaining impact hit points (0..1) of each attached, destructible part. */
+  partHp?: Record<string, number>;
   /** 0..1, how stalled the main wings are. */
   stall: number;
   /** Current control inputs actually applied. */

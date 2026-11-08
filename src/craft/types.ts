@@ -227,6 +227,11 @@ export interface PartDef {
    * Use 0 for unbreakable.
    */
   strength?: number;
+  /**
+   * Impact hit points (J of impact energy above tolerance). Omit for a default from the part's
+   * mass and volume. Use 0 for indestructible.
+   */
+  hp?: number;
 }
 
 export interface CraftDef {

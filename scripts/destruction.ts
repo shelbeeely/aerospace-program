@@ -1,0 +1,132 @@
+/**
+ * Headless destruction tests: impact damage, part HP and CCD. Run with `npm run destruction`.
+ *
+ * 1. Every built-in dropped from 0.5 m takes zero damage.
+ * 2. The trainer dropped from 30 m breaks parts.
+ * 3. A jet-like body at 300 m/s into a fixed 0.3 m thick wall never crosses the wall plane,
+ *    and the hit is reported as a contact-force event.
+ */
+import RAPIER from '@dimforge/rapier3d-compat';
+import { BUILTINS } from '../src/craft/builtins.ts';
+import { TEST_PLANE } from '../src/craft/testPlane.ts';
+import type { CraftDef } from '../src/craft/types.ts';
+import type { ControlInputs } from '../src/sim/controls.ts';
+import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
+
+await initPhysics();
+
+const idle: ControlInputs = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 };
+let failed = 0;
+const check = (ok: boolean, label: string, detail = '') => {
+  console.log(`${ok ? 'PASS' : 'FAIL'} ${label}${detail ? ` - ${detail}` : ''}`);
+  if (!ok) failed++;
+};
+const run = (sim: Simulation, seconds: number) => {
+  for (let i = 0, n = Math.round(seconds / sim.dt); i < n; i++) sim.step(idle);
+};
+/** Lift the craft `h` m above where it is, motionless, and let go. */
+const drop = (sim: Simulation, h: number) => {
+  const b = sim.craft.body;
+  const t = b.translation();
+  b.setTranslation({ x: t.x, y: t.y + h, z: t.z }, true);
+  b.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  b.setAngvel({ x: 0, y: 0, z: 0 }, true);
+};
+const minHp = (sim: Simulation) => Math.min(1, ...Object.values(sim.damage.fractions()));
+
+// ---------------------------------------------------------------- 1. gentle drops
+console.log('--- built-ins dropped from 0.5 m');
+for (const b of BUILTINS) {
+  const sim = new Simulation(b.craft);
+  run(sim, 3); // settle on the runway
+  drop(sim, 0.5);
+  run(sim, 4);
+  check(
+    !sim.damage.damaged && sim.failures.length === 0,
+    `${b.label}: 0.5 m drop, no damage`,
+    `min HP ${minHp(sim)}, failures [${sim.failures.map((f) => f.partId).join(', ')}]`,
+  );
+}
+
+// ---------------------------------------------------------------- 2. hard drop
+console.log('\n--- trainer dropped from 30 m');
+{
+  const sim = new Simulation(TEST_PLANE);
+  run(sim, 2);
+  drop(sim, 30);
+  run(sim, 6);
+  const impacts = sim.failures.filter((f) => f.cause === 'impact');
+  check(
+    impacts.length > 0 && sim.debris.length > 0,
+    'trainer: 30 m drop breaks parts',
+    `broken [${impacts.map((f) => f.partId).join(', ')}], debris ${sim.debris.length}, min HP ${minHp(sim)}, version ${sim.version}`,
+  );
+  // Losing a wing takes its lift with it: no AeroSurface of a detached part remains.
+  const orphan = sim.craft.aeroSurfaces.filter((s) => sim.craft.detached.has(s.partId));
+  check(orphan.length === 0, 'detached parts leave no aero surfaces behind');
+  // A reset rebuilds the craft at full health.
+  sim.resetToRunway();
+  check(!sim.damage.damaged && sim.craft.detached.size === 0 && minHp(sim) === 1, 'reset restores full HP');
+}
+
+// ---------------------------------------------------------------- 3. wall at 300 m/s
+console.log('\n--- jet into a 0.3 m wall at 300 m/s');
+{
+  const JET: CraftDef = {
+    name: 'Dart',
+    formatVersion: 1,
+    parts: [
+      {
+        id: 'fuselage',
+        kind: 'fuselage',
+        mass: 4000,
+        position: [0, 0, 0],
+        shape: { type: 'box', size: [1.4, 1.4, 12] },
+        color: '#888',
+        modules: [{ type: 'body', length: 12, diameter: 1.4, cdFront: 0.1 }],
+      },
+      { id: 'wing.left', kind: 'wing', mass: 300, position: [-2.7, 0, 1], shape: { type: 'box', size: [4, 0.15, 2.5] }, color: '#aaa', modules: [{ type: 'aero', span: 4, chord: 2.5 }] },
+      { id: 'wing.right', kind: 'wing', mass: 300, position: [2.7, 0, 1], shape: { type: 'box', size: [4, 0.15, 2.5] }, color: '#aaa', modules: [{ type: 'aero', span: 4, chord: 2.5 }] },
+    ],
+  };
+  const sim = new Simulation(JET);
+  const wallZ = -200;
+  const half = 0.15;
+  const wallBody = sim.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, 100, wallZ));
+  const wall = sim.world.createCollider(RAPIER.ColliderDesc.cuboid(60, 60, half), wallBody);
+  let wallEvents = 0;
+  let peakForce = 0;
+  sim.onContactForce((e) => {
+    if (e.collider1 === wall.handle || e.collider2 === wall.handle) {
+      wallEvents++;
+      peakForce = Math.max(peakForce, e.totalForceMagnitude);
+    }
+  });
+
+  const body = sim.craft.body;
+  body.setTranslation({ x: 0, y: 100, z: 0 }, true);
+  body.setLinvel({ x: 0, y: 0, z: -300 }, true);
+  const back = wallZ - half;
+  let crossed = false;
+  let deepest = Infinity;
+  for (let i = 0; i < 240; i++) {
+    sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 0 });
+    // Every remaining airframe collider centre must stay on the near side of the wall.
+    for (let c = 0; c < body.numColliders(); c++) {
+      const z = body.collider(c).translation().z;
+      deepest = Math.min(deepest, z);
+      if (z < back) crossed = true;
+    }
+  }
+  check(!crossed, 'craft never crosses the wall plane', `closest collider centre z=${deepest.toFixed(2)} (wall back face ${back})`);
+  check(wallEvents > 0, 'contact force event recorded for the wall hit', `${wallEvents} events, peak ${(peakForce / 1e6).toFixed(1)} MN`);
+  const debrisThrough = sim.debris.filter((d) => d.body.translation().z < back).length;
+  check(debrisThrough === 0, 'no debris tunnels through the wall', `debris ${sim.debris.length}, failures [${sim.failures.map((f) => `${f.partId}:${f.cause}`).join(', ')}]`);
+  check(sim.explosionResets === 0, 'no explosion resets');
+}
+
+if (failed) {
+  console.error(`\n${failed} destruction check(s) failed`);
+  process.exit(1);
+}
+console.log('\nall destruction checks passed');

@@ -6,6 +6,7 @@ import { validateCraft } from '../craft/validate.ts';
 import type { DebugForce, ForceKind, StepContext } from '../modules/ForceModule.ts';
 import { TUNING } from '../tuning.ts';
 import { Atmosphere, calmWeather, densityAltitude, type CloudSample, type Precipitation, type WeatherSettings } from './atmosphere.ts';
+import { DamageModel, type ContactForceHandler, type ContactForceInfo } from './damage.ts';
 import { neutralControls, sanitizeControls, type ControlInputs } from './controls.ts';
 import { LAYOUT } from './layout.ts';
 import type { Telemetry } from './telemetry.ts';
@@ -53,8 +54,21 @@ export class Simulation {
   /** Bumped whenever the craft's structure changes (new craft, part broke off, rebuilt). */
   version = 0;
   /** Parts that broke off since the last reset, with the load that broke them. */
-  readonly failures: Array<{ partId: string; load: number; strength: number; time: number }> = [];
+  readonly failures: Array<{ partId: string; load: number; strength: number; time: number; cause?: 'load' | 'impact' }> = [];
   debris: Debris[] = [];
+  /** Contact events of every world step (one persistent queue; drained each step). */
+  readonly events = new RAPIER.EventQueue(true);
+  /** Per-part impact hit points. */
+  damage: DamageModel;
+  private readonly contactForceHandlers: ContactForceHandler[] = [];
+  private readonly contactInfo: ContactForceInfo = {
+    collider1: 0,
+    collider2: 0,
+    totalForceMagnitude: 0,
+    maxForceMagnitude: 0,
+    dt: 0,
+    time: 0,
+  };
 
   /** Record per-module forces each step (F3 overlay). Off by default to avoid the overhead. */
   recordForces = false;
@@ -98,6 +112,12 @@ export class Simulation {
 
     const { position, rotation } = this.spawnPose(null);
     this.craft = new Craft(this.world, craftDef, position, rotation);
+    this.damage = new DamageModel(this.craft);
+    this.onContactForce((e) => {
+      // Fresh debris spawns overlapping the airframe; separating them isn't an impact.
+      if (this.isFreshDebris(e.collider1) || this.isFreshDebris(e.collider2)) return;
+      this.damage.onContact(e);
+    });
 
     const self = this;
     this.ctx = {
@@ -153,6 +173,40 @@ export class Simulation {
     this.resetToRunway();
   }
 
+  /**
+   * Subscribe to contact-force events (craft colliders above ~3 g of weight, plus any collider
+   * another system flags with CONTACT_FORCE_EVENTS). Handlers run synchronously after each
+   * world step. Returns an unsubscribe function.
+   */
+  onContactForce(handler: ContactForceHandler): () => void {
+    this.contactForceHandlers.push(handler);
+    return () => {
+      const i = this.contactForceHandlers.indexOf(handler);
+      if (i >= 0) this.contactForceHandlers.splice(i, 1);
+    };
+  }
+
+  /** Debris collider handle -> sim time it broke off. */
+  private readonly debrisSpawn = new Map<number, number>();
+  private isFreshDebris(handle: number): boolean {
+    const t = this.debrisSpawn.get(handle);
+    return t !== undefined && this.time - t < 1;
+  }
+
+  private dispatchContactForces(deliver = true): void {
+    const info = this.contactInfo;
+    info.dt = this.dt;
+    info.time = this.time;
+    this.events.drainContactForceEvents((e) => {
+      if (!deliver || !this.contactForceHandlers.length) return;
+      info.collider1 = e.collider1();
+      info.collider2 = e.collider2();
+      info.totalForceMagnitude = e.totalForceMagnitude();
+      info.maxForceMagnitude = e.maxForceMagnitude();
+      for (const h of this.contactForceHandlers) h(info);
+    });
+  }
+
   private bindCraft(): void {
     (this.ctx as { body: RAPIER.RigidBody }).body = this.craft.body;
     (this.ctx as { hasFuelSystem: boolean }).hasFuelSystem = this.craft.fuelTanks.length > 0;
@@ -193,7 +247,8 @@ export class Simulation {
     const n = this.craft.body.numColliders();
     for (let i = 0; i < n && !touching; i++) {
       this.world.contactPair(this.groundCollider, this.craft.body.collider(i), (m) => {
-        if (m.numContacts() > 0) touching = true;
+        // Ignore speculative (predicted, not yet touching) contacts from soft CCD.
+        for (let j = 0; j < m.numContacts() && !touching; j++) if (m.contactDist(j) < 0.02) touching = true;
       });
     }
     return touching;
@@ -203,9 +258,11 @@ export class Simulation {
     // Broken craft are rebuilt from their definition; debris is cleared away.
     for (const d of this.debris) this.world.removeRigidBody(d.body);
     this.debris = [];
+    this.debrisSpawn.clear();
     if (this.craft.detached.size) this.rebuildCraft(this.craft.def);
     this.failures.length = 0;
     this.filteredLoads.clear();
+    this.damage.reset(this.craft);
     const { position, rotation } = this.spawnPose(this.craft);
     this.craft.reset(position, rotation);
     this.atmosphere.restart();
@@ -259,11 +316,16 @@ export class Simulation {
     this.readBodyState();
     this.loadsThisStep.clear();
     for (const m of this.craft.modules) m.step(this.ctx);
+    this.craft.updateSoftCcd(this.dt);
 
-    this.world.step();
+    this.world.step(this.events);
     this.readBodyState();
+    const resets = this.explosionResets;
     this.guardAgainstExplosion();
+    // After an explosion reset the step's contacts belong to a craft that's gone: drop them.
+    this.dispatchContactForces(resets === this.explosionResets);
     this.checkStructure();
+    this.applyImpactDamage();
     this.craft.updateFuelMass();
     this.updateWeather();
 
@@ -320,16 +382,32 @@ export class Simulation {
       const strength = this.craft.strength.get(partId) ?? Infinity;
       if (f > strength) broken.push([partId, f, strength]);
     }
-    for (const [partId, load, strength] of broken) {
-      if (this.craft.parts.length <= 1) break; // never detach the last piece
-      const part = this.craft.parts.find((p) => p.id === partId);
-      const body = this.craft.detachPart(partId);
-      if (part && body) {
-        this.debris.push({ part, body });
-        this.failures.push({ partId, load: Math.round(load), strength: Math.round(strength), time: this.time });
-        this.filteredLoads.delete(partId);
-        this.version++;
-      }
+    for (const [partId, load, strength] of broken) this.breakPart(partId, load, strength, 'load');
+  }
+
+  /** Detach parts whose impact HP ran out (same failure path as structural overload). */
+  private applyImpactDamage(): void {
+    for (const f of this.damage.flush(this.time)) this.breakPart(f.partId, f.load, f.strength, 'impact');
+  }
+
+  /** Break a part off: debris body, failure record, structure version bump. */
+  private breakPart(partId: string, load: number, strength: number, cause: 'load' | 'impact'): void {
+    if (this.craft.parts.length <= 1) return; // never detach the last piece
+    const part = this.craft.parts.find((p) => p.id === partId);
+    const body = this.craft.detachPart(partId);
+    if (part && body) {
+      this.debris.push({ part, body });
+      for (let i = 0; i < body.numColliders(); i++) this.debrisSpawn.set(body.collider(i).handle, this.time);
+      this.failures.push({
+        partId,
+        load: Math.round(load),
+        strength: Number.isFinite(strength) ? Math.round(strength) : 0,
+        time: this.time,
+        cause,
+      });
+      this.filteredLoads.delete(partId);
+      this.damage.remove(partId);
+      this.version++;
     }
   }
 
@@ -415,6 +493,7 @@ export class Simulation {
       onGround,
       stall: r(stallW > 0 ? stallSum / stallW : 0),
       brokenParts: [...craft.detached],
+      partHp: this.damage.fractions(),
       controls: { ...this.controls },
       mach: r(speed / air.speedOfSound, 3),
       oat: r(air.temperature - 273.15, 1),
