@@ -13,6 +13,7 @@ import { COAST, LAYOUT } from './layout.ts';
 import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
+import { buildStaticWorld, type StaticWorld } from '../world/staticWorld.ts';
 import type { Telemetry } from './telemetry.ts';
 
 function assertValidCraft(def: CraftDef): void {
@@ -67,6 +68,8 @@ export class Simulation {
   damage: DamageModel;
   /** Breakable block buildings and their rubble (src/world). */
   readonly town: Town;
+  /** Solid neon city and airport structures (static colliders). */
+  readonly staticWorld: StaticWorld;
   readonly fire = new FireSystem();
   readonly lightning: LightningSystem;
   private readonly smokeWind = (point: THREE.Vector3, _time: number, out: THREE.Vector3): void => {
@@ -138,6 +141,7 @@ export class Simulation {
     const seabed = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation((COAST.x + half) / 2, -COAST.depth - 5, 0));
     this.world.createCollider(RAPIER.ColliderDesc.cuboid((half - COAST.x) / 2, 5, half), seabed);
     this.town = new Town(this.world);
+    this.staticWorld = buildStaticWorld(this.world);
 
     const { position, rotation } = this.spawnPose(null);
     this.craft = new Craft(this.world, craftDef, position, rotation);
@@ -443,6 +447,7 @@ export class Simulation {
       if (top) top.y += TUNING.blockSize / 2;
       if (top) targets.push({ id: `building:${building.def.id}`, position: top });
     }
+    for (const c of this.staticWorld.conductors) targets.push({ id: c.id, position: new THREE.Vector3(c.x, c.y, c.z) });
     return targets;
   }
 
