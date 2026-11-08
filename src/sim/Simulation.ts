@@ -86,6 +86,9 @@ export class Simulation {
 
   controls: ControlInputs = neutralControls();
   private readonly groundCollider: RAPIER.Collider;
+  private readonly groundBody: RAPIER.RigidBody;
+  private readonly groundMotion = new THREE.Vector3();
+  private groundMoving = false;
   private readonly linvel = new THREE.Vector3();
   private readonly angvel = new THREE.Vector3();
   private readonly com = new THREE.Vector3();
@@ -108,6 +111,7 @@ export class Simulation {
 
     const half = LAYOUT.groundSize / 2;
     const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -5, 0));
+    this.groundBody = ground;
     this.groundCollider = this.world.createCollider(
       RAPIER.ColliderDesc.cuboid(half, 5, half).setFriction(0.8).setRestitution(0.1),
       ground,
@@ -143,7 +147,7 @@ export class Simulation {
       cloud: (p) => this.atmosphere.cloudAt(p, 0, this.cloudSample),
       groundWetness: 0,
       hasFuelSystem: false,
-      groundHeight: () => 0,
+      groundHeight: () => self.groundMotion.y,
       pointVelocity(p, out) {
         _tmp.copy(p).sub(self.com);
         return out.crossVectors(self.angvel, _tmp).add(self.linvel);
@@ -273,6 +277,10 @@ export class Simulation {
     const { position, rotation } = this.spawnPose(this.craft);
     this.craft.reset(position, rotation);
     this.atmosphere.restart();
+    this.groundMotion.set(0, 0, 0);
+    this.groundBody.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+    this.groundBody.setTranslation({ x: 0, y: -5, z: 0 }, true);
+    this.groundMoving = false;
     this.settleGroundWater();
     this.controls = neutralControls();
     this.prevVelocity.set(0, 0, 0);
@@ -317,6 +325,7 @@ export class Simulation {
     while (this.debugForces.length) this.forcePool.push(this.debugForces.pop()!);
 
     this.atmosphere.advance(this.dt);
+    this.updateGroundMotion();
     const body = this.craft.body;
     body.resetForces(false);
     body.resetTorques(false);
@@ -348,6 +357,21 @@ export class Simulation {
     this.time += this.dt;
     this.steps++;
     this.lastStepMs = performance.now() - t0;
+  }
+
+  /** Drive the runway with analytic ground motion; fixed outside quakes preserves normal cards. */
+  private updateGroundMotion(): void {
+    const moving = this.atmosphere.events.active.some(e => e.kind === 'earthquake');
+    if (moving) {
+      if (!this.groundMoving) this.groundBody.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+      this.atmosphere.events.groundDisplacement(this.groundMotion);
+      this.groundBody.setNextKinematicTranslation({ x: this.groundMotion.x, y: -5 + this.groundMotion.y, z: this.groundMotion.z });
+    } else if (this.groundMoving) {
+      this.groundMotion.set(0, 0, 0);
+      this.groundBody.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+      this.groundBody.setTranslation({ x: 0, y: -5, z: 0 }, true);
+    }
+    this.groundMoving = moving;
   }
 
   private readonly groundProbe = new THREE.Vector3();

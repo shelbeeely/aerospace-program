@@ -27,6 +27,8 @@ import { TUNING } from './tuning.ts';
 import { builtinEntry, CAP_STORAGE, KEY_STORAGE, Studio } from './ui/Studio.ts';
 import { HangarView } from './render/HangarView.ts';
 import { applyModeClass, modeFromQuery, parseMode, type AppMode } from './app/Mode.ts';
+import { DisasterView } from './render/DisasterView.ts';
+import type { EventKind } from './sim/events/WorldEvents.ts';
 import { PostFX, QUALITIES, type Quality } from './render/postfx.ts';
 
 async function start() {
@@ -74,6 +76,7 @@ async function start() {
   const worldView = new WorldView(scene, renderer);
   if (mobile) worldView.sun.shadow.mapSize.set(1024, 1024);
   const weatherView = new WeatherView(scene, worldView);
+  const disasterView = new DisasterView(scene);
   // The hangar: a separate scene with its own orbit camera; its lighting is baked once here.
   const hangarView = new HangarView(renderer, canvas);
   hangarView.bakeEnvironment();
@@ -193,6 +196,19 @@ async function start() {
     presetSel.value = urlWx;
     setPreset(urlWx);
   } else applyWeather();
+
+  // Explicit disaster triggers keep ordinary flights calm. Place the event safely to the left.
+  const triggerDisaster = (kind: EventKind) => sim.atmosphere.events.trigger(kind, {
+    x: sim.position.x - (kind === 'hurricane' ? 1200 : 500), z: sim.position.z - 500,
+  });
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-disaster]')) {
+    button.addEventListener('click', () => {
+      const kind = button.dataset.disaster;
+      if (kind === 'clear') sim.atmosphere.events.clear();
+      else triggerDisaster(kind as EventKind);
+      button.blur();
+    });
+  }
 
   const flightLog = new FlightLog();
   const reset = () => {
@@ -374,6 +390,8 @@ async function start() {
         flightFX.setQuality(q);
         hangarFX.setQuality(q);
       },
+      worldEvents: sim.atmosphere.events,
+      triggerDisaster,
       client,
       library,
       studio,
@@ -497,6 +515,7 @@ async function start() {
     velocity.set(v.x, v.y, v.z);
     rig.update(dt, renderPos, renderRot, velocity);
     worldView.update(camera, renderPos);
+    disasterView.update(sim.atmosphere.events);
     weatherView.update(dt, camera, velocity, sim.atmosphere, sim.groundWetness, sim.atmosphere.cloudAt(camera.position, 0).inCloud);
 
     renderOffset.copy(renderPos).sub(sim.position);

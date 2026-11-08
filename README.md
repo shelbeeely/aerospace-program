@@ -317,6 +317,21 @@ geometry (incidence, dihedral, washout, control throws, spring rates) is in `tes
 After a change, `npm run sim` prints lift-off speed, stall altitude loss and the instability
 test, so you can see the effect without flying.
 
+## Disasters
+
+F3 has explicit **Tornado**, **Hurricane**, **Earthquake**, and **Clear events** buttons.
+Ordinary flights have no scheduled disasters. Tornadoes move along seeded paths, add
+Rankine-vortex swirl/inflow/updrafts, and appear as rotating neon rings. Hurricanes add a
+Holland wind field and spiral rain bands; earthquakes physically shake the runway with an
+analytic, seeded ground motion. Reset clears the event timeline.
+
+The headless API is `sim.atmosphere.events`: `trigger(kind, { x, z, duration, strength })`,
+`schedule(kind, absoluteWeatherTime, options)`, `clear()`, `groundAcceleration()` and
+`surgeHeight(x, z)`. Weather time restarts on reset. Additional smoke/wind sources may register
+an additive callback in `sim.atmosphere.windContributors`. Browser helpers are
+`game.worldEvents` and `game.triggerDisaster(kind)`. `npm run events` checks deterministic
+wind, surge, rain, scheduler lifecycle and actual Rapier ground motion.
+
 ## Roadmap
 
 1. **Flight core** ✅

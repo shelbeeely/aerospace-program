@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { TUNING } from '../tuning.ts';
+import { WorldEvents } from './events/WorldEvents.ts';
 
 /** State of the air at one altitude. */
 export interface AirState {
@@ -189,6 +190,9 @@ interface Wave {
 export class Atmosphere {
   settings: WeatherSettings;
   time = 0;
+  readonly events: WorldEvents;
+  /** Additive environmental sources (e.g. fire plumes); callbacks accumulate into out. */
+  readonly windContributors: Array<(p: THREE.Vector3, time: number, out: THREE.Vector3) => void> = [];
   private waves: Wave[] = [];
   private rand: () => number;
   // Current gust: direction, peak, start time, duration.
@@ -197,6 +201,7 @@ export class Atmosphere {
 
   constructor(settings: WeatherSettings = calmWeather()) {
     this.settings = { ...settings };
+    this.events = new WorldEvents(settings.seed);
     this.rand = mulberry32(settings.seed);
     this.reseed(settings.seed);
   }
@@ -216,6 +221,7 @@ export class Atmosphere {
   private reseed(seed: number): void {
     this.rand = mulberry32(seed);
     this.time = 0;
+    this.events.reset(seed);
     this.waves = [];
     // A few octaves per axis: long slow swells down to short quick bumps.
     for (let i = 0; i < 12; i++) {
@@ -279,6 +285,8 @@ export class Atmosphere {
       const v = this.cellValue(p.x, p.z);
       rate *= Math.max(0, Math.min(1, (v - (1 - cover)) / 0.1));
     }
+    // Event rain bands are independent of the background preset's cloud coverage.
+    if (h <= 2500) rate += this.events.rainAt(p.x, p.z);
     o.rate = rate;
     if (rate <= 0) {
       o.kind = 'none';
@@ -338,6 +346,7 @@ export class Atmosphere {
 
   advance(dt: number): void {
     this.time += dt;
+    this.events.advance(dt);
     const s = this.settings;
     if (s.gustStrength > 0 && this.time >= this.nextGust) {
       // New gust, mostly along the mean wind (or random if calm), with some vertical.
@@ -395,6 +404,8 @@ export class Atmosphere {
       out.z += uz * sigma * 0.5;
     }
     this.convection(p, h, out);
+    this.events.addWind(p, out);
+    for (const contributor of this.windContributors) contributor(p, this.time, out);
     return out;
   }
 }

@@ -91,6 +91,14 @@
       <label>Thermals <input id="w-thermal" type="range" min="0" max="1" step="0.1" value="0" /></label>
       <label>Storm <input id="w-storm" type="range" min="0" max="1" step="0.1" value="0" /></label>
       <label>Visibility (m) <input id="w-vis" type="range" min="200" max="30000" step="100" value="30000" /></label>
+      <h3>Disasters</h3>
+      <div class="disaster-controls">
+        <button type="button" data-disaster="tornado">Tornado</button>
+        <button type="button" data-disaster="hurricane">Hurricane</button>
+        <button type="button" data-disaster="earthquake">Earthquake</button>
+        <button type="button" data-disaster="clear">Clear events</button>
+      </div>
+      <p class="muted small">Triggers affect flight physics. Reset clears events.</p>
       <div class="legend">
         <span style="color:#33ff55">■ lift</span>
         <span style="color:#ff3333">■ drag</span>
