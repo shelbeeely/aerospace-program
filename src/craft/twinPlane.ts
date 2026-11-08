@@ -67,6 +67,8 @@ const nacelle = (side: -1 | 1): PartDef => ({
       propDirection: side < 0 ? 1 : -1,
     },
     { type: 'body', length: 2.3, diameter: 0.8, cdFront: 0.15 },
+    // One alternator per engine: either can carry the bus.
+    { type: 'generator', ratedAmps: 70 },
   ],
 });
 
@@ -104,7 +106,10 @@ export const TWIN_PLANE: CraftDef = {
       position: [0, 0, -0.3],
       shape: { type: 'box', size: [1.3, 1.4, 5.0] },
       color: '#e8e4da',
-      modules: [{ type: 'body', length: 6.2, diameter: 1.3, offset: [0, 0, -0.6], cdFront: 0.15 }],
+      modules: [
+        { type: 'body', length: 6.2, diameter: 1.3, offset: [0, 0, -0.6], cdFront: 0.15 },
+        { type: 'battery', cells: 12, capacityAh: 15, cellResistance: 0.003, cellVmax: 2.13, cellVmin: 1.85 },
+      ],
     },
     {
       id: 'cabin',
@@ -113,6 +118,10 @@ export const TWIN_PLANE: CraftDef = {
       position: [0, 0.85, -0.3],
       shape: { type: 'box', size: [1.1, 0.5, 2.4] },
       color: '#5b8fb9',
+      modules: [
+        { type: 'avionics', loadW: 250, essential: true },
+        { type: 'avionics', loadW: 400, essential: false },
+      ],
     },
     {
       id: 'tailcone',

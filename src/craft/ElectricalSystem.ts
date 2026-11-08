@@ -250,7 +250,7 @@ export class ElectricalSystem {
       generatorAmps: r(this.generatorCurrent, 1),
       generatorOnline: this.generators.some((g) => g.available > 0),
       loadW: Math.round(this.loadW),
-      failed: this.avionics.filter((a) => a.failed).map((a) => a.partId),
+      failed: [...new Set(this.avionics.filter((a) => a.failed).map((a) => a.partId))],
     };
   }
 }
