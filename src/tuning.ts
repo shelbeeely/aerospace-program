@@ -138,6 +138,59 @@ export const TUNING = {
   /** Debris faster than this (m/s) gets continuous collision detection. */
   debrisCcdSpeed: 30,
 
+  // ---------------------------------------------------------------- electrical
+  /** Battery temperature at spawn and the air it cools into (°C). */
+  batteryAmbientC: 20,
+  /** Battery convective cooling time constant (s). */
+  batteryCoolingTime: 600,
+  /** A cell must sit below its Vmin under load this long (s) before the pack cuts off. */
+  batteryCutoffDelay: 0.5,
+  /**
+   * Under-load cutoff per cell as a fraction of cellVmin (the empty resting voltage): 0.9 puts
+   * a LiPo's at ~3.0 V, so hard climbs on a part-charged pack sag without tripping it.
+   */
+  batteryCutoffFraction: 0.9,
+  /**
+   * Generator regulator setpoint as a multiple of the battery's full open-circuit voltage: a
+   * little above it, so the battery recharges and then floats at a trickle.
+   */
+  generatorRegulation: 1.02,
+  /** Generator source resistance in regulation (Ω): how stiffly it holds the setpoint. */
+  generatorResistance: 0.01,
+  /** Avionics drop out below this fraction of the battery's full voltage. */
+  avionicsMinVoltage: 0.7,
+  /** Spike energy (J) that burns out a non-essential avionics box; essential ones take 4×. */
+  avionicsSpikeTolerance: 2000,
+  /** Fraction of a spike's energy that ends up as heat in the battery. */
+  batterySpikeHeatFraction: 0.3,
+  /** Spike energy (J) that doubles the battery's internal resistance (cell damage). */
+  batterySpikeDamageJ: 50000,
+  // ---------------------------------------------------------------- block buildings (src/world)
+  /** Edge length of one building block (m). */
+  blockSize: 3,
+  /** Mass of one block (kg): a 3 m cube of floor slab, walls and contents (~110 kg/m³). */
+  blockMass: 3000,
+  /**
+   * A block breaks when the contact impulse on it within one physics step exceeds this (N·s):
+   * a 3 t block struck at ~3 m/s. A craft resting on a roof (or rubble lying on a block)
+   * delivers a few hundred N·s per step; a wing hitting it at flying speed, tens of thousands.
+   */
+  blockBreakImpulse: 9000,
+  /**
+   * A falling chunk shatters (its blocks are destroyed) when one of its blocks takes an impulse
+   * above blockMass × this speed (m/s) in one step: about a 2 m drop onto something hard.
+   */
+  chunkShatterSpeed: 6,
+  /** Dynamic rubble caps: chunks and their colliders. Past them the oldest chunk is frozen in place. */
+  maxDynamicChunks: 64,
+  maxDynamicChunkColliders: 400,
+  /** Frozen (settled) rubble kept in the world before the oldest is removed. */
+  maxFrozenChunks: 96,
+  maxFrozenChunkColliders: 2000,
+  /** A chunk slower than this (m/s and rad/s) for `chunkSettleTime` s is frozen in place. */
+  chunkSettleSpeed: 0.15,
+  chunkSettleTime: 1,
+
   // ---------------------------------------------------------------- rigid body
   /** Tiny angular damping so a craft at rest settles. Real damping comes from aero. */
   angularDamping: 0.05,

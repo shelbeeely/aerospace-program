@@ -9,6 +9,7 @@ import { Atmosphere, calmWeather, densityAltitude, type CloudSample, type Precip
 import { DamageModel, type ContactForceHandler, type ContactForceInfo } from './damage.ts';
 import { neutralControls, sanitizeControls, type ControlInputs } from './controls.ts';
 import { LAYOUT } from './layout.ts';
+import { Town } from '../world/Town.ts';
 import type { Telemetry } from './telemetry.ts';
 
 function assertValidCraft(def: CraftDef): void {
@@ -60,6 +61,8 @@ export class Simulation {
   readonly events = new RAPIER.EventQueue(true);
   /** Per-part impact hit points. */
   damage: DamageModel;
+  /** Breakable block buildings and their rubble (src/world). */
+  readonly town: Town;
   private readonly contactForceHandlers: ContactForceHandler[] = [];
   private readonly contactInfo: ContactForceInfo = {
     collider1: 0,
@@ -113,6 +116,7 @@ export class Simulation {
       RAPIER.ColliderDesc.cuboid(half, 5, half).setFriction(0.8).setRestitution(0.1),
       ground,
     );
+    this.town = new Town(this.world);
 
     const { position, rotation } = this.spawnPose(null);
     this.craft = new Craft(this.world, craftDef, position, rotation);
@@ -120,8 +124,10 @@ export class Simulation {
     this.onContactForce((e) => {
       // Fresh debris spawns overlapping the airframe; separating them isn't an impact.
       if (this.isFreshDebris(e.collider1) || this.isFreshDebris(e.collider2)) return;
+      if (this.town.isFreshDebris(e.collider1, this.time) || this.town.isFreshDebris(e.collider2, this.time)) return;
       this.damage.onContact(e);
     });
+    this.onContactForce((e) => this.town.onContact(e));
 
     const self = this;
     this.ctx = {
@@ -263,6 +269,7 @@ export class Simulation {
     for (const d of this.debris) this.world.removeRigidBody(d.body);
     this.debris = [];
     this.debrisSpawn.clear();
+    this.town.reset();
     if (this.craft.detached.size) this.rebuildCraft(this.craft.def);
     this.failures.length = 0;
     this.filteredLoads.clear();
@@ -324,6 +331,7 @@ export class Simulation {
     body.resetTorques(false);
     this.readBodyState();
     this.loadsThisStep.clear();
+    this.craft.stepElectrical(this.dt, this.atmosphere.air(this.com.y).temperature - 273.15);
     for (const m of this.craft.modules) m.step(this.ctx);
     this.craft.updateSoftCcd(this.dt);
 
@@ -333,6 +341,7 @@ export class Simulation {
     this.guardAgainstExplosion();
     // After an explosion reset the step's contacts belong to a craft that's gone: drop them.
     this.dispatchContactForces(resets === this.explosionResets);
+    this.town.update(this.time);
     this.checkStructure();
     this.applyImpactDamage();
     this.craft.updateFuelMass();
@@ -523,6 +532,7 @@ export class Simulation {
       oat: r(air.temperature - 273.15, 1),
       densityAltitude: Math.round(densityAltitude(air.density)),
       vortexRing: r(rotors.reduce((a, x) => Math.max(a, x.vortexRing), 0)),
+      electrical: craft.electrical?.telemetry() ?? null,
       weather: {
         precipitation: r(precip.rate, 1),
         precipitationKind: precip.kind,

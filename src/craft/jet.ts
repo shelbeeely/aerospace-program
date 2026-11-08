@@ -94,6 +94,12 @@ export const JET: CraftDef = {
       position: [0, 0.85, -2.6],
       shape: { type: 'box', size: [0.8, 0.55, 2.6] },
       color: '#4d7ea8',
+      modules: [
+        // 24 V, 40 Ah main battery behind the cockpit; mission avionics are shed on battery.
+        { type: 'battery', cells: 12, capacityAh: 40, cellResistance: 0.002, cellVmax: 2.13, cellVmin: 1.85 },
+        { type: 'avionics', loadW: 600, essential: true },
+        { type: 'avionics', loadW: 1500, essential: false },
+      ],
     },
     {
       id: 'engine',
@@ -111,6 +117,7 @@ export const JET: CraftDef = {
           afterburner: { thrustRatio: 1.45, fuelRatio: 3.5 },
           spoolTime: 1.5,
         },
+        { type: 'generator', ratedAmps: 300, minRpmFraction: 0.1 },
       ],
     },
     {
