@@ -251,3 +251,9 @@ body.touch-ui.portrait #studio {
   body.touch-ui:not(.portrait) .tbtn { min-width: 40px; height: 40px; }
 }
 
+
+/* ---------------------------------------------------------------- weather (F3 panel) */
+#debug { max-height: calc(100dvh - 32px); overflow-y: auto; }
+#debug select { width: 100%; background: rgba(0,0,0,0.35); color: #eaf2f8; border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; padding: 3px; font: inherit; }
+/* Touch: keep the HUD to the essentials. */
+body.touch-ui #hud .row:has(#h-oat), body.touch-ui #hud .row:has(#h-trim) { display: none; }

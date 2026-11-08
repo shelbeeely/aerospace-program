@@ -92,23 +92,32 @@ function runwayTexture(maxAnisotropy: number): THREE.CanvasTexture {
 export class WorldView {
   readonly sun: THREE.DirectionalLight;
   private readonly sky: THREE.Mesh;
+  readonly hemi: THREE.HemisphereLight;
+  /** Sky gradient colours (uniforms: change them to grey the sky out). */
+  readonly horizon = HORIZON.clone();
+  readonly zenith = ZENITH.clone();
+  groundMat!: THREE.MeshStandardMaterial;
+  runwayMat!: THREE.MeshStandardMaterial;
 
   constructor(scene: THREE.Scene, renderer: THREE.WebGPURenderer) {
     const aniso = renderer.getMaxAnisotropy();
-    scene.background = HORIZON.clone();
-    scene.fog = new THREE.Fog(HORIZON.clone(), 1200, 9000);
+    scene.background = this.horizon;
+    // Haze. FogExp2 uses exp(-(ρd)²); ρ = √3.912 / V puts the 2% contrast threshold
+    // (Koschmieder's definition of visibility) at distance V.
+    scene.fog = new THREE.FogExp2(HORIZON.clone(), 1.978 / 15000);
 
     // Sky dome with a vertical gradient (follows the camera).
     // TSL node material: compiles to WGSL on WebGPU and GLSL on the WebGL2 fallback.
     const skyMat = new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide, depthWrite: false, fog: false });
     const t = clamp(normalize(positionLocal).y.mul(1.6), 0, 1);
-    skyMat.colorNode = mix(uniform(HORIZON), uniform(ZENITH), pow(t, 0.7));
+    skyMat.colorNode = mix(uniform(this.horizon), uniform(this.zenith), pow(t, 0.7));
     this.sky = new THREE.Mesh(new THREE.SphereGeometry(9500, 32, 16), skyMat);
     this.sky.renderOrder = -1;
     this.sky.frustumCulled = false;
     scene.add(this.sky);
 
-    scene.add(new THREE.HemisphereLight('#dceeff', '#55663f', 1.1));
+    this.hemi = new THREE.HemisphereLight('#dceeff', '#55663f', 1.1);
+    scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight('#fff4e0', 2.2);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
@@ -128,13 +137,13 @@ export class WorldView {
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(LAYOUT.groundSize, LAYOUT.groundSize),
       // Pushed back slightly in depth so the runway decal never z-fights with it at distance.
-      new THREE.MeshStandardMaterial({
+      (this.groundMat = new THREE.MeshStandardMaterial({
         map: groundTex,
         roughness: 1,
         polygonOffset: true,
         polygonOffsetFactor: 1,
         polygonOffsetUnits: 4,
-      }),
+      })),
     );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
@@ -144,10 +153,14 @@ export class WorldView {
     const { length, width, centerZ } = LAYOUT.runway;
     const runway = new THREE.Mesh(
       new THREE.PlaneGeometry(width, length),
-      new THREE.MeshStandardMaterial({
+      (this.runwayMat = new THREE.MeshStandardMaterial({
         map: runwayTexture(aniso),
         roughness: 0.9,
-      }),
+        // Pulled forward in depth as well, so it wins against the ground at every distance.
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -4,
+      })),
     );
     runway.rotation.x = -Math.PI / 2;
     runway.position.set(0, 0.03, centerZ);

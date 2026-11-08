@@ -17,9 +17,11 @@ import { Callouts } from './platform/speech.ts';
 import { runFlightTest } from './sim/flightTestClient.ts';
 import { DebugOverlay } from './render/DebugOverlay.ts';
 import { WorldView } from './render/WorldView.ts';
+import { WeatherView } from './render/WeatherView.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
 import { initPhysics, Simulation } from './sim/Simulation.ts';
+import { WEATHER_PRESETS } from './sim/atmosphere.ts';
 import { TUNING } from './tuning.ts';
 import { builtinEntry, CAP_STORAGE, KEY_STORAGE, Studio } from './ui/Studio.ts';
 
@@ -67,6 +69,7 @@ async function start() {
   const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.3, 20000);
   const worldView = new WorldView(scene, renderer);
   if (mobile) worldView.sun.shadow.mapSize.set(1024, 1024);
+  const weatherView = new WeatherView(scene, worldView);
 
   // --- Simulation
   const sim = new Simulation(TEST_PLANE);
@@ -119,18 +122,59 @@ async function start() {
   comSlider.addEventListener('change', () => comSlider.blur());
 
   // Weather controls (F3 panel). Same seed = same gusts every run.
-  const weatherInputs = ['w-speed', 'w-dir', 'w-gust', 'w-turb'].map((id) => document.getElementById(id) as HTMLInputElement);
+  const wx = {
+    speed: 'w-speed', dir: 'w-dir', gust: 'w-gust', turb: 'w-turb', temp: 'w-temp', precip: 'w-precip',
+    cloud: 'w-cloud', base: 'w-base', thermal: 'w-thermal', storm: 'w-storm', vis: 'w-vis',
+  } as const;
+  const wxEl = Object.fromEntries(Object.entries(wx).map(([k, id]) => [k, document.getElementById(id) as HTMLInputElement])) as Record<keyof typeof wx, HTMLInputElement>;
+  const presetSel = document.getElementById('w-preset') as HTMLSelectElement;
+  presetSel.append(new Option('Custom', 'custom'));
+  for (const [id, p] of Object.entries(WEATHER_PRESETS)) presetSel.append(new Option(p.label, id));
+  const num = (k: keyof typeof wx) => Number(wxEl[k].value);
   const applyWeather = () => {
-    const [speed, dir, gust, turb] = weatherInputs.map((el) => Number(el.value));
-    sim.atmosphere.configure({ windSpeed: speed, windFromDeg: dir, gustStrength: gust, turbulence: turb });
+    const base = num('base');
+    sim.atmosphere.configure({
+      windSpeed: num('speed'), windFromDeg: num('dir'), gustStrength: num('gust'), turbulence: num('turb'),
+      temperatureOffset: num('temp'), precipitation: num('precip'), cloudCover: num('cloud'),
+      cloudBase: base, cloudTop: Math.max(base + 800, sim.atmosphere.settings.cloudTop ?? 2500),
+      thermals: num('thermal'), storm: num('storm'), visibility: num('vis'),
+    });
+    const kind = num('temp') + 15 < 0.5 ? 'snow' : 'rain';
     document.getElementById('w-label')!.textContent =
-      `${speed.toFixed(0)} m/s from ${dir.toFixed(0)}°, gusts ${gust.toFixed(0)}, turbulence ${turb.toFixed(1)}`;
+      `${num('speed').toFixed(0)} m/s from ${num('dir').toFixed(0)}°, gusts ${num('gust')}, ` +
+      `${(15 + num('temp')).toFixed(0)}°C, ${num('precip') ? `${kind} ${num('precip')} mm/h, ` : ''}` +
+      `cloud ${(num('cloud') * 100).toFixed(0)}% @ ${base} m, vis ${(num('vis') / 1000).toFixed(1)} km`;
   };
-  for (const el of weatherInputs) {
-    el.addEventListener('input', applyWeather);
+  const setPreset = (id: string) => {
+    const p = WEATHER_PRESETS[id];
+    if (!p) return;
+    const st = p.settings;
+    const set = (k: keyof typeof wx, v: number | undefined) => {
+      if (v !== undefined) wxEl[k].value = String(v);
+    };
+    set('speed', st.windSpeed); set('dir', st.windFromDeg); set('gust', st.gustStrength); set('turb', st.turbulence);
+    set('temp', st.temperatureOffset); set('precip', st.precipitation); set('cloud', st.cloudCover);
+    set('base', st.cloudBase); set('thermal', st.thermals); set('storm', st.storm); set('vis', st.visibility);
+    sim.atmosphere.configure({ cloudTop: st.cloudTop ?? 2500, humidity: st.humidity ?? 0.5 });
+    applyWeather();
+    sim.settleGroundWater();
+  };
+  for (const el of Object.values(wxEl)) {
+    el.addEventListener('input', () => {
+      presetSel.value = 'custom';
+      applyWeather();
+    });
     el.addEventListener('change', () => el.blur());
   }
-  applyWeather();
+  presetSel.addEventListener('change', () => {
+    setPreset(presetSel.value);
+    presetSel.blur();
+  });
+  const urlWx = new URLSearchParams(location.search).get('weather');
+  if (urlWx && WEATHER_PRESETS[urlWx]) {
+    presetSel.value = urlWx;
+    setPreset(urlWx);
+  } else applyWeather();
 
   const flightLog = new FlightLog();
   const reset = () => {
@@ -319,6 +363,7 @@ async function start() {
     velocity.set(v.x, v.y, v.z);
     rig.update(dt, renderPos, renderRot, velocity);
     worldView.update(camera, renderPos);
+    weatherView.update(dt, camera, velocity, sim.atmosphere, sim.groundWetness, sim.atmosphere.cloudAt(camera.position, 0).inCloud);
 
     renderOffset.copy(renderPos).sub(sim.position);
     debug.update(sim.debugForces, sim.craft, renderOffset);

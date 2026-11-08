@@ -28,14 +28,16 @@ Part = {
 Mass and inertia come ONLY from part masses and shapes. Modules are massless and attach to their part. Each module "offset" is relative to the part origin, in the part's rotated frame.
 
 ## Modules
-1. Lifting surface: {"type":"aero","offset"?:[x,y,z],"span":m,"chord":m,"aspectRatio"?:number,"incidenceDeg"?:deg,"control"?:Control}
+1. Lifting surface: {"type":"aero","offset"?:[x,y,z],"span":m,"chord":m,"aspectRatio"?:number,"incidenceDeg"?:deg,"camberDeg"?:deg,"cm0"?:number,"criticalMach"?:number,"control"?:Control}
    The surface frame is the part's frame: chord along -Z (leading edge forward), lift normal +Y, span along +X. The offset is the aerodynamic centre (quarter chord).
    Lift slope comes from the aspect ratio (default span²/area). For half-wings or wing panels, set aspectRatio to the WHOLE wing's value (e.g. 6-8).
-   Soft stall at about 15° angle of attack.
-   Control = {"channel":"pitch"|"roll"|"yaw","maxDeflectionDeg":0-60,"gain":1|-1,"chordFraction"?:0.2-0.4,"spanFraction"?:0-1}
+   Soft stall at about 15° angle of attack (lagged: dynamic stall). camberDeg (0-4 for wings, 0 for tails/fins) = zero-lift angle shift of a cambered airfoil; it adds lift at zero incidence and a nose-down pitching moment (cm0 defaults from it). Small or slow surfaces (low Reynolds number) stall earlier and have more drag; rain and ice make that worse.
+   Surfaces behind a wing sit in its downwash, so a tail feels less angle of attack than the wing.
+   Control = {"channel":"pitch"|"roll"|"yaw"|"flaps","maxDeflectionDeg":0-60,"gain":1|-1,"chordFraction"?:0.2-0.4,"spanFraction"?:0-1}
    Positive (gain × input) adds lift along the surface normal. Pilot inputs: pitch +1 = nose up, roll +1 = roll right, yaw +1 = nose right. So:
    - Elevator on a tail BEHIND the CoM: channel "pitch", gain -1. (A canard AHEAD of the CoM: gain +1.)
    - Ailerons: LEFT wing (x<0) gain +1, RIGHT wing (x>0) gain -1.
+   - Flaps: channel "flaps", gain 1, maxDeflectionDeg 30, on the INBOARD wing panels (trailing edge, chordFraction 0.25). The pilot lowers them in 3 notches.
    - Vertical fin: give the part "rotationDeg":[0,0,90] (span then points up, normal points left, -X). Rudder: channel "yaw", gain +1 when the fin is behind the CoM.
 2. Engine: {"type":"engine","offset"?:[x,y,z],"maxThrust":N,"propMaxSpeed"?:m/s,"propRadius"?:m,"propDirection"?:1|-1|0,"fuelFlow"?:kg/s,"spoolTime"?:s}
    Thrust acts along the part's -Z (forward) through the module point. For a propeller, propMaxSpeed is the airspeed where thrust fades to zero (80-120 typical). Omit it for jets. Keep propeller tips at least 0.2 m above the ground.
@@ -46,7 +48,8 @@ Mass and inertia come ONLY from part masses and shapes. Modules are massless and
    Every collider must stay at least 0.2 m above that lowest point, or the airframe scrapes the ground.
    stiffness ≈ (weight on that wheel in N) / (0.3 × restLength); damping ≈ 0.11 × stiffness.
    Tricycle gear: a steerable nose wheel well ahead of the CoM, and two braked main wheels 0.3-0.8 m BEHIND the CoM, spread laterally (at least 2 m apart for a 10 m span).
-4. Drag: {"type":"drag","offset"?:[x,y,z],"cdA":m²}. Quadratic drag (Cd × area) for fuselages, gear and pods.
+4. Drag: {"type":"drag","offset"?:[x,y,z],"cdA":m²}. Quadratic drag (Cd × area) for gear, struts and small pods.
+4b. Slender body: {"type":"body","offset"?:[x,y,z],"length":m,"diameter":m,"cdFront"?:number}. Use for fuselages, nacelles and hulls (axis along the part's Z). Gives nose-on drag, crossflow drag when yawed/pitched, and the destabilising Munk moment that the tail has to overcome. cdFront ≈ 0.1 streamlined, 0.25 boxy.
 5. Fuel tank: {"type":"fuel","offset"?:[x,y,z],"capacity":kg,"fill"?:0-1}. The fuel's mass sits at the tank, so burning it moves the CoM. Put tanks near the CoM.
 6. Gas cell: {"type":"buoyancy","offset"?:[x,y,z],"volume":m³,"gas"?:"helium"|"hydrogen"|"hot-air"}. Lift = air density × (1 - gas ratio) × volume × g. Helium lifts about 1.06 kg per m³ at sea level, hydrogen 1.14, hot air 0.31.
 7. Rotor (blade element): {"type":"rotor","offset"?:[x,y,z],"radius":m,"blades":int,"chord":m,"maxRpm":rpm,"mode":"rpm"|"collective","pitchDeg":deg,"minPitchDeg"?:deg,"twistDeg"?:deg,"spin":1|-1,"cyclicDeg"?:deg,"inputs"?:{"collective":"throttle"|"yaw"},"spoolTime"?:s}
@@ -55,6 +58,7 @@ Mass and inertia come ONLY from part masses and shapes. Modules are massless and
    - "collective" mode (helicopters): governed rpm, thrust from blade pitch between minPitchDeg and pitchDeg; cyclicDeg (6-10) tilts the disk.
    - Tail rotor: collective mode, inputs.collective "yaw", symmetric pitch (e.g. minPitchDeg -20, pitchDeg 20), part rotated so +Y points sideways (rotationDeg [0,0,-90] points +Y to +X).
    Keep tip speed (rpm × 2π/60 × radius) under 220 m/s.
+   Motors/engines are sized from the rotor itself with ~15-25% torque margin at full rpm. Rain, ice and heavy loads eat that margin. Rotors get ground effect near the surface and lose thrust in vortex ring state (fast vertical descent).
 8. Flight controller: {"type":"flightController","mode":"multirotor"|"helicopter","maxTiltDeg"?:deg,"maxYawRateDeg"?:deg}. REQUIRED for any rotorcraft. It stabilises attitude and mixes the stick into rotor commands automatically from rotor positions and spin directions. Throttle 0.5 ≈ hover for multirotors.
 
 ## Design rules that matter in this sim
@@ -75,6 +79,7 @@ Blimps:
 - Make total mass about 98-100% of the gas lift (slightly heavy) and put the centre of buoyancy directly above the CoM: heavy gondola low and under the gas.
 - Cruciform tail fins with elevators and rudders far aft; the hull's own lift acts forward of its centre and is destabilising.
 General:
+- Weather is real: wind, gusts, rain (costs lift and adds water weight), icing in supercooled cloud, thermals and storm downdrafts, wet runways (longer braking, aquaplaning above ~25 m/s). Margins matter.
 - Structures break when overloaded: wings at about 8 g of their share of the weight, gear on very hard landings. Don't give tiny surfaces huge control throws.
 - At most 60 parts.
 

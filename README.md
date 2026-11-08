@@ -12,6 +12,7 @@ cp .env.example .env   # add your OPENROUTER_API_KEY (optional: flying works wit
 npm run dev            # http://localhost:5173, press N for the Studio
 npm run design -- "a twin-boom cargo plane" --model anthropic/claude-sonnet-5.5
 npm run sim            # headless physics regression (takeoff, turn, stalls, CoM shift, crash)
+npm run weather        # weather impact checks (rain, icing, ground effect, vortex ring, wet runway)
 npm run build          # typecheck + production build
 ```
 
@@ -105,6 +106,7 @@ stick expo, haptics, and touch controls auto/on/off.
 | Z / X | full / cut throttle |
 | B or Space | brakes |
 | T / G, Y | trim nose down / up, reset trim |
+| , / . (or F6 / F7) | flaps up / down a notch (3 notches, 10° each) |
 | R | reset to runway |
 | C | chase / orbit camera |
 | [ / ] | previous / next craft |
@@ -154,8 +156,14 @@ become pitch-unstable.
 - **Blimp:** it's about 1% heavier than air. Add power and pitch up (S) to climb on hull lift;
   steer with the rudder.
 
-**Weather:** the F3 panel has wind speed and direction, gusts and turbulence. The HUD shows the
-wind relative to your nose.
+**Weather:** the F3 panel has presets (clear, summer thermals, gusty crosswind, drizzle, heavy
+rain, thunderstorm, freezing fog, snow) and sliders for wind, gusts, turbulence, temperature,
+rain/snow rate, cloud cover and base, thermals, storm strength and visibility. Link straight
+to one with `?weather=rain` (any preset id). The HUD shows wind relative to your nose, outside
+air temperature, precipitation and cloud (IMC), and flags ICE, VORTEX RING and AQUAPLANING.
+What you see comes from the same model the physics flies through: rain and snow fall with the
+wind's drift, the cloud deck is drawn from the same drifting cells that make showers, thermals
+and icing, fog follows visibility, and the runway darkens when wet.
 
 ## Physics model
 
@@ -174,11 +182,28 @@ Everything below is emergent from parts and modules; nothing is scripted per veh
 | **Buoyancy** | `Buoyancy` | (ρ_air − ρ_gas)·V·g with helium, hydrogen or hot air. Lift fades with altitude, so blimps find a ceiling. |
 | **Blade-element rotors** | `Rotor` | Radial blade stations with a soft-stalling section polar. Inflow comes from Glauert momentum theory, solved with Newton's method. That gives translational lift, climb and descent effects, reaction torque and in-plane drag. RPM mode for drones; collective plus cyclic for helicopters. |
 | **Flight controller** | `FlightController` | Angle-mode stabilisation with an automatic mixer built from rotor positions and spin directions. Helicopter mode drives the cyclic and has a yaw-rate loop on the tail rotor. |
-| Wheels | `Wheel` | Raycast suspension, tyre friction, steering, brakes. |
+| Wheels | `Wheel` | Raycast suspension, tyre friction, steering, brakes. **Wet runway**: grip roughly halves with a water film; above the dynamic hydroplaning speed (9·√psi kt) on standing water the tyres **aquaplane**. |
+| **Standard atmosphere** | `atmosphere.ts` | ISA temperature lapse, pressure, density, speed of sound, Sutherland viscosity, with temperature offset (hot/cold day), QNH and humidity (moist air is lighter). Density altitude and Mach in telemetry. |
+| **Compressibility, Reynolds** | `AeroSurface` | Prandtl–Glauert lift rise, wave drag above the critical Mach, Reynolds-number drag and stall-angle scaling (small, slow surfaces are worse). |
+| **Dynamic stall, camber, flaps** | `AeroSurface` | Separation lags the angle of attack (and reattaches more slowly); camber and flaps shift zero lift and add a nose-down moment. |
+| **Downwash** | `AeroSurface.link` | Tails sit in the wing's downwash, delayed by the travel time between them, which moves the neutral point forward like on a real aircraft. |
+| **Slender bodies** | `Body` | Fuselage axial and crossflow drag, and the destabilising Munk moment. |
+| **Rain** | `AeroSurface`, `Rotor`, `Craft` | Water film roughness costs lift and stall margin and adds drag (worse at low Reynolds number, so small drones suffer most); drop momentum; rotor blades sweeping drops need extra torque; a water film adds mass. |
+| **Icing** | `AeroSurface`, `Rotor` | In supercooled cloud, ice builds fastest on thin, fast leading edges (minus kinetic heating on rotor blades). It wrecks lift and drag, adds mass, melts above freezing and sheds from fast rotors. |
+| **Clouds, thermals, storms** | `Atmosphere` | Drifting cloud cells with patchy showers; thermals under cumulus with sink between; storm downdrafts with microburst outflow (wind shear near the ground). |
+| **Rotor motors** | `Rotor` | Rotor inertia, a BLDC torque–speed line (drones) or power-limited governed engine (helicopters). The airframe feels motor torque, so spin-up yaws; an unpowered rotor windmills (autorotation). |
+| **Rotor ground effect, VRS, gyro** | `Rotor` | Cheeseman–Bennett plus multirotor terms (Sanchez-Cuevas 2017); vortex ring state thrust loss and surging in fast vertical descent; gyroscopic precession of rigid props. |
 
 Each vehicle type has its own automated test card (`flightTest.ts`, `vehicleTests.ts`), which
 both the generation loop and the built-ins use. All four built-ins (trainer, quadcopter,
 helicopter, blimp) score 100/100.
+
+`npm run weather` checks that weather really changes flight (headless, real sim). Current results
+for the 25 kg quadcopter: heavy rain (50 mm/h) needs 9% more power to hover, a downpour 25%
+more; 3 minutes in −6 °C cloud puts 2.3 mm of ice on the blades and needs 83% more power;
+hovering at 0.15 m takes 7% less power (ground effect); descending vertically at 6 m/s puts it
+in vortex ring state. The trainer's braking distance from 30 m/s grows 37% on a wet runway and
+72% on a flooded one.
 
 ## Architecture
 

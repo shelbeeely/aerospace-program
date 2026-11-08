@@ -59,5 +59,9 @@ export interface Telemetry {
     waterKg: number;
     /** Runway wetness 0..1. */
     groundWetness: number;
+    /** 0..1 deepest any tyre is into dynamic hydroplaning. */
+    aquaplaning: number;
   };
+  /** 0..1 how deep any rotor is in vortex ring state. */
+  vortexRing: number;
 }

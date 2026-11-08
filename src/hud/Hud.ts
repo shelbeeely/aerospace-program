@@ -22,6 +22,8 @@ export class Hud {
     windArrow: $('h-wind-arrow'),
     fuel: $('h-fuel'),
     fuelRow: $('h-fuel-row'),
+    oat: $('h-oat'),
+    wx: $('h-wx'),
     stall: $('stall'),
     help: $('help'),
     debug: $('debug'),
@@ -60,10 +62,22 @@ export class Hud {
     } else this.set(this.el.windArrow, '');
     this.el.fuelRow.style.display = t.fuel === null ? 'none' : '';
     if (t.fuel !== null) this.set(this.el.fuel, (t.fuel * 100).toFixed(0));
+    this.set(this.el.oat, `${t.oat.toFixed(0)}°C`);
+    const w = t.weather;
+    const wx = [
+      w.precipitationKind !== 'none' ? `${w.precipitationKind === 'snow' ? 'SNOW' : 'RAIN'} ${w.precipitation.toFixed(0)}` : '',
+      w.inCloud ? 'IMC' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    this.set(this.el.wx, wx || '—');
     const flags = [
       t.onGround ? 'ON GROUND' : '',
       braking ? 'BRAKES' : '',
       t.fuel === 0 ? 'OUT OF FUEL' : '',
+      w.iceMm > 0.2 ? `ICE ${w.iceMm.toFixed(1)} mm` : '',
+      t.vortexRing > 0.3 ? 'VORTEX RING' : '',
+      w.aquaplaning > 0.3 ? 'AQUAPLANING' : '',
       t.brokenParts.length ? `BROKEN: ${t.brokenParts.join(', ')}` : '',
     ]
       .filter(Boolean)

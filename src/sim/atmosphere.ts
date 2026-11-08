@@ -149,6 +149,20 @@ export function calmWeather(): WeatherSettings {
   return { windSpeed: 0, windFromDeg: 0, gustStrength: 0, turbulence: 0, seed: 1 };
 }
 
+/** Named weather presets (F3 panel, Studio/LLM world generation, races). */
+export const WEATHER_PRESETS: Record<string, { label: string; settings: Partial<WeatherSettings> }> = {
+  clear: { label: 'Clear and calm', settings: { windSpeed: 0, gustStrength: 0, turbulence: 0, precipitation: 0, cloudCover: 0, thermals: 0, storm: 0, temperatureOffset: 0, visibility: 30000 } },
+  summer: { label: 'Hot summer afternoon (thermals)', settings: { windSpeed: 4, gustStrength: 2, turbulence: 0.3, precipitation: 0, cloudBase: 1500, cloudTop: 2500, cloudCover: 0.35, thermals: 0.8, storm: 0, temperatureOffset: 18, humidity: 0.4, visibility: 25000 } },
+  breezy: { label: 'Gusty crosswind', settings: { windSpeed: 9, windFromDeg: 90, gustStrength: 6, turbulence: 0.5, precipitation: 0, cloudCover: 0.4, cloudBase: 1200, thermals: 0.2, storm: 0, temperatureOffset: 0, visibility: 30000 } },
+  drizzle: { label: 'Overcast drizzle', settings: { windSpeed: 3, gustStrength: 1, turbulence: 0.2, precipitation: 2.5, cloudBase: 500, cloudTop: 2000, cloudCover: 1, thermals: 0, storm: 0, temperatureOffset: -3, humidity: 0.95, visibility: 6000 } },
+  rain: { label: 'Heavy rain', settings: { windSpeed: 6, gustStrength: 4, turbulence: 0.4, precipitation: 50, cloudBase: 350, cloudTop: 3000, cloudCover: 1, thermals: 0, storm: 0, temperatureOffset: -2, humidity: 1, visibility: 2500 } },
+  storm: { label: 'Thunderstorm (microbursts)', settings: { windSpeed: 10, gustStrength: 9, turbulence: 0.9, precipitation: 30, cloudBase: 600, cloudTop: 9000, cloudCover: 0.8, thermals: 0.3, storm: 0.8, temperatureOffset: 5, humidity: 0.9, visibility: 2000 } },
+  icing: { label: 'Freezing fog (icing)', settings: { windSpeed: 2, gustStrength: 0, turbulence: 0.1, precipitation: 0, cloudBase: 0, cloudTop: 1500, cloudCover: 1, thermals: 0, storm: 0, temperatureOffset: -21, humidity: 1, visibility: 300 } },
+  snow: { label: 'Snow', settings: { windSpeed: 5, gustStrength: 3, turbulence: 0.3, precipitation: 4, cloudBase: 400, cloudTop: 2500, cloudCover: 1, thermals: 0, storm: 0, temperatureOffset: -20, humidity: 0.9, visibility: 1500 } },
+};
+
+const _drift = new THREE.Vector3();
+
 function mulberry32(seed: number) {
   return () => {
     seed = (seed + 0x6d2b79f5) | 0;
@@ -225,8 +239,9 @@ export class Atmosphere {
   }
 
   /** Cumulus cell field (0..1, >threshold = under/in a cloud cell), drifting with the wind. */
-  private cellValue(x: number, z: number): number {
-    const drift = this.meanDirection(new THREE.Vector3()).multiplyScalar((this.settings.windSpeed ?? 0) * this.time);
+  /** Cloud-cell field 0..1 at a ground position (drifts with the wind); cloud where > 1 − cover. */
+  cellValue(x: number, z: number): number {
+    const drift = this.meanDirection(_drift).multiplyScalar((this.settings.windSpeed ?? 0) * this.time);
     const scale = 1 / 900; // cells ~1 km across
     return valueNoise((x - drift.x) * scale, (z - drift.z) * scale, this.settings.seed) * 0.7 +
       valueNoise((x - drift.x) * scale * 3.1, (z - drift.z) * scale * 3.1, this.settings.seed + 7) * 0.3;

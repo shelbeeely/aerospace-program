@@ -419,6 +419,7 @@ export class Simulation {
       mach: r(speed / air.speedOfSound, 3),
       oat: r(air.temperature - 273.15, 1),
       densityAltitude: Math.round(densityAltitude(air.density)),
+      vortexRing: r(rotors.reduce((a, x) => Math.max(a, x.vortexRing), 0)),
       weather: {
         precipitation: r(precip.rate, 1),
         precipitationKind: precip.kind,
@@ -426,6 +427,7 @@ export class Simulation {
         iceMm: r(craft.maxIce * 1000, 1),
         waterKg: r(craft.water, 2),
         groundWetness: r(this.groundWetness, 2),
+        aquaplaning: r(wheels.reduce((a, w) => Math.max(a, w.aquaplaning), 0)),
       },
     };
   }
