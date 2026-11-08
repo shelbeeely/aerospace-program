@@ -103,7 +103,7 @@ async function start() {
   const debug = new DebugOverlay(scene, craftView.root);
   const debrisView = new DebrisView(scene);
   const townView = new TownView(scene, sim.town);
-  const oceanView = new OceanView(scene, sim.ocean);
+  const oceanView = new OceanView(scene, sim.ocean, sim.atmosphere.events);
   let viewVersion = sim.version;
   let currentLivery: string | null = null;
   /** Rebuild the craft's visuals (new craft, or the sim rebuilt a broken one on reset). */

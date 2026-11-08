@@ -1,4 +1,6 @@
 /** Deterministic coast, waves, flotation and water-impact regressions. */
+import { WorldEvents } from '../src/sim/events/WorldEvents.ts';
+import { MAX_SURGE_PROFILES, sampleSurgeProfiles, surgeProfiles } from '../src/sim/events/surgeProfiles.ts';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { CraftDef } from '../src/craft/types.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
@@ -24,6 +26,23 @@ for (let t = 0; t < 30; t += 0.37) for (let x = 2510; x < 2600; x += 3.7) {
 check(bounded, 'wave height bounded by summed amplitudes');
 check(inverseError < 1e-6, 'world-space height inverts Gerstner displacement', `${inverseError.toExponential(2)} m`);
 check(Math.abs(oceanHeight(2600, 0, 4, () => 2) - oceanHeight(2600, 0, 4) - 2) < 1e-9, 'optional surge adds to water height');
+
+// Packed shader profiles must reproduce CPU surge across the whole sea, not just the camera.
+const eventSurface = new WorldEvents(17);
+const surfaceEvents = [eventSurface.schedule('hurricane', 0, { z: -3000, duration: 360, strength: 0.8 }),
+  eventSurface.schedule('hurricane', 20, { z: 2500, duration: 180, strength: 1.5 }),
+  eventSurface.schedule('tornado', 0, { duration: 360 })];
+let surgeError = 0;
+for (const time of [0, 10, 20, 60, 100, 179, 199, 200, 359]) {
+  const profiles = surgeProfiles(surfaceEvents, time);
+  for (const x of [2500, 2510, 3300, 5000]) for (const z of [-5000, -3000, 0, 2500, 5000]) {
+    surgeError = Math.max(surgeError, Math.abs(sampleSurgeProfiles(x, z, profiles) - eventSurface.surgeHeight(x, z, time)));
+  }
+}
+check(surgeError < 1e-12, 'spatial render profiles match CPU hurricane surface', `${surgeError.toExponential(2)} m`);
+const many = new WorldEvents();
+for (let i = 0; i < MAX_SURGE_PROFILES; i++) many.schedule('hurricane', 0, { z: i * 100 });
+check(surgeProfiles(many.active, 10).length === MAX_SURGE_PROFILES, 'surge shader profiles handle the full bounded event count');
 
 const box: CraftDef = { formatVersion: 1, name: 'Float box', parts: [
   { id: 'box', kind: 'fuselage', position: [0, 0, 0], mass: 4000, shape: { type: 'box', size: [2, 2, 2] }, color: '#19f0ff', strength: 0, hp: 0 },
