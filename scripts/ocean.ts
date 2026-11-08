@@ -48,6 +48,19 @@ const sea = groundRay(2600);
 check(runway !== null && Math.abs(runway.timeOfImpact - 10) < 0.01, 'runway ground remains at zero');
 check(sea !== null && Math.abs(sea.timeOfImpact - (10 + COAST.depth)) < 0.01, 'solid sea-level ground removed east of coast');
 
+// Cross-subsystem regression: hurricane time is weather time, including after a reset.
+land.atmosphere.events.trigger('hurricane', { x: COAST.x, z: 0, duration: 360 });
+land.atmosphere.advance(180);
+const surge = land.atmosphere.events.surgeHeight(COAST.x + 20, 0);
+check(surge > 0 && Math.abs(land.ocean.height(COAST.x + 20, 0, land.time) - oceanHeight(COAST.x + 20, 0, land.time) - surge) < 1e-8, 'hurricane surge reaches actual ocean despite independent simulation time');
+land.resetToRunway();
+check(land.atmosphere.events.active.length === 0 && Math.abs(land.ocean.height(2600, 0, land.time) - oceanHeight(2600, 0, land.time)) < 1e-8, 'reset removes hurricane surge from ocean');
+land.atmosphere.events.trigger('earthquake', { duration: 1 });
+for (let i = 0; i < 130; i++) land.step(idle);
+const westAfterQuake = groundRay(-4900);
+const seaAfterQuake = groundRay(2600);
+check(westAfterQuake !== null && Math.abs(westAfterQuake.timeOfImpact - 10) < 0.01 && seaAfterQuake !== null && Math.abs(seaAfterQuake.timeOfImpact - (10 + COAST.depth)) < 0.01, 'earthquake preserves shifted coastline collider origin');
+
 const crash = new Simulation({ ...box, name: 'crash', parts: [
   { ...box.parts[0], id: 'hull', mass: 1000, hp: 10 },
   { ...box.parts[0], id: 'wing', mass: 1000, position: [2, 0, 0], hp: 10 },
