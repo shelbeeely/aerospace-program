@@ -135,6 +135,28 @@ export class Town {
 
   private lastTime = 0;
 
+  /**
+   * Earthquake shaking (ground acceleration, m/s²). Upper floors of slender buildings sway more
+   * (amplification 1 + 0.6 × floor / footprint); a block whose amplified horizontal acceleration
+   * beats `quakeBlockStrength` × its fragility gives way, and the support check does the rest.
+   */
+  shake(accel: { x: number; z: number }): void {
+    const a = Math.hypot(accel.x, accel.z);
+    const weakest = TUNING.quakeBlockStrength * 0.7;
+    if (a < weakest / 4) return;
+    for (let bi = 0; bi < this.buildings.length; bi++) {
+      const building = this.buildings[bi];
+      const [w, h, d] = building.def.size;
+      const footprint = Math.max(1, Math.min(w, d));
+      if (a * (1 + (0.6 * (h - 1)) / footprint) < weakest) continue;
+      for (const b of building.list) {
+        if (!b.alive) continue;
+        const amp = 1 + (0.6 * b.y) / footprint;
+        if (a * amp > TUNING.quakeBlockStrength * fragility(bi, b.index)) this.blockImpulse.set(b, Infinity);
+      }
+    }
+  }
+
   /** Apply this step's hits: destroy blocks, drop what lost support, shatter hard landings. */
   update(time: number): void {
     this.lastTime = time;
@@ -215,6 +237,14 @@ export class Town {
     this.version++;
     this.resets++;
   }
+}
+
+/** Seeded per-block strength factor 0.7..1.3 (same every run). */
+function fragility(building: number, block: number): number {
+  let h = Math.imul(building + 1, 0x9e3779b1) ^ Math.imul(block + 1, 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  h ^= h >>> 13;
+  return 0.7 + 0.6 * ((h >>> 0) / 4294967296);
 }
 
 /** Rotate (x, y, z) by quaternion q into out. */

@@ -190,6 +190,11 @@ export const TUNING = {
   /** A chunk slower than this (m/s and rad/s) for `chunkSettleTime` s is frozen in place. */
   chunkSettleSpeed: 0.15,
   chunkSettleTime: 1,
+  /**
+   * Earthquakes: a block gives way when the horizontal ground acceleration (m/s²), amplified up
+   * a slender tower, exceeds this × its seeded fragility factor (0.7..1.3).
+   */
+  quakeBlockStrength: 12,
 
   // ---------------------------------------------------------------- rigid body
   /** Tiny angular damping so a craft at rest settles. Real damping comes from aero. */
