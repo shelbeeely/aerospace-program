@@ -236,6 +236,17 @@ export class FlightAudio {
     this.lastFailures = failures;
   }
 
+  /** Fade every continuous voice to silence (e.g. in the hangar, where nothing is running). */
+  silence(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    for (const g of [this.engine?.gain, this.rotor?.gain, this.rotor?.lfoGain, this.jet?.gain, this.wind?.gain, this.horn?.gain]) {
+      g?.gain.cancelScheduledValues(now);
+      g?.gain.setTargetAtTime(0, now, 0.05);
+    }
+  }
+
   reset(): void {
     this.lastFailures = 0;
     this.wasGrounded = true;

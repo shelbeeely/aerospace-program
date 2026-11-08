@@ -22,8 +22,10 @@ export interface StudioHost {
   current(): { craft: CraftDef; entryId: string | null };
   /** Summary of the player's flight in the current craft. */
   flightNotes(): string;
-  /** Put a craft on the runway. */
-  fly(entry: LibraryEntry | null): void;
+  /** Show a craft on the hangar turntable (null = built-in trainer). */
+  select(entry: LibraryEntry | null): void;
+  /** Take the selected craft flying: switch to flight mode and reset to the runway. */
+  fly(): void;
   /** Apply a livery texture to the current craft (null removes it). */
   applyLivery(dataUrl: string | null): void;
 }
@@ -183,7 +185,7 @@ export class Studio {
       h('div', { class: 'studio-head' },
         h('h3', {}, '✦ STUDIO'),
         this.el.spend,
-        h('button', { class: 'studio-close', title: 'Close (N)', 'aria-label': 'Close Studio', onclick: () => this.toggle() }, '✕'),
+        h('button', { class: 'studio-close', title: 'Close', 'aria-label': 'Close Studio', onclick: () => this.toggle() }, '✕'),
       ),
       this.el.status,
       h('section', {},
@@ -431,8 +433,8 @@ export class Studio {
       });
       this.showResult(result, entry);
       this.renderHangar();
-      this.host.fly(entry);
-      this.setStatus(`"${result.name}" is on the runway. Fly it, then Refine with what you'd change.`);
+      this.host.select(entry);
+      this.setStatus(`"${result.name}" is ready in the hangar. FLY ▸ to try it, then Refine with what you'd change.`);
     });
   }
 
@@ -443,7 +445,7 @@ export class Studio {
       h('div', { class: 'muted small' }, `Crew: ${r.model}`),
       h('details', {}, h('summary', {}, 'Flight test report'), h('pre', {}, formatReport(r.report))),
       h('div', { class: 'row' },
-        h('button', { onclick: () => this.host.fly(entry) }, 'Fly again'),
+        h('button', { onclick: () => this.flyEntry(entry) }, 'Fly'),
         h('span', { class: 'muted small' }, `${r.attempts.length} round(s) · $${r.cost.toFixed(4)}`),
       ),
     );
@@ -532,10 +534,14 @@ export class Studio {
     const rows: HTMLElement[] = BUILTINS.map((b, i) => {
       const entry = builtinEntry(b);
       const active = cur === entry.id || (cur === null && i === 0);
-      return h('div', { class: `hangar-row${active ? ' active' : ''}`, title: b.hint },
+      const pick = () => {
+        if (!this.isCurrent(entry.id)) this.host.select(entry);
+        this.setStatus(b.hint);
+      };
+      return h('div', { class: `hangar-row${active ? ' active' : ''}`, title: b.hint, onclick: pick },
         h('span', { class: 'name' }, b.label),
         h('span', { class: 'muted small' }, 'built-in'),
-        h('button', { onclick: () => { this.host.fly(entry); this.setStatus(b.hint); } }, 'Fly'),
+        h('button', { onclick: (ev) => { ev.stopPropagation(); this.flyEntry(entry); } }, 'Fly'),
       );
     });
     for (const e of this.host.library.list()) {
@@ -544,17 +550,35 @@ export class Studio {
         .filter(Boolean)
         .join(' · ');
       rows.push(
-        h('div', { class: `hangar-row${cur === e.id ? ' active' : ''}`, title: `${p.prompt ?? ''}\n${p.model ?? ''}` },
+        h('div', {
+          class: `hangar-row${cur === e.id ? ' active' : ''}`,
+          title: `${p.prompt ?? ''}\n${p.model ?? ''}`,
+          onclick: () => {
+            if (!this.isCurrent(e.id)) this.host.select(e);
+          },
+        },
           e.livery ? h('img', { src: e.livery, alt: '' }) : null,
           h('span', { class: 'name' }, e.name),
           h('span', { class: 'muted small' }, meta),
-          h('button', { onclick: () => this.host.fly(e) }, 'Fly'),
-          h('button', { title: 'Download JSON', onclick: () => download(`${e.name}.json`, toExportJson(e)) }, '⤓'),
-          h('button', { title: 'Delete', onclick: () => { this.host.library.remove(e.id); this.renderHangar(); } }, '✕'),
+          h('button', { onclick: (ev) => { ev.stopPropagation(); this.flyEntry(e); } }, 'Fly'),
+          h('button', { title: 'Download JSON', onclick: (ev) => { ev.stopPropagation(); download(`${e.name}.json`, toExportJson(e)); } }, '⤓'),
+          h('button', { title: 'Delete', onclick: (ev) => { ev.stopPropagation(); this.host.library.remove(e.id); this.renderHangar(); } }, '✕'),
         ),
       );
     }
     this.el.hangar.replaceChildren(...rows);
+  }
+
+  /** Select a craft (unless it is already the one on the turntable) and take it flying. */
+  private flyEntry(entry: LibraryEntry): void {
+    if (!this.isCurrent(entry.id)) this.host.select(entry);
+    this.host.fly();
+  }
+
+  /** Is this entry the craft already loaded? (null = the built-in trainer, the first built-in.) */
+  private isCurrent(id: string): boolean {
+    const cur = this.host.current().entryId;
+    return cur === id || (cur === null && id === builtinEntry(BUILTINS[0]).id);
   }
 
   private async importFile(input: HTMLInputElement): Promise<void> {
@@ -564,7 +588,7 @@ export class Studio {
     try {
       const entry = this.host.library.add(fromImportJson(await f.text()));
       this.renderHangar();
-      this.host.fly(entry);
+      this.host.select(entry);
       this.setStatus(`Imported "${entry.name}".`);
     } catch (e) {
       this.setStatus(`Import failed: ${e instanceof Error ? e.message : e}`, 'error');

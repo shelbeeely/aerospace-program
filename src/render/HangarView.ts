@@ -20,6 +20,8 @@ export class HangarView {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   readonly controls: OrbitControls;
+  /** Height of the turntable's top surface (m): craft rest on it. */
+  readonly turntableTop = 0.1;
   private readonly sun: THREE.DirectionalLight;
   private readonly turntable = new THREE.Group();
   private idle = 0;
@@ -214,6 +216,7 @@ export class HangarView {
 
   setActive(on: boolean): void {
     this.controls.enabled = on;
+    this.controls.autoRotate = false;
     this.idle = 0;
   }
 

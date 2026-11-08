@@ -24,6 +24,8 @@ import { initPhysics, Simulation } from './sim/Simulation.ts';
 import { WEATHER_PRESETS } from './sim/atmosphere.ts';
 import { TUNING } from './tuning.ts';
 import { builtinEntry, CAP_STORAGE, KEY_STORAGE, Studio } from './ui/Studio.ts';
+import { HangarView } from './render/HangarView.ts';
+import { applyModeClass, modeFromQuery, parseMode, type AppMode } from './app/Mode.ts';
 
 async function start() {
   await initPhysics();
@@ -70,11 +72,17 @@ async function start() {
   const worldView = new WorldView(scene, renderer);
   if (mobile) worldView.sun.shadow.mapSize.set(1024, 1024);
   const weatherView = new WeatherView(scene, worldView);
+  // The hangar: a separate scene with its own orbit camera; its lighting is baked once here.
+  const hangarView = new HangarView(renderer, canvas);
+  hangarView.bakeEnvironment();
+  let mode: AppMode = modeFromQuery(location.search);
+  /** The scene the craft is drawn in right now (flight world or hangar turntable). */
+  const craftScene = () => (mode === 'hangar' ? hangarView.scene : scene);
 
   // --- Simulation
   const sim = new Simulation(TEST_PLANE);
   let craftView = new CraftView(sim.craft);
-  scene.add(craftView.root);
+  craftScene().add(craftView.root);
   const debug = new DebugOverlay(scene, craftView.root);
   const debrisView = new DebrisView(scene);
   let viewVersion = sim.version;
@@ -84,9 +92,9 @@ async function start() {
     const old = craftView;
     craftView = new CraftView(sim.craft);
     craftView.setLivery(currentLivery);
-    scene.add(craftView.root);
+    craftScene().add(craftView.root);
     debug.attach(craftView.root); // move the CoM/CoL markers before disposing the old view
-    scene.remove(old.root);
+    old.root.removeFromParent();
     old.dispose();
   };
   const rig = new CameraRig(camera, canvas);
@@ -199,7 +207,8 @@ async function start() {
   const client = browserClient(stored(KEY_STORAGE), Number(stored(CAP_STORAGE) ?? 1));
   const library = new Library();
   let currentEntry: LibraryEntry | null = null;
-  const fly = (entry: LibraryEntry | null) => {
+  /** Load a craft (null = built-in trainer): on the turntable in the hangar, on the runway in flight. */
+  const select = (entry: LibraryEntry | null) => {
     sim.loadCraft(entry ? entry.craft : TEST_PLANE);
     currentLivery = entry?.livery ?? null;
     replaceCraftView();
@@ -211,14 +220,97 @@ async function start() {
     controlsPanel.render();
     rig.fitCraft(sim.craft.boundingRadius());
     reset();
+    if (mode === 'hangar') showOnTurntable();
     studio.renderHangar();
   };
+
+  // --- Hangar / flight modes
+  const flyBtn = document.getElementById('fly-btn') as HTMLButtonElement;
+  const toHangarBtn = document.getElementById('to-hangar') as HTMLButtonElement;
+  const craftCard = document.getElementById('craft-card')!;
+  const _hangarPos = new THREE.Vector3();
+  const _identity = new THREE.Quaternion();
+  /** Pose the craft on the turntable: the runway spawn pose (sim just reset), moved to x = z = 0. */
+  const showOnTurntable = () => {
+    const spawn = sim.position;
+    const mp = sim.craft.massProps;
+    // The spawn pose puts the CoM on the runway centreline; keep that, centred on the turntable.
+    _hangarPos.set(-mp.com.x, spawn.y + hangarView.turntableTop, -mp.com.z);
+    craftView.update(_hangarPos, _identity);
+    hangarView.fit(sim.craft.boundingRadius(), _hangarPos.y + mp.com.y);
+    updateCraftCard();
+  };
+  const updateCraftCard = () => {
+    const craft = sim.craft;
+    const mass = craft.massProps.mass;
+    let span = 0;
+    for (const p of craft.def.parts) {
+      const s = p.shape;
+      const half = s.type === 'box' ? s.size[0] / 2 : s.type === 'sphere' ? s.radius : s.axis === 'x' ? s.length / 2 : s.radius;
+      span = Math.max(span, Math.abs(p.position[0]) + half);
+    }
+    for (const r of craft.rotors) span = Math.max(span, Math.abs(r.localPosition.x) + r.def.radius);
+    const thrust = craft.engines.reduce((sum, e) => sum + e.def.maxThrust, 0);
+    const tw = thrust > 0 ? (thrust / (mass * TUNING.gravity)).toFixed(2) : '—';
+    const row = (k: string, v: string) => `<div class="row"><span>${k}</span><b>${v}</b></div>`;
+    const name = document.createElement('div');
+    name.className = 'card-name';
+    name.textContent = craft.def.name;
+    craftCard.replaceChildren(name);
+    craftCard.insertAdjacentHTML(
+      'beforeend',
+      row('TYPE', vehicleKind(sim)) +
+        row('MASS', `${mass.toFixed(0)} kg`) +
+        row('SPAN', `${(span * 2).toFixed(1)} m`) +
+        row('T/W', tw),
+    );
+  };
+  const setMode = (m: AppMode) => {
+    mode = m;
+    applyModeClass(m);
+    const hangar = m === 'hangar';
+    craftScene().add(craftView.root); // re-parents from the other scene
+    rig.setSuspended(hangar);
+    hangarView.setActive(hangar);
+    accumulator = 0;
+    debug.setVisible(!hangar && debugOn); // the CoM/CoL markers ride on the craft view
+    if (hangar) {
+      // Physics is paused in the hangar: put the craft back at its spawn pose on the turntable.
+      sim.resetToRunway();
+      if (sim.version !== viewVersion) {
+        if (sim.craft !== craftView.craft) replaceCraftView();
+        viewVersion = sim.version;
+      }
+      showOnTurntable();
+      audio.silence();
+      callouts.reset();
+      if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+      studio.show();
+    } else {
+      reset();
+    }
+    flyBtn.blur();
+    toHangarBtn.blur();
+  };
+  /** Take the selected craft flying from the runway. */
+  const fly = (entry?: LibraryEntry | null) => {
+    if (entry !== undefined) select(entry);
+    if (mode !== 'flight') setMode('flight');
+    else reset();
+  };
+  flyBtn.addEventListener('click', () => fly());
+  toHangarBtn.addEventListener('click', () => setMode('hangar'));
+  document.getElementById('studio-open')!.addEventListener('click', () => studio.show());
   const studio = new Studio({
     client,
     library,
     current: () => ({ craft: sim.craft.def, entryId: currentEntry?.id ?? null }),
     flightNotes: () => flightLog.summary(),
-    fly,
+    // Async results (a design finishing) must not swap the craft out from under a flight.
+    select: (entry) => {
+      if (mode === 'hangar') select(entry);
+    },
+    fly: () => fly(),
     applyLivery: (url) => {
       currentLivery = url;
       craftView.setLivery(url);
@@ -229,6 +321,7 @@ async function start() {
   const resize = () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
+    hangarView.resize(window.innerWidth / window.innerHeight);
     renderer.setSize(window.innerWidth, window.innerHeight, false);
     document.body.classList.toggle('portrait', window.innerHeight > window.innerWidth);
   };
@@ -236,15 +329,13 @@ async function start() {
   window.visualViewport?.addEventListener('resize', resize);
   screen.orientation?.addEventListener?.('change', resize);
   resize();
-  // On phones, start with the screen clear for flying; the ✦ button opens the Studio.
-  if (mobile) studio.toggle();
 
   /** Built-ins first, then the player's hangar. */
   const cycleCraft = (dir: 1 | -1) => {
     const list = [...BUILTINS.map(builtinEntry), ...library.list()];
     const cur = currentEntry ? list.findIndex((e) => e.id === currentEntry!.id) : 0;
     const next = list[(Math.max(0, cur) + dir + list.length) % list.length];
-    fly(next);
+    select(next);
     toast(`${next.name}${BUILTINS.find((b) => `builtin:${b.id}` === next.id)?.hint ? ` · ${BUILTINS.find((b) => `builtin:${b.id}` === next.id)!.hint}` : ''}`);
   };
 
@@ -263,11 +354,27 @@ async function start() {
       /** Flight-test a craft in the worker (same path the Studio uses). */
       flightTest: runFlightTest,
       /** PNG of the current 3D view (GPU readback; works on WebGPU and WebGL2). */
-      capture: (width?: number) => captureFrame(renderer, scene, camera, width),
+      capture: (width?: number) =>
+        mode === 'hangar'
+          ? captureFrame(renderer, hangarView.scene, hangarView.camera, width)
+          : captureFrame(renderer, scene, camera, width),
       client,
       library,
       studio,
+      hangarView,
+      /** Fly the selected craft (or this entry) from the runway. */
       fly,
+      /** Show a craft on the turntable (hangar) or runway (flight) without changing mode. */
+      select,
+      get mode() {
+        return mode;
+      },
+      /** 'hangar' | 'flight' (or 'fly'). */
+      setMode: (m: string) => {
+        const pm = parseMode(m);
+        if (!pm) throw new Error(`Unknown mode "${m}" (use "hangar" or "flight")`);
+        if (pm !== mode) setMode(pm);
+      },
       setPilot: (p: ControlSource | null) => (pilot = p ?? player),
       reset,
     },
@@ -288,6 +395,7 @@ async function start() {
   let failuresSeen = 0;
   let wasHardContact = false;
   let wasStalling = false;
+  setMode(mode);
 
   function frame(now: number) {
     requestAnimationFrame(frame);
@@ -302,16 +410,17 @@ async function start() {
     const renderThisFrame = perf.frame(dt);
 
     for (const a of player.poll()) {
-      if (a === 'reset') reset();
+      if (a === 'studio') setMode(mode === 'flight' ? 'hangar' : 'flight');
+      else if (a === 'mute') toast(audio.toggleMute() ? '🔇 Sound off' : '🔊 Sound on');
+      else if (a === 'nextVehicle') cycleCraft(1);
+      else if (a === 'prevVehicle') cycleCraft(-1);
+      else if (mode !== 'flight') continue; // the rest only means something in flight
+      else if (a === 'reset') reset();
       else if (a === 'camera') rig.toggle(renderPos);
       else if (a === 'help') {
         controlsPanel.render(); // reflect the current profile / devices
         hud.toggleHelp();
       }
-      else if (a === 'studio') studio.toggle();
-      else if (a === 'mute') toast(audio.toggleMute() ? '🔇 Sound off' : '🔊 Sound on');
-      else if (a === 'nextVehicle') cycleCraft(1);
-      else if (a === 'prevVehicle') cycleCraft(-1);
       else if (a === 'trimReset') player.trim = 0;
       else if (a === 'debug') {
         debugOn = !debugOn;
@@ -319,6 +428,14 @@ async function start() {
         debug.setVisible(debugOn);
         hud.setDebugVisible(debugOn);
       }
+    }
+
+    if (mode === 'hangar') {
+      // Physics paused; the craft sits on the turntable under the orbit camera.
+      accumulator = 0;
+      hangarView.update(dt);
+      if (presentToCanvas && renderThisFrame) renderer.render(hangarView.scene, hangarView.camera);
+      return;
     }
 
     accumulator += dt;

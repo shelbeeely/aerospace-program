@@ -36,9 +36,17 @@ export class CameraRig {
     this.controls.maxPolarAngle = Math.PI * 0.495;
   }
 
+  private suspended = false;
+
+  /** Stop (or resume) listening to the pointer, e.g. while another view owns the canvas. */
+  setSuspended(on: boolean): void {
+    this.suspended = on;
+    this.controls.enabled = !on && this.mode === 'orbit';
+  }
+
   toggle(target: THREE.Vector3): void {
     this.mode = this.mode === 'chase' ? 'orbit' : 'chase';
-    this.controls.enabled = this.mode === 'orbit';
+    this.controls.enabled = !this.suspended && this.mode === 'orbit';
     if (this.mode === 'orbit') {
       this.camera.up.copy(WORLD_UP);
       this.controls.target.copy(target);
