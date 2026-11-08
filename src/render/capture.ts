@@ -19,6 +19,8 @@ export async function captureFrame(
   scene: THREE.Scene,
   camera: THREE.PerspectiveCamera,
   width = 1280,
+  /** Optional post-processing chain to render through instead of a plain scene render. */
+  post?: { render(): void; readonly outputsDisplay: boolean },
 ): Promise<Blob> {
   // WebGPU copies rows in 256-byte steps: keep the width a multiple of 64 RGBA pixels.
   const w = Math.max(64, Math.round(width / 64) * 64);
@@ -26,22 +28,26 @@ export async function captureFrame(
   const rt = new THREE.RenderTarget(w, h, { type: THREE.HalfFloatType });
   try {
     renderer.setRenderTarget(rt);
-    renderer.render(scene, camera);
+    if (post) post.render();
+    else renderer.render(scene, camera);
     renderer.setRenderTarget(null);
+    // A post chain that already tone-mapped and sRGB-encoded needs no further conversion.
+    const display = !!post?.outputsDisplay;
     const px = await renderer.readRenderTargetPixelsAsync(rt, 0, 0, w, h);
     const webgl = !(renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend;
     const img = new ImageData(w, h);
     const half = px instanceof Uint16Array;
     const decode = (v: number) => (half ? THREE.DataUtils.fromHalfFloat(v) : v / 255);
+    const toByte = display ? (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 255) : toDisplay;
     for (let y = 0; y < h; y++) {
       // WebGL reads bottom-up, WebGPU top-down.
       const src = webgl ? h - 1 - y : y;
       for (let x = 0; x < w; x++) {
         const i = (src * w + x) * 4;
         const o = (y * w + x) * 4;
-        img.data[o] = toDisplay(decode(px[i]));
-        img.data[o + 1] = toDisplay(decode(px[i + 1]));
-        img.data[o + 2] = toDisplay(decode(px[i + 2]));
+        img.data[o] = toByte(decode(px[i]));
+        img.data[o + 1] = toByte(decode(px[i + 1]));
+        img.data[o + 2] = toByte(decode(px[i + 2]));
         img.data[o + 3] = 255;
       }
     }

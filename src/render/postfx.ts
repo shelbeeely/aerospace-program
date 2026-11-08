@@ -1,23 +1,32 @@
 import * as THREE from 'three/webgpu';
-import { builtinAOContext, mrt, normalView, pass, renderOutput, screenUV } from 'three/tsl';
-import { ao } from 'three/examples/jsm/tsl/display/GTAONode.js';
+import { pass, renderOutput } from 'three/tsl';
 import { bloom } from 'three/examples/jsm/tsl/display/BloomNode.js';
 import { smaa } from 'three/examples/jsm/tsl/display/SMAANode.js';
 
 /**
- * Render quality. 'low' draws straight to the screen (MSAA, no post); 'medium' adds HDR bloom
- * and SMAA; 'high' adds ground-truth ambient occlusion (GTAO) on indirect light. Works on
- * WebGPU and the WebGL2 fallback (TSL compiles to both).
+ * Render quality for the neon look. 'low' draws straight to the screen (MSAA, no post);
+ * 'medium' adds a strong HDR bloom (the glowing lines) and SMAA; 'high' adds a second, wide
+ * soft bloom for the hazy synthwave halo. Works on WebGPU and the WebGL2 fallback (TSL
+ * compiles to both).
  */
 export type Quality = 'low' | 'medium' | 'high';
 export const QUALITIES: Quality[] = ['low', 'medium', 'high'];
 
-export interface PostOptions {
-  /** Bloom strength / radius / luminance threshold (HDR, before tone mapping). */
-  bloom?: { strength: number; radius: number; threshold: number };
-  /** AO radius (m) for 'high'. */
-  aoRadius?: number;
+export interface BloomSettings {
+  strength: number;
+  radius: number;
+  threshold: number;
 }
+
+export interface PostOptions {
+  /** Tight bloom (HDR luminance, before tone mapping): the glow right around the lines. */
+  bloom?: BloomSettings;
+  /** Wide, soft second bloom for 'high'. */
+  haze?: BloomSettings;
+}
+
+const DEFAULT_BLOOM: BloomSettings = { strength: 1.2, radius: 0.45, threshold: 0.6 };
+const DEFAULT_HAZE: BloomSettings = { strength: 0.6, radius: 1.0, threshold: 0.35 };
 
 /** One post-processing chain for one scene + camera, rebuilt when the quality changes. */
 export class PostFX {
@@ -39,23 +48,17 @@ export class PostFX {
     if (q === 'low') return;
 
     const scenePass = pass(this.scene, this.camera);
-    if (q === 'high') {
-      // Depth + view-normal pre-pass feeds GTAO; AO then darkens only indirect (ambient/IBL)
-      // light inside the materials, as real occlusion does, not direct sunlight.
-      const pre = pass(this.scene, this.camera);
-      pre.setMRT(mrt({ output: normalView }));
-      const aoPass = ao(pre.getTextureNode('depth'), pre.getTextureNode(), this.camera);
-      aoPass.resolutionScale = 0.5;
-      aoPass.radius.value = this.opts.aoRadius ?? 1.5;
-      scenePass.contextNode = builtinAOContext(aoPass.getTextureNode().sample(screenUV).r);
-    }
     const color = scenePass.getTextureNode('output');
-    const b = this.opts.bloom ?? { strength: 0.25, radius: 0.5, threshold: 1.2 };
-    const glow = bloom(color, b.strength, b.radius, b.threshold);
+    const b = this.opts.bloom ?? DEFAULT_BLOOM;
+    let lit = color.add(bloom(color, b.strength, b.radius, b.threshold));
+    if (q === 'high') {
+      const h = this.opts.haze ?? DEFAULT_HAZE;
+      lit = lit.add(bloom(color, h.strength, h.radius, h.threshold));
+    }
     // Tone map + sRGB before SMAA (edge detection wants display values).
     const pipeline = new THREE.RenderPipeline(this.renderer);
     pipeline.outputColorTransform = false;
-    pipeline.outputNode = smaa(renderOutput(color.add(glow)));
+    pipeline.outputNode = smaa(renderOutput(lit));
     this.pipeline = pipeline;
   }
 
@@ -63,6 +66,15 @@ export class PostFX {
     return this.built ?? 'low';
   }
 
+  /**
+   * Whether `render()` writes display-ready (tone-mapped, sRGB) colour. False for 'low', which
+   * writes linear HDR into a render target (the renderer only tone-maps on the canvas).
+   */
+  get outputsDisplay(): boolean {
+    return this.pipeline !== null;
+  }
+
+  /** Render to the current render target (the canvas unless one is set). */
   render(): void {
     if (this.pipeline) this.pipeline.render();
     else this.renderer.render(this.scene, this.camera);
