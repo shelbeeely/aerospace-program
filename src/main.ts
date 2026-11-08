@@ -63,15 +63,13 @@ async function start() {
   renderer.setPixelRatio(basePixelRatio);
   const perf = new PerformanceGovernor(renderer, basePixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight, false);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.shadowMap.enabled = false; // neon look: unlit glowing lines, nothing casts shadows
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.3, 20000);
   const worldView = new WorldView(scene, renderer);
-  if (mobile) worldView.sun.shadow.mapSize.set(1024, 1024);
   const weatherView = new WeatherView(scene, worldView);
   // The hangar: a separate scene with its own orbit camera; its lighting is baked once here.
   const hangarView = new HangarView(renderer, canvas);

@@ -60,7 +60,7 @@ const lineMats = new Map<string, THREE.LineBasicMaterial>();
  */
 export function neonLineMaterial(c: THREE.ColorRepresentation, intensity = GLOW, opts: { fog?: boolean } = {}): THREE.LineBasicMaterial {
   const base = new THREE.Color(c);
-  const key = `${base.getHexString()}|${intensity}|${opts.fog ?? true}`;
+  const key = `${base.r},${base.g},${base.b}|${intensity}|${opts.fog ?? true}`;
   let m = lineMats.get(key);
   if (!m) {
     m = new THREE.LineBasicMaterial({ color: base.multiplyScalar(intensity), fog: opts.fog ?? true, toneMapped: true });

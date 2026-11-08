@@ -23,6 +23,8 @@ export class HangarView {
   /** Height of the turntable's top surface (m): craft rest on it. */
   readonly turntableTop = 0.1;
   private readonly turntable = new THREE.Group();
+  /** Sky dome, kept centred on the orbit camera so its horizon lines up with the ground. */
+  private readonly sky: THREE.Mesh;
   private idle = 0;
   private envReady = false;
 
@@ -138,10 +140,10 @@ export class HangarView {
       sunDir: new THREE.Vector3(0, 0.2, -1),
       sunRadius: 0.22,
     });
-    const sky = new THREE.Mesh(new THREE.SphereGeometry(200, 48, 24), skyMat);
-    sky.position.set(0, 0, -D / 2);
-    sky.renderOrder = -1;
-    s.add(sky);
+    this.sky = new THREE.Mesh(new THREE.SphereGeometry(200, 48, 24), skyMat);
+    this.sky.renderOrder = -1;
+    this.sky.frustumCulled = false;
+    s.add(this.sky);
     const coneGeo = new THREE.ConeGeometry(3, 8, 6);
     for (let i = 0; i < 40; i++) {
       const a = Math.PI * (0.55 + (i / 40) * 0.9);
@@ -221,6 +223,7 @@ export class HangarView {
     const dir = new THREE.Vector3(-0.62, 0.22, -0.75).normalize();
     this.camera.position.copy(this.controls.target).addScaledVector(dir, Math.min(18, r * 2.6 + 2));
     this.controls.update();
+    this.sky.position.copy(this.camera.position);
   }
 
   resize(aspect: number): void {
@@ -233,5 +236,6 @@ export class HangarView {
     this.idle += dt;
     if (this.idle > 8) this.controls.autoRotate = true;
     this.controls.update(dt);
+    this.sky.position.copy(this.camera.position);
   }
 }

@@ -28,8 +28,20 @@ export async function captureFrame(
   const rt = new THREE.RenderTarget(w, h, { type: THREE.HalfFloatType });
   try {
     renderer.setRenderTarget(rt);
-    if (post) post.render();
-    else renderer.render(scene, camera);
+    if (post) {
+      // The post chain's internal passes follow the drawing-buffer size: match it to the
+      // capture so the PNG is rendered at full resolution, then put the canvas size back.
+      const size = renderer.getSize(new THREE.Vector2());
+      const ratio = renderer.getPixelRatio();
+      renderer.setPixelRatio(1);
+      renderer.setSize(w, h, false);
+      try {
+        post.render();
+      } finally {
+        renderer.setPixelRatio(ratio);
+        renderer.setSize(size.x, size.y, false);
+      }
+    } else renderer.render(scene, camera);
     renderer.setRenderTarget(null);
     // A post chain that already tone-mapped and sRGB-encoded needs no further conversion.
     const display = !!post?.outputsDisplay;

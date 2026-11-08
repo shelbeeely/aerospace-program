@@ -105,7 +105,7 @@ export class WorldView {
     const x = p.x;
     const z = p.y;
     const edges = band(x, 1.0, 0.45).add(band(x, width - 1.0, 0.45));
-    const dash = step(float(0.4), z.sub(70).div(50).fract()).mul(step(70, z)).mul(step(z, length - 70));
+    const dash = float(1).sub(step(float(0.6), z.sub(70).div(50).fract())).mul(step(70, z)).mul(step(z, length - 70));
     const centre = band(x, width / 2, 0.45).mul(dash);
     // Threshold "piano keys" and aiming points at both ends.
     let keys: TslNode = float(0);

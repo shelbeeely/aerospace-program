@@ -93,7 +93,6 @@ export class CraftView {
   private neonPart(geo: THREE.BufferGeometry, color: string): THREE.Mesh {
     const mesh = new THREE.Mesh(geo, this.material(color));
     mesh.add(neonize(geo, neonTint(color)));
-    mesh.castShadow = true;
     return mesh;
   }
 

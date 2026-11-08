@@ -27,7 +27,6 @@ export class DebrisView {
         const geo = geometryFor(d.part.shape);
         mesh = new THREE.Mesh(geo, neonFillMaterial(neonTint(d.part.color).multiplyScalar(0.035)));
         mesh.add(neonize(geo, neonTint(d.part.color)));
-        mesh.castShadow = true;
         this.scene.add(mesh);
         this.items.set(d, mesh);
       }
