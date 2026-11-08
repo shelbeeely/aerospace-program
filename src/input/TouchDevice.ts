@@ -105,7 +105,7 @@ export class TouchDevice implements InputDevice {
     const bar = el('div', 'tbar',
       button('Hangar', 'Hangar & Studio', 'studio'),
       button('Camera', 'Camera: chase / orbit', 'camera'),
-      button('Controls', 'Help', 'help'), more,
+      button('Controls', 'Controls', 'help'), more,
     );
 
     this.root = el('div', 'touch hidden', leftZone, this.stickZone, brake, bar, menu);

@@ -337,6 +337,10 @@ async function start() {
     mode = m;
     syncRenderControls();
     applyModeClass(m);
+    if (mobile) {
+      document.getElementById('help')!.classList.add('hidden');
+      debugOn = false; sim.recordForces = false; hud.setDebugVisible(false);
+    }
     const hangar = m === 'hangar';
     craftScene().add(craftView.root); // re-parents from the other scene
     rig.setSuspended(hangar);

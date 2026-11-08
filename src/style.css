@@ -346,3 +346,5 @@ body.touch-ui #help details { margin: 12px 0; }
 body.touch-ui #help summary { padding: 10px 0; cursor: pointer; }
 body.touch-ui .lever { margin-bottom: 56px; }
 body.touch-ui .tz-left .tz-hint { left: max(10px, env(safe-area-inset-left)); font-size: 10px; }
+#hangar-bar > label.panel { position: static; }
+body.touch-ui #hangar-bar > label.panel { display: none; }
