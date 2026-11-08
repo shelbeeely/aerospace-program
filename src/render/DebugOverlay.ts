@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import type { Craft } from '../craft/Craft.ts';
 import type { DebugForce, ForceKind } from '../modules/ForceModule.ts';
 
@@ -7,6 +7,7 @@ const COLORS: Record<ForceKind, THREE.Color> = {
   drag: new THREE.Color('#ff3333'),
   thrust: new THREE.Color('#ffdd00'),
   wheel: new THREE.Color('#aaaaaa'),
+  buoyancy: new THREE.Color('#33e0ff'),
 };
 const MAX_LINES = 256;
 

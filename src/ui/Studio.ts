@@ -1,3 +1,4 @@
+import { BUILTINS, type BuiltinCraft } from '../craft/builtins.ts';
 import type { CraftDef } from '../craft/types.ts';
 import { defaultModel, fallbacksFor, isFree, JOBS, modelsForJob, priceLabel, type JobId } from '../gen/catalog.ts';
 import { designCraft, type DesignResult } from '../gen/craftDesigner.ts';
@@ -12,6 +13,7 @@ import {
   type ModelInfo,
 } from '../gen/openrouter.ts';
 import { formatReport } from '../sim/flightTest.ts';
+import { runFlightTest } from '../sim/flightTestClient.ts';
 
 export interface StudioHost {
   client: OpenRouter;
@@ -20,8 +22,10 @@ export interface StudioHost {
   current(): { craft: CraftDef; entryId: string | null };
   /** Summary of the player's flight in the current craft. */
   flightNotes(): string;
-  /** Put a craft on the runway. */
-  fly(entry: LibraryEntry | null): void;
+  /** Show a craft on the hangar turntable (null = built-in trainer). */
+  select(entry: LibraryEntry | null): void;
+  /** Take the selected craft flying: switch to flight mode and reset to the runway. */
+  fly(): void;
   /** Apply a livery texture to the current craft (null removes it). */
   applyLivery(dataUrl: string | null): void;
 }
@@ -30,8 +34,9 @@ const SUGGESTIONS = [
   'a slow, forgiving bush plane with huge wings',
   'a twin-engine cargo plane',
   'a canard racer with a pusher prop',
-  'a long-winged motor glider',
-  'a tiny aerobatic trainer',
+  'a heavy-lift hexacopter drone',
+  'a two-seat helicopter',
+  'a small helium blimp for sightseeing',
 ];
 
 type Child = Node | string | null | undefined | false;
@@ -123,7 +128,9 @@ export class Studio {
 
     const prompt = h('textarea', {
       rows: '3',
-      placeholder: 'Describe a craft… (Ctrl+Enter to design)',
+      id: 'aircraft-prompt',
+      'aria-label': 'Describe your aircraft',
+      placeholder: 'e.g. a small electric quadcopter or a twin-engine cargo plane',
       onkeydown: (e) => {
         const k = e as KeyboardEvent;
         if (k.key === 'Enter' && (k.ctrlKey || k.metaKey)) void this.design(false);
@@ -132,7 +139,7 @@ export class Studio {
     const rounds = h('select', { title: 'Model calls allowed: 1 designer draft, then engineer repair rounds' });
     for (const n of [1, 2, 3, 4, 5]) rounds.append(h('option', { value: String(n) }, `${n} round${n > 1 ? 's' : ''}`));
     rounds.value = '3';
-    const designBtn = h('button', { class: 'primary', onclick: () => this.design(false) }, 'Design new');
+    const designBtn = h('button', { class: 'primary', onclick: () => this.design(false) }, 'Generate aircraft');
     const refineBtn = h('button', { onclick: () => this.design(true), title: 'Modify the craft you are flying, using your flight as feedback' }, 'Refine current');
     const cancel = h('button', { class: 'hidden', onclick: () => this.busy?.abort() }, 'Cancel');
     const liveryPrompt = h('input', { type: 'text', placeholder: 'e.g. racing stripes, red and cream' });
@@ -177,20 +184,25 @@ export class Studio {
     this.root = h(
       'div',
       { id: 'studio', class: 'panel' },
-      h('div', { class: 'studio-head' }, h('h3', {}, '✦ STUDIO'), this.el.spend),
+      h('div', { class: 'studio-head' },
+        h('h3', {}, '✦ CREATE · STUDIO'),
+        this.el.spend,
+        h('button', { class: 'studio-close', title: 'Close', 'aria-label': 'Close Studio', onclick: () => this.toggle() }, '✕'),
+      ),
       this.el.status,
       h('section', {},
-        h('div', { class: 'row spread' }, h('h4', {}, 'Crew'), h('label', { class: 'inline' }, freeOnly, ' Free only')),
-        crew,
-        settings,
-      ),
-      h('section', {},
-        h('h4', {}, 'Design'),
+        h('label', { for: 'aircraft-prompt', class: 'prompt-label' }, 'Describe your aircraft'),
         prompt,
         chips,
-        h('div', { class: 'row' }, rounds, designBtn, refineBtn, cancel),
+        h('div', { class: 'row' }, designBtn, refineBtn, cancel),
         this.el.log,
         this.el.result,
+      ),
+      settings,
+      h('details', { class: 'settings crew-settings' },
+        h('summary', {}, 'Models & generation settings'),
+        h('div', { class: 'row spread' }, h('h4', {}, 'Crew'), h('label', { class: 'inline' }, freeOnly, ' Free only')),
+        crew, h('label', {}, 'Design and repair rounds', rounds),
       ),
       h('section', {}, h('h4', {}, 'Livery'), h('div', { class: 'row' }, liveryPrompt, paintBtn, unpaintBtn)),
       h('section', {},
@@ -211,8 +223,24 @@ export class Studio {
     void this.loadModels();
   }
 
+  show(): void {
+    this.root.classList.remove('hidden');
+    document.getElementById('studio-open')?.setAttribute('aria-expanded', 'true');
+    this.root.scrollTop = 0;
+  }
+
+  /** Start a new design from text (e.g. a spoken "design a seaplane"). */
+  designFromText(text: string): void {
+    this.show();
+    this.el.prompt.value = text;
+    void this.design(false);
+  }
+
   toggle(): void {
     this.root.classList.toggle('hidden');
+    const open = !this.root.classList.contains('hidden');
+    document.getElementById('studio-open')?.setAttribute('aria-expanded', String(open));
+    if (!open) document.getElementById('studio-open')?.focus({ preventScroll: true });
   }
 
   // ---------------------------------------------------------------- models & crew
@@ -336,11 +364,15 @@ export class Studio {
     if (!this.canGenerate()) {
       this.setStatus('Add your OpenRouter key under "Key & spend" first (free models cost nothing).', 'error');
       this.el.settings.open = true;
+      this.el.keyInput.scrollIntoView({ block: 'nearest' });
+      this.el.keyInput.focus({ preventScroll: true });
       return null;
     }
     const c = this.crew(job);
     if (!c.model) {
-      this.setStatus(`Pick a ${JOBS[job].label} model first.`, 'error');
+      this.setStatus(`Pick a ${JOBS[job].label} model under Models & generation settings.`, 'error');
+      const models = this.root.querySelector<HTMLDetailsElement>('.crew-settings');
+      if (models) { models.open = true; models.scrollIntoView({ block: 'nearest' }); }
       return null;
     }
     return c;
@@ -381,6 +413,7 @@ export class Studio {
         base: refine ? cur.craft : undefined,
         feedback: refine ? this.host.flightNotes() : undefined,
         maxIterations: Number(this.el.rounds.value),
+        tester: runFlightTest,
         signal,
         onEvent: (e) => {
           if (e.type === 'status') this.setStatus(e.message);
@@ -412,8 +445,8 @@ export class Studio {
       });
       this.showResult(result, entry);
       this.renderHangar();
-      this.host.fly(entry);
-      this.setStatus(`"${result.name}" is on the runway. Fly it, then Refine with what you'd change.`);
+      this.host.select(entry);
+      this.setStatus(`"${result.name}" is ready in the hangar. FLY ▸ to try it, then Refine with what you'd change.`);
     });
   }
 
@@ -424,7 +457,7 @@ export class Studio {
       h('div', { class: 'muted small' }, `Crew: ${r.model}`),
       h('details', {}, h('summary', {}, 'Flight test report'), h('pre', {}, formatReport(r.report))),
       h('div', { class: 'row' },
-        h('button', { onclick: () => this.host.fly(entry) }, 'Fly again'),
+        h('button', { onclick: () => this.flyEntry(entry) }, 'Fly'),
         h('span', { class: 'muted small' }, `${r.attempts.length} round(s) · $${r.cost.toFixed(4)}`),
       ),
     );
@@ -448,8 +481,8 @@ export class Studio {
         signal,
       });
       this.host.applyLivery(res.image);
-      if (cur.entryId) {
-        const e = this.host.library.get(cur.entryId)!;
+      const e = cur.entryId ? this.host.library.get(cur.entryId) : undefined;
+      if (cur.entryId && e) {
         this.host.library.update(cur.entryId, {
           livery: res.image,
           provenance: { ...e.provenance, liveryModel: res.model, liveryPrompt: style },
@@ -457,7 +490,7 @@ export class Studio {
       }
       const how = res.spec ? ` (${res.spec.pattern}, ${res.spec.colors.length + 1} colours)` : '';
       this.setStatus(
-        `Painted by ${shortName(res.model)}${how}, $${res.cost.toFixed(4)}.${cur.entryId ? '' : " The built-in trainer's livery isn't saved."}`,
+        `Painted by ${shortName(res.model)}${how}, $${res.cost.toFixed(4)}.${e ? '' : " Built-in craft liveries aren't saved."}`,
       );
       this.renderHangar();
     });
@@ -487,6 +520,20 @@ export class Studio {
       this.audioEl.volume = 0.5;
       this.audioEl.classList.remove('hidden');
       void this.audioEl.play().catch(() => {});
+      // Media Session: title on the lock screen / media hub, hardware play-pause keys.
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: style.slice(0, 60),
+          artist: `Composed by ${shortName(res.model)}`,
+          album: `Aerospace Program · ${this.host.current().craft.name}`,
+        });
+        navigator.mediaSession.setActionHandler('play', () => void this.audioEl.play());
+        navigator.mediaSession.setActionHandler('pause', () => this.audioEl.pause());
+        navigator.mediaSession.setActionHandler('stop', () => {
+          this.audioEl.pause();
+          this.audioEl.currentTime = 0;
+        });
+      }
       this.el.musicInfo.textContent = `${shortName(res.model)} · $${res.cost.toFixed(4)}${res.text ? ` · ${res.text.slice(0, 120)}` : ''}`;
       this.setStatus('Now playing. (Music is kept for this session only.)');
     });
@@ -496,30 +543,54 @@ export class Studio {
 
   renderHangar(): void {
     const cur = this.host.current().entryId;
-    const rows: HTMLElement[] = [
-      h('div', { class: `hangar-row${cur === null ? ' active' : ''}` },
-        h('span', { class: 'name' }, 'Trainer T-1'),
+    const rows: HTMLElement[] = BUILTINS.map((b, i) => {
+      const entry = builtinEntry(b);
+      const active = cur === entry.id || (cur === null && i === 0);
+      const pick = () => {
+        if (!this.isCurrent(entry.id)) this.host.select(entry);
+        this.setStatus(b.hint);
+      };
+      return h('div', { class: `hangar-row${active ? ' active' : ''}`, title: b.hint, onclick: pick },
+        h('span', { class: 'name' }, b.label),
         h('span', { class: 'muted small' }, 'built-in'),
-        h('button', { onclick: () => this.host.fly(null) }, 'Fly'),
-      ),
-    ];
+        h('button', { onclick: (ev) => { ev.stopPropagation(); this.flyEntry(entry); } }, 'Fly'),
+      );
+    });
     for (const e of this.host.library.list()) {
       const p = e.provenance;
       const meta = [p.score !== undefined ? `${p.score}/100` : '', p.model ? shortName(p.model.split(' + ')[0]) : p.source]
         .filter(Boolean)
         .join(' · ');
       rows.push(
-        h('div', { class: `hangar-row${cur === e.id ? ' active' : ''}`, title: `${p.prompt ?? ''}\n${p.model ?? ''}` },
+        h('div', {
+          class: `hangar-row${cur === e.id ? ' active' : ''}`,
+          title: `${p.prompt ?? ''}\n${p.model ?? ''}`,
+          onclick: () => {
+            if (!this.isCurrent(e.id)) this.host.select(e);
+          },
+        },
           e.livery ? h('img', { src: e.livery, alt: '' }) : null,
           h('span', { class: 'name' }, e.name),
           h('span', { class: 'muted small' }, meta),
-          h('button', { onclick: () => this.host.fly(e) }, 'Fly'),
-          h('button', { title: 'Download JSON', onclick: () => download(`${e.name}.json`, toExportJson(e)) }, '⤓'),
-          h('button', { title: 'Delete', onclick: () => { this.host.library.remove(e.id); this.renderHangar(); } }, '✕'),
+          h('button', { onclick: (ev) => { ev.stopPropagation(); this.flyEntry(e); } }, 'Fly'),
+          h('button', { title: 'Download JSON', onclick: (ev) => { ev.stopPropagation(); download(`${e.name}.json`, toExportJson(e)); } }, '⤓'),
+          h('button', { title: 'Delete', onclick: (ev) => { ev.stopPropagation(); this.host.library.remove(e.id); this.renderHangar(); } }, '✕'),
         ),
       );
     }
     this.el.hangar.replaceChildren(...rows);
+  }
+
+  /** Select a craft (unless it is already the one on the turntable) and take it flying. */
+  private flyEntry(entry: LibraryEntry): void {
+    if (!this.isCurrent(entry.id)) this.host.select(entry);
+    this.host.fly();
+  }
+
+  /** Is this entry the craft already loaded? (null = the built-in trainer, the first built-in.) */
+  private isCurrent(id: string): boolean {
+    const cur = this.host.current().entryId;
+    return cur === id || (cur === null && id === builtinEntry(BUILTINS[0]).id);
   }
 
   private async importFile(input: HTMLInputElement): Promise<void> {
@@ -529,7 +600,7 @@ export class Studio {
     try {
       const entry = this.host.library.add(fromImportJson(await f.text()));
       this.renderHangar();
-      this.host.fly(entry);
+      this.host.select(entry);
       this.setStatus(`Imported "${entry.name}".`);
     } catch (e) {
       this.setStatus(`Import failed: ${e instanceof Error ? e.message : e}`, 'error');
@@ -540,6 +611,11 @@ export class Studio {
   get last(): DesignResult | null {
     return this.lastResult;
   }
+}
+
+/** Built-in craft as (unsaved) hangar entries, so they fly through the same path. */
+export function builtinEntry(b: BuiltinCraft): LibraryEntry {
+  return { id: `builtin:${b.id}`, name: b.label, craft: b.craft, provenance: { source: 'builtin', createdAt: '' } };
 }
 
 function shortName(id: string): string {

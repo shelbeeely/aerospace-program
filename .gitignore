@@ -2,3 +2,7 @@ node_modules
 dist
 *.log
 .env
+.scratch
+
+# Agent worktrees (parallel workers)
+.claude/worktrees/

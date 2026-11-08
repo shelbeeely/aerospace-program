@@ -1,7 +1,12 @@
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+html, body {
+  margin: 0; height: 100%; overflow: hidden; background: #000;
+  overscroll-behavior: none; -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
 body { font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #eaf2f8; }
-#view { display: block; width: 100vw; height: 100vh; }
+/* dvh follows mobile browser bars; vh is the fallback. */
+#view { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; }
 
 .panel {
   position: absolute;
@@ -34,9 +39,22 @@ h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.12em; color: #9fd0ff; }
 }
 @keyframes blink { 50% { opacity: 0.25; } }
 
-#help { right: 376px; top: 16px; }
-#help td { padding: 1px 10px 1px 0; }
+#help { right: 376px; top: 16px; max-width: 380px; max-height: calc(100dvh - 32px); overflow-y: auto; user-select: text; }
+#help td { padding: 1px 10px 1px 0; vertical-align: top; }
 #help td:first-child { color: #ffdd88; white-space: nowrap; }
+#help h4 { margin: 10px 0 4px; font-size: 11px; letter-spacing: 0.1em; color: #9fb2c2; }
+#help p { margin: 0 0 4px; color: #cfe; }
+.controls-settings { display: flex; flex-direction: column; gap: 6px; }
+.controls-settings select, .controls-settings input[type=range] { width: 100%; }
+.controls-settings select { background: rgba(0,0,0,0.35); color: #eaf2f8; border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; padding: 4px; font: inherit; }
+
+#toast {
+  position: absolute; left: 50%; top: max(12px, env(safe-area-inset-top)); transform: translate(-50%, -150%);
+  background: rgba(10, 18, 28, 0.85); border: 1px solid rgba(255,255,255,0.15); border-radius: 18px;
+  padding: 7px 14px; max-width: min(90vw, 520px); text-align: center; transition: transform 0.25s ease;
+  pointer-events: none; z-index: 30;
+}
+#toast.show { transform: translate(-50%, 0); }
 
 #debug { left: 16px; top: 16px; width: 290px; }
 #debug label { display: block; margin: 8px 0; }
@@ -102,8 +120,231 @@ h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.12em; color: #9fd0ff; }
 #studio .hangar-row button { padding: 1px 6px; }
 
 @media (max-width: 1100px) {
-  #help { display: none; }
+  body:not(.touch-ui) #help { right: 16px; z-index: 20; }
 }
 @media (max-width: 700px) {
   #studio { width: auto; left: 16px; top: auto; bottom: 16px; max-height: 50vh; }
 }
+
+/* ---------------------------------------------------------------- touch controls */
+.touch { position: absolute; inset: 0; pointer-events: none; z-index: 10; user-select: none; -webkit-user-select: none; }
+.touch .tz, .touch .tbtn, .touch .tbar { pointer-events: auto; touch-action: none; }
+.tz { position: absolute; bottom: 0; }
+.tz-left {
+  left: 0; width: 42%; height: 62%;
+  padding: 0 0 max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  display: flex; align-items: flex-end;
+}
+.tz-right { right: 0; width: 58%; height: 70%; }
+.tz-hint {
+  position: absolute; bottom: max(6px, env(safe-area-inset-bottom)); font-size: 10px; color: rgba(255,255,255,0.45);
+  letter-spacing: 0.06em; white-space: nowrap;
+}
+.tz-left .tz-hint { left: max(18px, env(safe-area-inset-left)); }
+.tz-right .tz-hint { right: max(18px, env(safe-area-inset-right)); }
+
+.lever {
+  --lever-h: min(44vh, 220px);
+  position: relative; width: 74px; height: var(--lever-h); margin-bottom: 16px;
+  border-radius: 37px; background: rgba(10, 18, 28, 0.35); border: 1px solid rgba(255,255,255,0.18);
+}
+.lever-track { position: absolute; left: 50%; top: 14px; bottom: 14px; width: 4px; transform: translateX(-50%); background: rgba(255,255,255,0.25); border-radius: 2px; }
+.lever-knob {
+  position: absolute; left: 50%; bottom: -22px; width: 54px; height: 44px; transform: translateX(-50%);
+  border-radius: 12px; background: rgba(255, 221, 0, 0.75); border: 2px solid rgba(255,255,255,0.7);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+.lever-label { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #ffdd88; letter-spacing: 0.1em; }
+
+.stick-base {
+  --stick: min(30vh, 150px);
+  position: absolute; width: var(--stick); height: var(--stick);
+  right: max(36px, env(safe-area-inset-right)); bottom: max(36px, env(safe-area-inset-bottom));
+  border-radius: 50%; background: rgba(10, 18, 28, 0.3); border: 1px solid rgba(255,255,255,0.2);
+}
+/* Floating: when touched, JS sets left/top to the thumb and the base centres on it. */
+.stick-base.active {
+  right: auto; bottom: auto; margin: calc(var(--stick) / -2) 0 0 calc(var(--stick) / -2);
+  background: rgba(10, 18, 28, 0.45);
+}
+.stick-knob {
+  position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px;
+  border-radius: 50%; background: rgba(159, 208, 255, 0.75); border: 2px solid rgba(255,255,255,0.7);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
+.tbtn {
+  min-width: 44px; height: 44px; padding: 0 10px; border-radius: 22px; font: 600 16px/1 ui-monospace, monospace;
+  color: #eaf2f8; background: rgba(10, 18, 28, 0.55); border: 1px solid rgba(255,255,255,0.22);
+  backdrop-filter: blur(4px);
+}
+.tbtn:active, .tbtn.down { background: rgba(61, 127, 216, 0.75); }
+.tbtn-brake {
+  position: absolute; left: calc(max(18px, env(safe-area-inset-left)) + 90px); bottom: max(26px, env(safe-area-inset-bottom));
+  font-size: 12px; letter-spacing: 0.08em; padding: 0 14px;
+}
+.tbar {
+  position: absolute; top: max(10px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right));
+  display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 60vw;
+}
+
+/* ---------------------------------------------------------------- touch layout: shared */
+body.touch-ui #hud {
+  left: max(10px, env(safe-area-inset-left)); top: max(10px, env(safe-area-inset-top)); bottom: auto;
+  min-width: 0; padding: 5px 8px; font-size: 11px;
+  display: grid; grid-template-columns: repeat(3, auto); gap: 1px 12px; max-width: 46vw;
+}
+body.touch-ui #hud .row { gap: 4px; }
+body.touch-ui #hud .row span { width: auto !important; }
+body.touch-ui #hud .row b { min-width: 0 !important; }
+body.touch-ui #hud .throttle .bar,
+body.touch-ui #hud .row small { display: none; }
+body.touch-ui #h-flags { grid-column: 1 / -1; min-height: 0; }
+body.touch-ui #hud .row span { width: 50px; font-size: 9px; }
+body.touch-ui #hud .row b { font-size: 14px; min-width: 44px; }
+body.touch-ui #hud .bar { width: 44px; }
+body.touch-ui #help {
+  left: 50%; right: auto; top: 50%; transform: translate(-50%, -50%);
+  width: min(92vw, 440px); max-height: 80dvh; z-index: 20;
+}
+body.touch-ui #debug {
+  left: max(10px, env(safe-area-inset-left)); top: max(64px, calc(env(safe-area-inset-top) + 54px));
+  width: min(92vw, 320px); max-height: 70dvh; overflow-y: auto; z-index: 15;
+}
+body.touch-ui #stall { top: 30%; font-size: 22px; }
+/* The Studio becomes a drawer above the controls. */
+body.touch-ui #studio {
+  z-index: 25; top: max(8px, env(safe-area-inset-top)); bottom: max(8px, env(safe-area-inset-bottom));
+  right: max(8px, env(safe-area-inset-right)); width: min(48vw, 420px); max-height: none;
+  touch-action: pan-y; -webkit-overflow-scrolling: touch;
+}
+body.touch-ui #studio button, body.touch-ui #studio select, body.touch-ui #studio input, body.touch-ui #studio textarea { min-height: 36px; font-size: 14px; }
+body.touch-ui #studio .chip { min-height: 30px; }
+.studio-close { margin-left: 8px; }
+body:not(.touch-ui) .studio-close { padding: 2px 8px !important; }
+
+/* ---------------------------------------------------------------- portrait phones */
+body.touch-ui.portrait #hud {
+  right: max(10px, env(safe-area-inset-right)); top: calc(max(10px, env(safe-area-inset-top)) + 46px);
+  max-width: none; grid-template-columns: repeat(3, 1fr);
+}
+body.touch-ui.portrait .tbar { left: max(10px, env(safe-area-inset-left)); max-width: none; justify-content: space-between; flex-wrap: nowrap; gap: 4px; }
+body.touch-ui.portrait .tbar .tbtn { min-width: 0; flex: 1 1 0; max-width: 46px; height: 38px; padding: 0; font-size: 15px; }
+body.touch-ui.portrait .tz-left { width: 45%; height: 48%; }
+body.touch-ui.portrait .tz-right { width: 55%; height: 48%; }
+body.touch-ui.portrait .lever { --lever-h: min(30vh, 220px); width: 64px; }
+body.touch-ui.portrait .stick-base { --stick: min(38vw, 160px); }
+body.touch-ui.portrait .tbtn-brake { left: calc(max(18px, env(safe-area-inset-left)) + 78px); }
+/* Studio as a bottom sheet in portrait. */
+body.touch-ui.portrait #studio {
+  left: max(8px, env(safe-area-inset-left)); right: max(8px, env(safe-area-inset-right)); width: auto;
+  top: 30dvh; bottom: max(8px, env(safe-area-inset-bottom));
+}
+
+/* ---------------------------------------------------------------- short landscape phones */
+@media (max-height: 430px) {
+  body.touch-ui:not(.portrait) #hud { padding: 4px 6px; }
+  body.touch-ui:not(.portrait) #hud .row b { font-size: 12px; }
+  body.touch-ui:not(.portrait) #hud .row { line-height: 1.15; }
+  body.touch-ui:not(.portrait) .lever { --lever-h: min(52vh, 200px); }
+  body.touch-ui:not(.portrait) .stick-base { --stick: min(40vh, 140px); }
+  body.touch-ui:not(.portrait) .tbtn { min-width: 40px; height: 40px; }
+}
+
+
+/* ---------------------------------------------------------------- weather (F3 panel) */
+#debug { max-height: calc(100dvh - 32px); overflow-y: auto; }
+#debug select { width: 100%; background: rgba(0,0,0,0.35); color: #eaf2f8; border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; padding: 3px; font: inherit; }
+/* Touch: keep the HUD to the essentials. */
+body.touch-ui #hud .row:has(#h-oat), body.touch-ui #hud .row:has(#h-trim) { display: none; }
+
+/* ---------------------------------------------------------------- hangar / flight modes */
+/* Hangar: Studio, craft card and FLY. Flight: HUD, touch controls, F3 panel, help. */
+body.mode-hangar #hud, body.mode-hangar #stall, body.mode-hangar #help, body.mode-hangar #debug,
+body.mode-hangar .touch, body.mode-hangar #to-hangar { display: none !important; }
+body.mode-flight #studio, body.mode-flight #hangar-bar { display: none !important; }
+
+#hangar-bar {
+  position: absolute; left: max(16px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom));
+  display: flex; align-items: flex-end; gap: 12px; z-index: 5;
+}
+#craft-card { position: static; min-width: 210px; }
+#craft-card .card-name {
+  font-size: 15px; font-weight: bold; color: #9fd0ff; margin-bottom: 4px; max-width: 260px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#craft-card .row { display: flex; align-items: baseline; gap: 8px; }
+#craft-card .row span { width: 52px; color: #9fb2c2; font-size: 11px; letter-spacing: 0.08em; }
+#craft-card .row b { font-variant-numeric: tabular-nums; }
+#fly-btn {
+  font: bold 22px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0.12em;
+  padding: 16px 28px; border-radius: 8px; cursor: pointer; color: #fff;
+  background: #3d7fd8; border: 1px solid #7fb2f2; box-shadow: 0 4px 18px rgba(61, 127, 216, 0.45);
+}
+#fly-btn:hover { background: #4b8ee6; }
+/* Reopens the Studio after its ✕ closed it (N switches mode in the hangar). */
+#studio-open { position: static; display: none; color: #eaf2f8; font: inherit; cursor: pointer; padding: 8px 12px; }
+body.mode-hangar:has(#studio.hidden) #studio-open { display: block; }
+#fly-btn:active { transform: translateY(1px); }
+#to-hangar {
+  top: max(16px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+  color: #eaf2f8; font: inherit; cursor: pointer; padding: 6px 12px; z-index: 6;
+}
+#to-hangar:hover { background: rgba(30, 50, 72, 0.8); }
+/* Touch: the ✦ button in the top bar goes back to the hangar. */
+body.touch-ui #to-hangar { display: none; }
+@media (max-width: 700px) {
+  body:not(.touch-ui) #hangar-bar { bottom: auto; top: 16px; }
+}
+body.touch-ui #hangar-bar { z-index: 26; }
+body.touch-ui:not(.portrait) #hangar-bar { max-width: calc(52vw - 24px); flex-wrap: wrap; }
+body.touch-ui.portrait #hangar-bar {
+  bottom: auto; top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right));
+  justify-content: space-between;
+}
+body.touch-ui.portrait #craft-card { min-width: 0; flex: 1; }
+/* Portrait: keep the turntable in view between the craft card and the Studio sheet. */
+body.mode-hangar.touch-ui.portrait #studio { top: 55dvh; }
+
+/* Mobile actions stay readable; optional tools live behind More. */
+body.touch-ui .tbar, body.touch-ui.portrait .tbar {
+  left: max(10px, env(safe-area-inset-left)); right: max(10px, env(safe-area-inset-right));
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 440px; gap: 6px;
+}
+body.touch-ui .tbar .tbtn, body.touch-ui.portrait .tbar .tbtn {
+  min-width: 0; max-width: none; width: 100%; height: 44px; font-size: 12px; padding: 0 5px; border-radius: 8px;
+}
+.tmore {
+  position: absolute; top: max(62px, calc(env(safe-area-inset-top) + 54px));
+  right: max(10px, env(safe-area-inset-right)); display: grid; grid-template-columns: 1fr 1fr;
+  gap: 8px; padding: 12px; max-width: min(340px, 94vw); max-height: calc(100dvh - 80px);
+  overflow-y: auto; background: #0c1225; border: 1px solid #526b8d; border-radius: 12px;
+  pointer-events: auto; touch-action: pan-y; z-index: 12;
+}
+.tmore .tbtn { min-height: 44px; min-width: 0; border-radius: 8px; font-size: 12px; }
+body.touch-ui .tz-hint { white-space: pre-line; text-align: center; font-size: 11px; line-height: 1.4; color: #d2e5f3; }
+body.touch-ui .lever { margin-bottom: 28px; }
+body.touch-ui .lever-label { white-space: nowrap; font-size: 10px; }
+.panel-close { display: block; margin: 0 0 12px auto; min-height: 44px; padding: 8px 12px; background: #182e49; color: #fff; border: 1px solid #728dab; border-radius: 6px; font: inherit; }
+#studio .prompt-label { font-size: 15px; color: #eaf2f8; font-weight: bold; }
+#studio .studio-head { position: sticky; top: -10px; z-index: 2; background: #0b1424; align-items: center; padding: 6px 0; }
+#studio .studio-close { min-height: 44px; min-width: 44px; }
+#studio .crew-settings > div, #studio .crew-settings > label { margin-top: 10px; }
+#studio-open { display: block; }
+body.touch-ui #studio { background: rgba(8, 16, 30, 0.97); }
+body.touch-ui.portrait #hangar-bar { flex-wrap: wrap; gap: 8px; }
+body.touch-ui.portrait #craft-card { flex: 1 1 100%; padding: 8px 10px; }
+body.touch-ui.portrait #craft-card .row { display: none; }
+body.touch-ui.portrait #craft-card .card-name { margin: 0; max-width: 100%; font-size: 13px; }
+body.touch-ui.portrait #fly-btn, body.touch-ui.portrait #studio-open { flex: 1; padding: 12px; min-height: 48px; font-size: 16px; }
+body.mode-hangar.touch-ui.portrait #studio { top: 22dvh; bottom: max(8px, env(safe-area-inset-bottom)); }
+body.touch-ui #studio .chips { display: none; }
+body.touch-ui #studio .studio-head h3 { font-size: 12px; }
+body.touch-ui #studio .studio-head .muted { font-size: 10px; }
+body.touch-ui #studio textarea { min-height: 80px; }
+body.touch-ui #help details { margin: 12px 0; }
+body.touch-ui #help summary { padding: 10px 0; cursor: pointer; }
+body.touch-ui .lever { margin-bottom: 56px; }
+body.touch-ui .tz-left .tz-hint { left: max(10px, env(safe-area-inset-left)); font-size: 10px; }
+#hangar-bar > label.panel { position: static; }
+body.touch-ui #hangar-bar > label.panel { display: none; }

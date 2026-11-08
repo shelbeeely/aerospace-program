@@ -2,11 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1520" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Aerospace Program: Flight Core</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
-  <body>
+  <body class="mode-hangar">
     <canvas id="view"></canvas>
 
     <div id="hud" class="panel">
@@ -22,10 +26,27 @@
         <b id="h-thr">0</b><small>%</small>
       </div>
       <div class="row"><span>TRIM</span><b id="h-trim">0</b><small></small></div>
+      <div class="row"><span>FLAPS</span><b id="h-flaps">UP</b><small></small></div>
+      <div class="row"><span>WIND</span><b id="h-wind">calm</b><small id="h-wind-arrow"></small></div>
+      <div class="row"><span>OAT</span><b id="h-oat">15°C</b><small></small></div>
+      <div class="row"><span>WX</span><b id="h-wx">—</b><small></small></div>
+      <div class="row" id="h-fuel-row"><span>FUEL</span><b id="h-fuel">--</b><small>%</small></div>
+      <div class="row" id="h-batt-row" style="display: none"><span>BATT</span><b id="h-batt">--</b><small>%</small></div>
+      <div class="row" id="h-bus-row" style="display: none"><span>BUS</span><b id="h-volts">--</b><small id="h-amps">V</small></div>
       <div id="h-flags"></div>
     </div>
 
     <div id="stall" class="hidden">STALL</div>
+
+    <!-- Hangar mode: craft card and launch button (Studio sits alongside). -->
+    <div id="hangar-bar">
+      <div id="craft-card" class="panel"></div>
+      <label class="panel">Render <select id="hangar-render-mode"><option value="raster">Raster</option><option value="raytrace">Ray traced</option></select></label>
+      <button id="fly-btn" title="Fly this craft (N)">FLY ▸</button>
+      <button id="studio-open" class="panel" title="Create aircraft, paint and music" aria-controls="studio" aria-expanded="false">✦ Create</button>
+    </div>
+    <!-- Flight mode: back to the hangar. -->
+    <button id="to-hangar" class="panel" title="Back to the hangar (N)">◂ Hangar</button>
 
     <div id="help" class="panel hidden">
       <h3>Controls</h3>
@@ -39,28 +60,58 @@
         <tr><td>T / G</td><td>trim nose down / up (Y resets)</td></tr>
         <tr><td>R</td><td>reset to runway</td></tr>
         <tr><td>C</td><td>chase / orbit camera</td></tr>
+        <tr><td>P</td><td>save photo (progressive when ray traced)</td></tr>
         <tr><td>F3</td><td>debug forces &amp; stats</td></tr>
-        <tr><td>N</td><td>toggle the Studio (generate craft)</td></tr>
+        <tr><td>N</td><td>hangar (Studio, pick a craft) / fly</td></tr>
         <tr><td>H</td><td>toggle this help</td></tr>
       </table>
       <p class="muted">Gamepad: left stick pitch/roll, right stick or bumpers yaw, triggers throttle,
-        A brake, Y reset, Back camera.</p>
-      <p class="muted">Tip: full throttle (Z), roll down the runway, pull back gently (S) around 60 kt.</p>
+        A brake, Y reset, Back camera, Start hangar.</p>
+      <p class="muted">Tip: full throttle (Z), roll down the runway, pull back gently (S) around 60 kt.
+        Rotorcraft: throttle ≈ 50% hovers. Blimp: power + pitch up to climb.</p>
       <p class="muted">Studio: describe a craft, a model designs it, the sim flight-tests it, you fly it, then Refine with what felt wrong.</p>
     </div>
 
     <div id="debug" class="panel hidden">
+      <button id="debug-close" class="panel-close" type="button">Close weather ✕</button>
+      <h3>Render</h3>
+      <label>Mode <select id="render-mode"><option value="raster">Raster</option><option value="raytrace">Ray traced</option></select></label>
+      <div id="render-status" class="muted small">Raster</div>
+      <p class="muted small">P saves a photo. Ray tracing uses analytic scenery; raster shows all weather and effects.</p>
       <h3>Debug</h3>
       <div id="d-stats"></div>
       <label>
         CoM shift (aft +): <b id="d-com-val">0.00</b> m
         <input id="d-com" type="range" min="-1" max="2" step="0.05" value="0" />
       </label>
+      <h3>Weather</h3>
+      <label>Preset <select id="w-preset"></select></label>
+      <div class="muted small" id="w-label"></div>
+      <label>Wind speed (m/s) <input id="w-speed" type="range" min="0" max="20" step="1" value="0" /></label>
+      <label>Wind from (°) <input id="w-dir" type="range" min="0" max="359" step="5" value="90" /></label>
+      <label>Gusts (m/s) <input id="w-gust" type="range" min="0" max="10" step="1" value="0" /></label>
+      <label>Turbulence <input id="w-turb" type="range" min="0" max="1" step="0.1" value="0" /></label>
+      <label>Temperature vs ISA (°C) <input id="w-temp" type="range" min="-35" max="30" step="1" value="0" /></label>
+      <label>Rain/snow (mm/h) <input id="w-precip" type="range" min="0" max="150" step="1" value="0" /></label>
+      <label>Cloud cover <input id="w-cloud" type="range" min="0" max="1" step="0.05" value="0" /></label>
+      <label>Cloud base (m) <input id="w-base" type="range" min="0" max="3000" step="50" value="1500" /></label>
+      <label>Thermals <input id="w-thermal" type="range" min="0" max="1" step="0.1" value="0" /></label>
+      <label>Storm <input id="w-storm" type="range" min="0" max="1" step="0.1" value="0" /></label>
+      <label>Visibility (m) <input id="w-vis" type="range" min="200" max="30000" step="100" value="30000" /></label>
+      <h3>Disasters</h3>
+      <div class="disaster-controls">
+        <button type="button" data-disaster="tornado">Tornado</button>
+        <button type="button" data-disaster="hurricane">Hurricane</button>
+        <button type="button" data-disaster="earthquake">Earthquake</button>
+        <button type="button" data-disaster="clear">Clear events</button>
+      </div>
+      <p class="muted small">Triggers affect flight physics. Reset clears events.</p>
       <div class="legend">
         <span style="color:#33ff55">■ lift</span>
         <span style="color:#ff3333">■ drag</span>
         <span style="color:#ffdd00">■ thrust</span>
-        <span style="color:#aaa">■ wheel</span><br />
+        <span style="color:#aaa">■ wheel</span>
+        <span style="color:#33e0ff">■ buoyancy</span><br />
         <span style="color:#ffd400">● CoM</span>
         <span style="color:#2f7dff">● CoL</span>
         <span style="color:#b04dff">● CoT</span>

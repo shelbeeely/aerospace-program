@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 export type CameraMode = 'chase' | 'orbit';
@@ -36,9 +36,17 @@ export class CameraRig {
     this.controls.maxPolarAngle = Math.PI * 0.495;
   }
 
+  private suspended = false;
+
+  /** Stop (or resume) listening to the pointer, e.g. while another view owns the canvas. */
+  setSuspended(on: boolean): void {
+    this.suspended = on;
+    this.controls.enabled = !on && this.mode === 'orbit';
+  }
+
   toggle(target: THREE.Vector3): void {
     this.mode = this.mode === 'chase' ? 'orbit' : 'chase';
-    this.controls.enabled = this.mode === 'orbit';
+    this.controls.enabled = !this.suspended && this.mode === 'orbit';
     if (this.mode === 'orbit') {
       this.camera.up.copy(WORLD_UP);
       this.controls.target.copy(target);
@@ -53,8 +61,9 @@ export class CameraRig {
 
   /** Frame a craft of the given bounding radius (m): bigger craft get a more distant chase cam. */
   fitCraft(radius: number): void {
-    const k = Math.max(1, radius / 6);
-    this.chaseOffset.set(0, 2.8 * k, 13 * k);
+    // Small drones get a close camera; big craft (blimps) a farther, higher one.
+    const k = Math.min(3, Math.max(0.35, radius / 6));
+    this.chaseOffset.set(0, 2.8 * k * (k > 1.5 ? 1.4 : 1), 13 * k);
   }
 
   update(dt: number, target: THREE.Vector3, rotation: THREE.Quaternion, velocity: THREE.Vector3): void {

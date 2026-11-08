@@ -1,144 +1,34 @@
 import type { ControlInputs, ControlSource } from '../sim/controls.ts';
 import { TUNING } from '../tuning.ts';
+import {
+  loadInputSettings,
+  saveInputSettings,
+  type Action,
+  type ControlProfile,
+  type InputDevice,
+  type InputSettings,
+  type RawInput,
+} from './types.ts';
+
+export { GamepadDevice } from './GamepadDevice.ts';
+export { KeyboardDevice } from './KeyboardDevice.ts';
+export { TouchDevice } from './TouchDevice.ts';
+export type { Action, ControlProfile, InputDevice, InputSettings, RawInput } from './types.ts';
 
 /**
- * Raw per-device intent, all devices write into the same shape. A future touch device just
- * needs to implement `InputDevice` too.
- */
-export interface RawInput {
-  pitch: number; // -1..1, +1 = nose up
-  roll: number;
-  yaw: number;
-  /** Throttle rate: -1 (decrease) .. +1 (increase) */
-  throttleRate: number;
-  /** If set, jump the throttle to this value (Z/X keys). */
-  throttleSet: number | null;
-  brake: number;
-  trimRate: number; // -1 nose down .. +1 nose up
-}
-
-export type Action = 'reset' | 'camera' | 'debug' | 'help' | 'trimReset' | 'studio';
-
-export interface InputDevice {
-  /** Accumulate this device's intent into `raw` (devices are summed then clamped). */
-  read(raw: RawInput): void;
-  /** Edge-triggered actions since the last call. */
-  drainActions(out: Action[]): void;
-}
-
-const GAME_CODES = new Set([
-  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyB', 'KeyR', 'KeyC', 'KeyZ', 'KeyX',
-  'KeyT', 'KeyG', 'KeyH', 'KeyY', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'F3',
-  'Space', 'KeyN',
-]);
-
-export class KeyboardDevice implements InputDevice {
-  private readonly down = new Set<string>();
-  private actions: Action[] = [];
-  private throttleSet: number | null = null;
-
-  constructor(target: Window = window) {
-    target.addEventListener('keydown', (e) => {
-      // Typing in the Studio (or any form field) must not fly the plane.
-      const el = e.target as HTMLElement | null;
-      if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) return;
-      if (GAME_CODES.has(e.code)) e.preventDefault(); // stops Ctrl+S, F3 search, etc. where allowed
-      if (e.repeat) return;
-      this.down.add(e.code);
-      switch (e.code) {
-        case 'KeyR': this.actions.push('reset'); break;
-        case 'KeyC': this.actions.push('camera'); break;
-        case 'F3': this.actions.push('debug'); break;
-        case 'KeyH': this.actions.push('help'); break;
-        case 'KeyN': this.actions.push('studio'); break;
-        case 'KeyY': this.actions.push('trimReset'); break;
-        case 'KeyZ': this.throttleSet = 1; break;
-        case 'KeyX': this.throttleSet = 0; break;
-      }
-    });
-    target.addEventListener('keyup', (e) => this.down.delete(e.code));
-    // Losing focus would otherwise leave keys "stuck".
-    target.addEventListener('blur', () => this.down.clear());
-  }
-
-  private axis(neg: string, pos: string): number {
-    return (this.down.has(pos) ? 1 : 0) - (this.down.has(neg) ? 1 : 0);
-  }
-
-  read(raw: RawInput): void {
-    raw.pitch += this.axis('KeyW', 'KeyS'); // W = nose down, S = nose up (KSP / flight-sim style)
-    raw.roll += this.axis('KeyA', 'KeyD');
-    raw.yaw += this.axis('KeyQ', 'KeyE');
-    const up = this.down.has('ShiftLeft') || this.down.has('ShiftRight');
-    const dn = this.down.has('ControlLeft') || this.down.has('ControlRight');
-    raw.throttleRate += (up ? 1 : 0) - (dn ? 1 : 0);
-    if (this.down.has('KeyB') || this.down.has('Space')) raw.brake = 1;
-    raw.trimRate += this.axis('KeyT', 'KeyG'); // T = nose-down trim, G = nose-up trim
-    if (this.throttleSet !== null) {
-      raw.throttleSet = this.throttleSet;
-      this.throttleSet = null;
-    }
-  }
-
-  drainActions(out: Action[]): void {
-    out.push(...this.actions);
-    this.actions = [];
-  }
-}
-
-/** Standard-mapping gamepad (Xbox/PS layouts). */
-export class GamepadDevice implements InputDevice {
-  private prevButtons: boolean[] = [];
-  private actions: Action[] = [];
-
-  private pad(): Gamepad | null {
-    if (typeof navigator === 'undefined' || !navigator.getGamepads) return null;
-    for (const p of navigator.getGamepads()) if (p && p.connected) return p;
-    return null;
-  }
-
-  private dz(v: number | undefined): number {
-    if (v === undefined) return 0;
-    const d = TUNING.gamepadDeadzone;
-    return Math.abs(v) < d ? 0 : (v - Math.sign(v) * d) / (1 - d);
-  }
-
-  read(raw: RawInput): void {
-    const p = this.pad();
-    if (!p) return;
-    const b = (i: number) => p.buttons[i]?.pressed ?? false;
-    const bv = (i: number) => p.buttons[i]?.value ?? 0;
-    raw.roll += this.dz(p.axes[0]);
-    raw.pitch += this.dz(p.axes[1]); // stick back (+) = nose up
-    raw.yaw += this.dz(p.axes[2]);
-    raw.yaw += bv(5) - bv(4) > 0.5 ? 1 : bv(4) - bv(5) > 0.5 ? -1 : 0; // bumpers
-    raw.throttleRate += bv(7) - bv(6); // triggers
-    if (b(0)) raw.brake = 1; // A / Cross
-    raw.trimRate += (b(12) ? -1 : 0) + (b(13) ? 1 : 0); // d-pad up = nose-down trim
-
-    const edge = (i: number, a: Action) => {
-      if (b(i) && !this.prevButtons[i]) this.actions.push(a);
-    };
-    edge(3, 'reset'); // Y / Triangle
-    edge(8, 'camera'); // Back / Select
-    edge(9, 'help'); // Start
-    this.prevButtons = p.buttons.map((x) => x.pressed);
-  }
-
-  drainActions(out: Action[]): void {
-    out.push(...this.actions);
-    this.actions = [];
-  }
-}
-
-/**
- * Human pilot: merges devices, smooths stick inputs, integrates throttle and trim, and
- * exposes the result as a `ControlSource` (same interface an AI pilot implements).
+ * Human pilot: merges keyboard, gamepad and touch, smooths stick inputs, integrates throttle
+ * and trim, and exposes the result as a `ControlSource` (same interface an AI pilot implements).
  */
 export class PlayerInput implements ControlSource {
   readonly devices: InputDevice[];
   throttle = 0;
   trim = 0;
+  /** Flap detent 0..FLAP_DETENTS (0 = up). */
+  flapNotch = 0;
+  static readonly FLAP_DETENTS = 3;
+  /** Control layout for the current craft (rotorcraft use mode-2 sticks). */
+  profile: ControlProfile = 'airplane';
+  settings: InputSettings = loadInputSettings();
   private readonly smoothed = { pitch: 0, roll: 0, yaw: 0 };
   private raw: RawInput = PlayerInput.emptyRaw();
 
@@ -147,21 +37,38 @@ export class PlayerInput implements ControlSource {
   }
 
   static emptyRaw(): RawInput {
-    return { pitch: 0, roll: 0, yaw: 0, throttleRate: 0, throttleSet: null, brake: 0, trimRate: 0 };
+    return { pitch: 0, roll: 0, yaw: 0, throttleRate: 0, throttleSet: null, brake: 0, trimRate: 0, flapSteps: 0, flapCycle: false };
+  }
+
+  updateSettings(patch: Partial<InputSettings>): void {
+    this.settings = { ...this.settings, ...patch };
+    saveInputSettings(this.settings);
   }
 
   /** Poll devices once per rendered frame. */
   poll(): Action[] {
     this.raw = PlayerInput.emptyRaw();
-    for (const d of this.devices) d.read(this.raw);
+    const ctx = { profile: this.profile, throttle: this.throttle, settings: this.settings };
+    for (const d of this.devices) d.read(this.raw, ctx);
     if (this.raw.throttleSet !== null) this.throttle = this.raw.throttleSet;
+    const max = PlayerInput.FLAP_DETENTS;
+    if (this.raw.flapCycle) this.flapNotch = (this.flapNotch + 1) % (max + 1);
+    this.flapNotch = Math.max(0, Math.min(max, this.flapNotch + this.raw.flapSteps));
     const actions: Action[] = [];
     for (const d of this.devices) d.drainActions(actions);
     return actions;
   }
 
+  /** Haptic feedback on every device that supports it (gamepad rumble, phone vibration). */
+  rumble(strength: number, durationMs: number): void {
+    if (!this.settings.haptics) return;
+    for (const d of this.devices) d.rumble?.(strength, durationMs);
+  }
+
   reset(): void {
+    // Rotorcraft start with the collective lever down too; they spin up as you raise it.
     this.throttle = 0;
+    this.flapNotch = 0;
     this.smoothed.pitch = this.smoothed.roll = this.smoothed.yaw = 0;
   }
 
@@ -180,6 +87,7 @@ export class PlayerInput implements ControlSource {
       yaw: this.smoothed.yaw,
       throttle: this.throttle,
       brake: Math.min(1, r.brake),
+      flaps: this.flapNotch / PlayerInput.FLAP_DETENTS,
     };
   }
 }

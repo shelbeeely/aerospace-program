@@ -1,12 +1,20 @@
 import * as THREE from 'three';
 import type { CraftDef } from '../craft/types.ts';
 import { TUNING } from '../tuning.ts';
+import type { WeatherSettings } from './atmosphere.ts';
 import { Autopilot } from './autopilot.ts';
 import { LAYOUT } from './layout.ts';
 import { Simulation } from './Simulation.ts';
 import type { Telemetry } from './telemetry.ts';
+import { lighterThanAirCard, rotorcraftCard, vehicleKind, type VehicleKind } from './vehicleTests.ts';
 
 /** Numbers computed from the design itself, before flying. */
+/** Human-readable failure line (structural overload or impact damage). */
+export function describeFailure(f: { partId: string; load: number; strength: number; cause?: string }, advice: string): string {
+  if (f.cause === 'impact') return `Impact damage: "${f.partId}" broke off in a collision (${(f.load / 1000).toFixed(1)} kN). Avoid hitting the ground or obstacles, or give the part more "hp".`;
+  return `Structural failure: "${f.partId}" broke off at ${(f.load / 1000).toFixed(1)} kN (strength ${(f.strength / 1000).toFixed(1)} kN). ${advice}`;
+}
+
 export interface DesignMetrics {
   mass: number;
   /** Positive = CoM ahead of CoL (pitch-stable), as a fraction of mean wing chord. */
@@ -17,11 +25,13 @@ export interface DesignMetrics {
   wingLoading: number;
   /** Rough 1g stall speed estimate (m/s). */
   stallSpeed: number;
-  controls: { pitch: boolean; roll: boolean; yaw: boolean };
+  controls: { pitch: boolean; roll: boolean; yaw: boolean; flaps: boolean };
   wheels: number;
 }
 
 export interface FlightReport {
+  /** Which test card was flown. */
+  vehicle: VehicleKind;
   /** 0..100 */
   score: number;
   passed: boolean;
@@ -36,6 +46,8 @@ export interface FlightReport {
   turned: boolean;
   handsOffStable: boolean;
   crashed: boolean;
+  /** Parts that broke off during the test. */
+  failures: Array<{ partId: string; load: number; strength: number; cause?: string }>;
   /** Actionable problems, phrased so a designer (human or model) can fix them. */
   issues: string[];
   /** Short timeline of what happened. */
@@ -45,9 +57,17 @@ export interface FlightReport {
 export interface FlightTestOptions {
   /** Yield to the event loop every N steps so a browser UI stays responsive. */
   yieldEvery?: number;
+  /** Weather to fly the card in (default: calm). */
+  weather?: WeatherSettings;
 }
 
 const r1 = (x: number) => Math.round(x * 10) / 10;
+
+/** scheduler.yield() where available (Chrome: resumes ahead of other tasks), else setTimeout. */
+function yieldToEventLoop(): Promise<void> {
+  const s = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+  return s?.yield ? s.yield() : new Promise((r) => setTimeout(r, 0));
+}
 
 export function analyzeDesign(sim: Simulation): DesignMetrics {
   const craft = sim.craft;
@@ -68,7 +88,7 @@ export function analyzeDesign(sim: Simulation): DesignMetrics {
   const weight = mp.mass * TUNING.gravity;
   const thrust = craft.engines.reduce((t, e) => t + e.def.maxThrust, 0);
   const clMax = area > 0 ? clMaxArea / area : 1;
-  const ctl = { pitch: false, roll: false, yaw: false };
+  const ctl = { pitch: false, roll: false, yaw: false, flaps: false };
   for (const s of craft.aeroSurfaces) if (s.def.control) ctl[s.def.control.channel] = true;
   return {
     mass: Math.round(mp.mass),
@@ -88,8 +108,9 @@ export function analyzeDesign(sim: Simulation): DesignMetrics {
  * Runs headless, ~150 simulated seconds in well under a second.
  */
 export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): Promise<FlightReport> {
-  const sim = new Simulation(def);
+  const sim = new Simulation(def, opts.weather);
   const design = analyzeDesign(sim);
+  const kind = vehicleKind(sim);
   const issues: string[] = [];
   const log: string[] = [];
   const yieldEvery = opts.yieldEvery ?? 0;
@@ -98,17 +119,19 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
   let crashNote = '';
   let airborne = false;
 
-  // Static checks
-  if (!design.controls.pitch) issues.push('No pitch control: add an elevator (control channel "pitch") on a tail surface.');
-  if (!design.controls.roll) issues.push('No roll control: add ailerons (channel "roll", opposite gains on left/right wings).');
-  if (!design.controls.yaw) issues.push('No yaw control: add a rudder (channel "yaw") on the vertical fin.');
-  if (design.staticMargin < 0)
+  // Static checks (airplanes; other vehicles have their own in vehicleTests.ts)
+  if (kind === 'airplane' && !design.controls.pitch) issues.push('No pitch control: add an elevator (control channel "pitch") on a tail surface.');
+  if (kind === 'airplane' && !design.controls.roll) issues.push('No roll control: add ailerons (channel "roll", opposite gains on left/right wings).');
+  if (kind === 'airplane' && !design.controls.yaw) issues.push('No yaw control: add a rudder (channel "yaw") on the vertical fin.');
+  if (kind !== 'airplane') {
+    /* skip wing-based checks */
+  } else if (design.staticMargin < 0)
     issues.push(`Pitch-unstable: centre of mass is ${-design.staticMargin} mean chords BEHIND the centre of lift. Move heavy parts forward, move wings aft, or enlarge the horizontal tail.`);
   else if (design.staticMargin > 0.6)
     issues.push(`Very nose-heavy (static margin ${design.staticMargin} chords): elevator may lack authority to rotate. Move mass aft or wings forward slightly.`);
-  if (design.thrustToWeight < 0.25)
+  if (kind === 'airplane' && design.thrustToWeight < 0.25)
     issues.push(`Underpowered: thrust/weight ${design.thrustToWeight}. Aim for 0.35-0.6 for a prop plane.`);
-  if (design.wheels === 0) issues.push('No wheels: the craft cannot take off from the runway.');
+  if (kind === 'airplane' && design.wheels === 0) issues.push('No wheels: the craft cannot take off from the runway.');
 
   const v = new THREE.Vector3();
   const step = async (pilot: (t: Telemetry) => Parameters<Simulation['step']>[0], seconds: number, until?: (t: Telemetry) => boolean) => {
@@ -121,21 +144,65 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
         crashed = true;
         crashNote = 'physics blew up (NaN guard reset the craft)';
       }
-      if (airborne && !crashed && sim.airframeTouchingGround()) {
+      if ((airborne || (kind !== 'airplane' && t.altitude > 2)) && !crashed && sim.airframeTouchingGround()) {
         const s = sim.craft.body.linvel();
         v.set(s.x, s.y, s.z);
-        crashed = true;
-        crashNote = `airframe hit the ground at ${r1(v.length())} m/s (t=${r1(t.time)}s, pitch ${t.pitch}°, roll ${t.roll}°)`;
+        // Airplanes must never touch the airframe once airborne. Rotorcraft/blimps land on
+        // skids, so only a fast or tumbling contact counts.
+        const hard = kind === 'airplane' || v.length() > 6 || Math.abs(t.roll) > 45 || Math.abs(t.pitch) > 45;
+        if (hard) {
+          crashed = true;
+          crashNote = `airframe hit the ground at ${r1(v.length())} m/s (t=${r1(t.time)}s, pitch ${t.pitch}°, roll ${t.roll}°)`;
+        }
       }
+      if (kind !== 'airplane' && t.altitude > 2) airborne = true;
       if (until?.(t) || crashed) return t;
       if (yieldEvery && ++stepsSinceYield >= yieldEvery) {
         stepsSinceYield = 0;
-        await new Promise((r) => setTimeout(r, 0));
+        await yieldToEventLoop();
       }
     }
     return t;
   };
   const neutral = () => ({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 0 });
+
+  if (kind !== 'airplane') {
+    const state = {
+      get crashed() {
+        return crashed;
+      },
+    };
+    const card = kind === 'rotorcraft' ? await rotorcraftCard(sim, step, state) : await lighterThanAirCard(sim, step, state);
+    issues.push(...card.issues);
+    log.push(...card.log);
+    const failures = sim.failures.map(({ partId, load, strength, cause }) => ({ partId, load, strength, cause }));
+    for (const f of failures) issues.push(describeFailure(f, 'Strengthen it or reduce the load on it.'));
+    if (sim.craft.fuelCapacity > 0 && sim.craft.fuel <= 0) issues.push('Ran out of fuel during the test: add tank capacity.');
+    if (crashed) {
+      log.push(`CRASH: ${crashNote}`);
+      issues.push(`Crashed: ${crashNote}.`);
+    }
+    let score = card.phases.reduce((a, p) => a + (p.passed ? p.points : 0), 0);
+    if (crashed) score = Math.max(0, score - 15);
+    if (failures.length) score = Math.max(0, score - 10);
+    const passedNamed = (n: string) => card.phases.some((p) => p.name.startsWith(n) && p.passed);
+    return {
+      vehicle: kind,
+      score,
+      passed: score === 100,
+      design,
+      restsLevel: passedNamed('rest'),
+      tookOff: passedNamed('lift-off') || passedNamed('climb'),
+      reachedAltitude: passedNamed('climb'),
+      maxAltitude: card.maxAltitude,
+      turned: passedNamed('yaw') || passedNamed('turn'),
+      handsOffStable: passedNamed('hover') || passedNamed('hands-off'),
+      crashed,
+      failures,
+      issues,
+      log,
+    };
+  }
 
   // 1. Rest on the runway
   let t = await step(neutral, 3);
@@ -240,6 +307,10 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
     issues.push(`Crashed: ${crashNote}.`);
   }
 
+  const failures = sim.failures.map(({ partId, load, strength, cause }) => ({ partId, load, strength, cause }));
+  for (const f of failures) issues.push(describeFailure(f, 'Strengthen it (part "strength") or reduce the load (e.g. limit control throws).'));
+  if (sim.craft.fuelCapacity > 0 && sim.craft.fuel <= 0) issues.push('Ran out of fuel during the test: add tank capacity.');
+
   let score = 0;
   if (restsLevel) score += 10;
   if (tookOff) score += 30;
@@ -247,8 +318,10 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
   if (turned) score += 20;
   if (handsOffStable) score += 20;
   if (crashed) score = Math.max(0, score - 15);
+  if (failures.length) score = Math.max(0, score - 10);
 
   return {
+    vehicle: kind,
     score,
     passed: score === 100,
     design,
@@ -261,6 +334,7 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
     turned,
     handsOffStable,
     crashed,
+    failures,
     issues,
     log,
   };
@@ -270,8 +344,8 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
 export function formatReport(r: FlightReport): string {
   const d = r.design;
   return [
-    `Score ${r.score}/100 ${r.passed ? '(PASS)' : ''}`,
-    `Design: mass ${d.mass} kg, wing area ${d.wingArea} m², loading ${d.wingLoading} kg/m², T/W ${d.thrustToWeight}, static margin ${d.staticMargin} chords, est. stall ${d.stallSpeed} m/s`,
+    `Score ${r.score}/100 ${r.passed ? '(PASS)' : ''} (${r.vehicle} test card)`,
+    r.vehicle !== 'airplane' ? `Design: mass ${d.mass} kg` : `Design: mass ${d.mass} kg, wing area ${d.wingArea} m², loading ${d.wingLoading} kg/m², T/W ${d.thrustToWeight}, static margin ${d.staticMargin} chords, est. stall ${d.stallSpeed} m/s`,
     ...r.log.map((l) => `- ${l}`),
     ...(r.issues.length ? ['Issues:', ...r.issues.map((i) => `* ${i}`)] : ['No issues found.']),
   ].join('\n');

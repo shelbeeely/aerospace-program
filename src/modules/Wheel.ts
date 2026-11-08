@@ -38,6 +38,8 @@ export class Wheel implements ForceModule {
   steerAngle = 0;
   spinAngle = 0;
   load = 0;
+  /** 0..1 how far into dynamic hydroplaning the tyre is. */
+  aquaplaning = 0;
 
   constructor(
     readonly partId: string,
@@ -129,9 +131,18 @@ export class Wheel implements ForceModule {
 
     const massShare = load / TUNING.gravity;
     const gain = massShare / TUNING.tyreRelaxationTime;
+    // Wet runway: even a thin water film (~1 mm) roughly halves braking/cornering grip and adds spray drag. Above the dynamic hydroplaning speed (NASA:
+    // 9·√(tyre psi) kt, ~25 m/s for a 30 psi light-aircraft tyre) on standing water the tyre
+    // rides up on a wedge of water and grip all but vanishes.
+    const wet = ctx.groundWetness;
+    const slideSpeed = Math.hypot(vLong, vLat);
+    const vp = TUNING.hydroplaneSpeed;
+    const aquaplane = wet > 0.4 ? Math.min(1, Math.max(0, (slideSpeed - vp) / (0.15 * vp))) * Math.min(1, (wet - 0.4) / 0.4) : 0;
+    const grip = (1 - 0.45 * Math.min(1, wet * 3)) * (1 - 0.88 * aquaplane);
+    this.aquaplaning = aquaplane;
     const muLong =
-      TUNING.rollingResistance + (def.brakes ? ctx.controls.brake * TUNING.brakeFriction : 0);
-    const muLat = TUNING.tyreLateralFriction;
+      TUNING.rollingResistance * (1 + 1.5 * wet) + (def.brakes ? ctx.controls.brake * TUNING.brakeFriction * grip : 0);
+    const muLat = TUNING.tyreLateralFriction * grip;
 
     let fLong = THREE.MathUtils.clamp(-vLong * gain, -muLong * load, muLong * load);
     let fLat = THREE.MathUtils.clamp(-vLat * gain, -muLat * load, muLat * load);

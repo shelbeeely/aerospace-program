@@ -76,8 +76,52 @@ export class Autopilot implements ControlSource {
     // Keep the ball centred; on the ground, steer with the rudder/nosewheel toward heading.
     const yaw = t.onGround
       ? clamp(wrap180(this.targets.heading - t.heading) * 0.1, -1, 1)
-      : clamp(-t.sideslip * 0.1, -1, 1);
+      : clamp(t.sideslip * 0.1, -1, 1); // sideslip > 0: air from the right, so right rudder
 
+    return { pitch, roll, yaw, throttle, brake: 0 };
+  }
+}
+
+export interface HoverTargets {
+  altitude: number;
+  heading: number;
+  /** Desired ground speed along the nose (m/s). Sideways speed is held at zero. */
+  forwardSpeed: number;
+}
+
+/**
+ * Autopilot for rotorcraft (with a flight controller in angle mode): throttle holds altitude
+ * (0.5 ≈ hover), the stick holds velocity in the body frame, yaw holds heading. Same controls
+ * a player uses.
+ */
+export class HoverPilot implements ControlSource {
+  targets: HoverTargets;
+  private altIntegral = 0;
+  private prevHeading: number | null = null;
+
+  constructor(targets: HoverTargets) {
+    this.targets = { ...targets };
+  }
+
+  sample(dt: number, t: Telemetry): ControlInputs {
+    const altErr = this.targets.altitude - t.altitude;
+    this.altIntegral = clamp(this.altIntegral + altErr * dt * 0.01, -0.25, 0.25);
+    const desiredVs = clamp(altErr * 0.5, -3, 4);
+    const throttle = clamp(0.5 + (desiredVs - t.verticalSpeed) * 0.12 + this.altIntegral, 0, 1);
+
+    const h = (t.heading * Math.PI) / 180;
+    // Heading 0 = -Z. Forward = (sin h, -cos h), right = (cos h, sin h) in (x, z).
+    const vx = t.velocity[0];
+    const vz = t.velocity[2];
+    const vFwd = vx * Math.sin(h) - vz * Math.cos(h);
+    const vRight = vx * Math.cos(h) + vz * Math.sin(h);
+    const pitch = clamp(-(this.targets.forwardSpeed - vFwd) * 0.12, -1, 1); // forward = nose down
+    const roll = clamp(-vRight * 0.15, -1, 1);
+    // Heading loop with rate damping (yaw rate from successive samples), so it settles instead
+    // of swinging past the target.
+    const yawRate = this.prevHeading === null ? 0 : wrap180(t.heading - this.prevHeading) / dt;
+    this.prevHeading = t.heading;
+    const yaw = clamp(wrap180(this.targets.heading - t.heading) * 0.03 - yawRate * 0.012, -1, 1);
     return { pitch, roll, yaw, throttle, brake: 0 };
   }
 }

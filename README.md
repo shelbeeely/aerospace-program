@@ -12,6 +12,7 @@ cp .env.example .env   # add your OPENROUTER_API_KEY (optional: flying works wit
 npm run dev            # http://localhost:5173, press N for the Studio
 npm run design -- "a twin-boom cargo plane" --model anthropic/claude-sonnet-5.5
 npm run sim            # headless physics regression (takeoff, turn, stalls, CoM shift, crash)
+npm run weather        # weather impact checks (rain, icing, ground effect, vortex ring, wet runway)
 npm run build          # typecheck + production build
 ```
 
@@ -90,6 +91,12 @@ Sample output: `crafts/bushmaster-stol.json` was designed by a free model throug
 
 ## Controls
 
+Keyboard, gamepad and touch all work, and you can mix them. Press **H** (or **?** on touch, or
+Back/View on a pad) for the controls of the craft you're flying, plus settings: invert pitch,
+stick expo, haptics, and touch controls auto/on/off.
+
+**Keyboard**
+
 | Key | Action |
 | --- | --- |
 | W / S | pitch down / up |
@@ -99,21 +106,108 @@ Sample output: `crafts/bushmaster-stol.json` was designed by a free model throug
 | Z / X | full / cut throttle |
 | B or Space | brakes |
 | T / G, Y | trim nose down / up, reset trim |
+| , / . (or F6 / F7) | flaps up / down a notch (3 notches, 10° each) |
 | R | reset to runway |
 | C | chase / orbit camera |
-| F3 | debug: force vectors, CoM/CoL/CoT, stats, CoM slider |
+| [ / ] | previous / next craft |
+| F3 | debug: force vectors, CoM/CoL/CoT, stats, CoM slider, weather |
 | N | toggle the Studio (generate / refine / paint craft, hangar) |
-| H | toggle help |
-
-Gamepad (standard mapping): left stick pitch/roll, right stick or bumpers yaw, triggers
-throttle, A brake, Y reset, Back camera.
+| H | controls & settings |
 
 > Browsers don't let pages block Ctrl+W, so tapping Ctrl for throttle-down next to W can
 > close the tab. Prefer Z/X or a gamepad if that bites you.
 
+**Gamepad** (Gamepad API, standard mapping: Xbox, PlayStation, Switch Pro and most phone pads).
+The layout follows the craft:
+
+| | Airplane / blimp | Rotorcraft (mode 2, like an RC transmitter) |
+| --- | --- | --- |
+| Left stick | pitch / roll | ↕ collective (centred = hover), ↔ yaw |
+| Right stick | ↔ yaw | pitch / roll (tilt) |
+| RT / LT | throttle up / down | fine collective |
+| LB / RB | yaw | |
+| D-pad ↑ / ↓ | trim | |
+
+Common to both: A (hold) brakes, Y resets, B toggles the camera, X or D-pad ←/→ change
+craft, Start opens the Studio, Back/View opens help, L3 resets trim, R3 toggles debug.
+Sticks have a radial deadzone and adjustable expo. Pads rumble on crashes, broken parts and
+stall onset, and a toast announces connect/disconnect.
+
+**Touch** (phones and tablets, portrait or landscape)
+
+- **Left thumb:** a throttle lever. Drag up or down and it **stays** where you leave it; on
+  rotorcraft the middle is hover. Drag sideways for yaw, which springs back.
+- **Right thumb:** a floating stick that centres where you touch. Drag down for nose up, sideways
+  to roll. It springs back.
+- **BRAKE** (hold). The top bar has **Hangar**, **Camera**, **Controls**, and **More**.
+  **More** contains reset, craft selection, weather, flaps, sound, photos and fullscreen.
+- **Create / Studio:** in the hangar, tap **Create**, type in **Describe your aircraft**, then
+  tap **Generate aircraft**. GitHub Pages requires your OpenRouter key under **Key & spend**.
+  Model choices are under **Models & generation settings**. Studio stays closed on mobile
+  until opened; its ✕ closes it. Controls and weather panels have labeled close buttons.
+- The layout adapts to orientation and notches (safe areas). Portrait gets a compact HUD strip
+  and the Studio as a bottom sheet; landscape gets a corner HUD and the Studio as a side
+  drawer. Phones render at capped resolution with smaller shadow maps to hold the frame
+  rate, and vibrate on crashes.
+
 To fly: press Z, roll down the runway, and pull back gently (S) at about 60 kt. Lift-off comes
 around 65–75 kt. Open F3 and drag the CoM slider aft past the blue CoL marker to watch the plane
 become pitch-unstable.
+
+**Other vehicles** (pick them in the Studio's hangar):
+- **Quadcopter / helicopter:** throttle is collective, and about 50% hovers. W/S/A/D tilt (the
+  flight controller holds the attitude you ask for, and centring the stick levels it). Q/E yaw.
+- **Blimp:** it's about 1% heavier than air. Add power and pitch up (S) to climb on hull lift;
+  steer with the rudder.
+
+**Weather:** the F3 panel has presets (clear, summer thermals, gusty crosswind, drizzle, heavy
+rain, thunderstorm, freezing fog, snow) and sliders for wind, gusts, turbulence, temperature,
+rain/snow rate, cloud cover and base, thermals, storm strength and visibility. Link straight
+to one with `?weather=rain` (any preset id). The HUD shows wind relative to your nose, outside
+air temperature, precipitation and cloud (IMC), and flags ICE, VORTEX RING and AQUAPLANING.
+What you see comes from the same model the physics flies through: rain and snow fall with the
+wind's drift, the cloud deck is drawn from the same drifting cells that make showers, thermals
+and icing, fog follows visibility, and the runway darkens when wet.
+
+## Physics model
+
+Everything below is emergent from parts and modules; nothing is scripted per vehicle.
+
+| Effect | Where | Notes |
+| --- | --- | --- |
+| Rigid body, collisions | Rapier | One body per craft. Mass, CoM and inertia come from the parts plus the fuel on board. |
+| Lift and drag per surface | `AeroSurface` | Airflow includes body rotation and **wind**, soft stall, control surfaces. |
+| **Ground effect** | `AeroSurface` | Within about one span of the ground: higher effective aspect ratio, so more lift slope and much less induced drag (McCormick). |
+| **Wind, gusts, turbulence** | `Atmosphere` | Log wind profile (calmer near the ground), "1-cosine" gusts, smooth turbulence that varies in space and time. Seeded, so every run and race gets the same weather. |
+| Thrust, spool, prop falloff | `Engine` | Density-scaled. |
+| **Prop torque and P-factor** | `Engine` | Reaction torque rolls the airframe against the prop. Crossflow shifts the thrust centre on the disk. Twin engines can counter-rotate. |
+| **Fuel burn** | `FuelTank` + `Engine` | Fuel mass sits at each tank, and mass properties are recomputed as it burns, so the CoM moves. Engines starve when it's gone. |
+| **Structural failure** | `Simulation.checkStructure` | Modules report the load they put on their part. A filtered load above the part's strength breaks it off into a free-falling **debris** body, and the craft loses its mass, lift and fuel. Reset rebuilds it. |
+| **Buoyancy** | `Buoyancy` | (ρ_air − ρ_gas)·V·g with helium, hydrogen or hot air. Lift fades with altitude, so blimps find a ceiling. |
+| **Blade-element rotors** | `Rotor` | Radial blade stations with a soft-stalling section polar. Inflow comes from Glauert momentum theory, solved with Newton's method. That gives translational lift, climb and descent effects, reaction torque and in-plane drag. RPM mode for drones; collective plus cyclic for helicopters. |
+| **Flight controller** | `FlightController` | Angle-mode stabilisation with an automatic mixer built from rotor positions and spin directions. Helicopter mode drives the cyclic and has a yaw-rate loop on the tail rotor. |
+| Wheels | `Wheel` | Raycast suspension, tyre friction, steering, brakes. **Wet runway**: grip roughly halves with a water film; above the dynamic hydroplaning speed (9·√psi kt) on standing water the tyres **aquaplane**. |
+| **Standard atmosphere** | `atmosphere.ts` | ISA temperature lapse, pressure, density, speed of sound, Sutherland viscosity, with temperature offset (hot/cold day), QNH and humidity (moist air is lighter). Density altitude and Mach in telemetry. |
+| **Compressibility, Reynolds** | `AeroSurface` | Prandtl–Glauert lift rise, wave drag above the critical Mach, Reynolds-number drag and stall-angle scaling (small, slow surfaces are worse). |
+| **Dynamic stall, camber, flaps** | `AeroSurface` | Separation lags the angle of attack (and reattaches more slowly); camber and flaps shift zero lift and add a nose-down moment. |
+| **Downwash** | `AeroSurface.link` | Tails sit in the wing's downwash, delayed by the travel time between them, which moves the neutral point forward like on a real aircraft. |
+| **Slender bodies** | `Body` | Fuselage axial and crossflow drag, and the destabilising Munk moment. |
+| **Rain** | `AeroSurface`, `Rotor`, `Craft` | Water film roughness costs lift and stall margin and adds drag (worse at low Reynolds number, so small drones suffer most); drop momentum; rotor blades sweeping drops need extra torque; a water film adds mass. |
+| **Icing** | `AeroSurface`, `Rotor` | In supercooled cloud, ice builds fastest on thin, fast leading edges (minus kinetic heating on rotor blades). It wrecks lift and drag, adds mass, melts above freezing and sheds from fast rotors. |
+| **Clouds, thermals, storms** | `Atmosphere` | Drifting cloud cells with patchy showers; thermals under cumulus with sink between; storm downdrafts with microburst outflow (wind shear near the ground). |
+| **Rotor motors** | `Rotor` | Rotor inertia, a BLDC torque–speed line (drones) or power-limited governed engine (helicopters). The airframe feels motor torque, so spin-up yaws; an unpowered rotor windmills (autorotation). |
+| **Rotor ground effect, VRS, gyro** | `Rotor` | Cheeseman–Bennett plus multirotor terms (Sanchez-Cuevas 2017); vortex ring state thrust loss and surging in fast vertical descent; gyroscopic precession of rigid props. |
+
+Each vehicle type has its own automated test card (`flightTest.ts`, `vehicleTests.ts`), which
+both the generation loop and the built-ins use. All four built-ins (trainer, quadcopter,
+helicopter, blimp) score 100/100.
+
+`npm run weather` checks that weather really changes flight (headless, real sim). Current results
+for the 25 kg quadcopter: heavy rain (50 mm/h) needs 9% more power to hover, a downpour 25%
+more; 3 minutes in −6 °C cloud puts 2.3 mm of ice on the blades and needs 83% more power;
+hovering at 0.15 m takes 7% less power (ground effect); descending vertically at 6 m/s puts it
+in vortex ring state. The trainer's braking distance from 30 m/s grows 37% on a wet runway and
+72% on a flooded one.
 
 ## Architecture
 
@@ -122,7 +216,8 @@ src/
   tuning.ts              every feel-related constant, commented
   craft/
     types.ts             JSON craft format (parts + module defs); what the hangar will save
-    testPlane.ts         the Stage 1 plane, as data
+    testPlane.ts         the trainer, as data
+    builtins.ts          quadcopter, helicopter, blimp (+ trainer) as data
     validate.ts          validates untrusted craft JSON before it reaches physics
     massProperties.ts    parts -> total mass, CoM, inertia tensor (diagonalised for Rapier)
     Craft.ts             ONE Rapier rigid body + one collider per part + force modules
@@ -132,15 +227,20 @@ src/
     Engine.ts            thrust along part axis, spool lag, prop falloff, density scaling
     Wheel.ts             raycast suspension + tyre friction, steering, brakes
     Drag.ts              simple quadratic drag (the smallest example module)
-    registry.ts          def.type -> module factory
+    FuelTank.ts          fuel mass at the tank; burns move the CoM
+    Buoyancy.ts          gas cells (helium / hydrogen / hot air)
+    Rotor.ts             blade-element rotor with momentum inflow, cyclic, torque reaction
+    FlightController.ts  stabilisation + automatic rotor mixing (multirotor / helicopter)
+    registry.ts          def.type -> module factory, step order
   sim/
     Simulation.ts        headless sim: world, ground, fixed 120 Hz step, NaN guard, telemetry
     controls.ts          ControlInputs + ControlSource (anything that can fly the craft)
     telemetry.ts         JSON flight-state snapshot (HUD and future AI pilots)
-    autopilot.ts         PID autopilot (heading/altitude/speed targets)
-    flightTest.ts        automated test card + design metrics, scored report
+    autopilot.ts         Autopilot (planes) and HoverPilot (rotorcraft): targets -> stick
+    flightTest.ts        airplane test card + design metrics, scored report
+    vehicleTests.ts      rotorcraft and lighter-than-air test cards, vehicle detection
     flightLog.ts         summary of the player's flight (feedback for Refine)
-    atmosphere.ts        exponential air density
+    atmosphere.ts        air density + Atmosphere (wind profile, gusts, turbulence)
     layout.ts            ground size, runway, spawn
   gen/
     openrouter.ts        browser/Node OpenRouter client: retries, cost tracking, JSON extraction
@@ -150,7 +250,13 @@ src/
     music.ts             composer: audio model (Lyria) -> soundtrack clip
     library.ts           hangar: saved craft with provenance (localStorage), import/export
   ui/Studio.ts           in-game generation workflow
-  input/PlayerInput.ts   keyboard + gamepad devices -> a ControlSource with smoothing & trim
+  input/
+    PlayerInput.ts       merges devices -> a ControlSource with smoothing, trim, profiles, haptics
+    KeyboardDevice.ts    keyboard
+    GamepadDevice.ts     Gamepad API: per-vehicle mappings, radial deadzone, expo, rumble
+    TouchDevice.ts       on-screen throttle lever + floating stick + buttons (Pointer Events)
+    types.ts             RawInput, actions, settings (persisted)
+  ui/ControlsPanel.ts    help panel: controls per device and profile, input settings, toasts
   render/                WorldView, CraftView, CameraRig, DebugOverlay (three.js only)
   hud/Hud.ts             plain-DOM HUD
   main.ts                wires it together: fixed-step accumulator + render interpolation
@@ -190,12 +296,15 @@ Example: a parachute, a rotor, or a buoyancy cell.
    ```ts
    step(ctx: StepContext) {
      ctx.toWorldPoint(this.localPosition, p);   // craft-local -> world
-     ctx.pointVelocity(p, v);                   // includes angular velocity
+     ctx.airVelocity(p, v);                     // relative to the air: rotation + wind
      // ...compute a world-space force...
      ctx.applyForce('drag', force, p);          // NaN-safe, also feeds the F3 overlay
    }
    reset() { /* clear internal state */ }
    ```
+   Other context helpers: `applyTorque`, `drawFuel`, `structuralLoad(partId, N)` (so the part
+   can break), `groundHeight`, `atmosphere`. Implement `link(modules)` if your module needs to
+   find others (as the flight controller does with rotors).
    Expose any live state (deployment, RPM...) as public fields so the renderer can animate it.
 3. **Register it** in `src/modules/registry.ts` (add a `case 'parachute'`). TypeScript's
    exhaustiveness check flags the switch until you do.
@@ -212,14 +321,29 @@ geometry (incidence, dihedral, washout, control throws, spring rates) is in `tes
 After a change, `npm run sim` prints lift-off speed, stall altitude loss and the instability
 test, so you can see the effect without flying.
 
+## Disasters
+
+F3 has explicit **Tornado**, **Hurricane**, **Earthquake**, and **Clear events** buttons.
+Ordinary flights have no scheduled disasters. Tornadoes move along seeded paths, add
+Rankine-vortex swirl/inflow/updrafts, and appear as rotating neon rings. Hurricanes add a
+Holland wind field and spiral rain bands; earthquakes physically shake the runway with an
+analytic, seeded ground motion. Reset clears the event timeline.
+
+The headless API is `sim.atmosphere.events`: `trigger(kind, { x, z, duration, strength })`,
+`schedule(kind, absoluteWeatherTime, options)`, `clear()`, `groundAcceleration()` and
+`surgeHeight(x, z)`. Weather time restarts on reset. Additional smoke/wind sources may register
+an additive callback in `sim.atmosphere.windContributors`. Browser helpers are
+`game.worldEvents` and `game.triggerDisaster(kind)`. `npm run events` checks deterministic
+wind, surge, rain, scheduler lifecycle and actual Rapier ground motion.
+
 ## Roadmap
 
 1. **Flight core** ✅
 2. Hangar: snap-together parts, craft saved as JSON part graphs
 3. Procedural world: noise terrain, chunk loading in workers, floating origin
-4. Rotor module: multirotor drones (blade element rotors + PID flight controllers)
+4. Rotor module: multirotor drones (blade element rotors + PID flight controllers) ✅
 5. Missions: deliveries between generated points of interest
-6. Helicopters, VTOL, blimps
+6. Helicopters ✅, blimps ✅, VTOL (next: tilt-rotors from the same Rotor module)
 
 Generation roadmap, using more of OpenRouter's model types:
 
@@ -236,3 +360,21 @@ Generation roadmap, using more of OpenRouter's model types:
 - **Video** models for race trailers from replays.
 - **Procedural worlds** (Stage 3) seeded and themed by a model: biome palette, landmarks,
   airports.
+
+
+### Lightning, static and fire
+
+Thunderstorm intensity drives seeded lightning. Descending leaders intercept nearby tall
+buildings or aircraft, damage parts along an entry-to-exit path, couple surges into avionics,
+and can ignite fuel tanks. Precipitation and storm fields build airframe static, shown as
+violet St. Elmo coronas; charge leaks away in clear air. Thunder arrives after distance / 343
+seconds of simulation time, so pausing flight also pauses the delay.
+
+Finite per-part combustible mass burns, heats adjacent parts, consumes real tank fuel, weakens
+hot structure, and produces a smoke updraft. Detached parts stop contributing to the attached
+aircraft fire model. Neon leaders, wire flames and smoke rings follow that headless state.
+Reset repairs damage, restores fuel and clears hazards.
+
+Run `npm run hazards` for deterministic strike, heat propagation, burnout, electrical damage,
+and reset regressions. In the browser console, `game.sim.triggerLightning()` triggers a strike
+near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)` starts a fire.

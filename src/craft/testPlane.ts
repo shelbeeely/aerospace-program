@@ -19,16 +19,22 @@ export const TEST_PLANE: CraftDef = {
       color: '#c94f3d',
       modules: [
         { type: 'engine', offset: [0, 0, -0.6], maxThrust: 4000, propMaxSpeed: 100, propRadius: 0.95 },
+        { type: 'generator', ratedAmps: 60 },
       ],
     },
     {
       id: 'fuselage',
       kind: 'fuselage',
-      mass: 280,
+      mass: 220,
       position: [0, 0, 0],
       shape: { type: 'box', size: [1.1, 1.2, 4.2] },
       color: '#e8e4da',
-      modules: [{ type: 'drag', cdA: 0.32 }],
+      // Slender-body fuselage: axial drag, crossflow drag, destabilising Munk moment.
+      modules: [
+        { type: 'body', length: 4.2, diameter: 1.15, cdFront: 0.25 },
+        // 24 V, 7 Ah lead-acid main battery: ~1 h of essential bus if the alternator fails.
+        { type: 'battery', cells: 12, capacityAh: 7, cellResistance: 0.004, cellVmax: 2.13, cellVmin: 1.85 },
+      ],
     },
     {
       id: 'tailboom',
@@ -46,6 +52,11 @@ export const TEST_PLANE: CraftDef = {
       position: [0, 0.75, -0.7],
       shape: { type: 'box', size: [0.95, 0.45, 1.4] },
       color: '#5b8fb9',
+      modules: [
+        // Flight instruments, radio, transponder; lights and pitot heat are shed on battery.
+        { type: 'avionics', loadW: 150, essential: true },
+        { type: 'avionics', loadW: 200, essential: false },
+      ],
     },
     {
       id: 'wing.left',
@@ -56,16 +67,28 @@ export const TEST_PLANE: CraftDef = {
       shape: { type: 'box', size: [4.6, 0.14, 1.5] },
       color: '#f2c14e',
       modules: [
+        // Wing tank near the root, 30 kg of fuel. Burning it shifts the CoM slightly aft.
+        { type: 'fuel', offset: [1.15, 0, 0], capacity: 30 },
         // Inboard panel: more incidence than the tip (washout), so the root stalls first and
         // the ailerons keep working through the stall, as on real trainers.
-        { type: 'aero', offset: [1.15, 0, 0], span: 2.3, chord: 1.5, aspectRatio: 7, incidenceDeg: 3.5 },
+        {
+          type: 'aero',
+          offset: [1.15, 0, 0],
+          span: 2.3,
+          chord: 1.5,
+          aspectRatio: 7,
+          incidenceDeg: 1.5,
+          camberDeg: 2, // NACA 2412-like: lifts at zero AoA, Cm0 ≈ -0.05
+          control: { channel: 'flaps', maxDeflectionDeg: 30, gain: 1, spanFraction: 0.9, chordFraction: 0.25 },
+        },
         {
           type: 'aero',
           offset: [-1.15, 0, 0],
           span: 2.3,
           chord: 1.5,
           aspectRatio: 7,
-          incidenceDeg: 0.5,
+          incidenceDeg: -1.5,
+          camberDeg: 2,
           control: { channel: 'roll', maxDeflectionDeg: 18, gain: 1, spanFraction: 0.9, chordFraction: 0.28 },
         },
       ],
@@ -79,16 +102,28 @@ export const TEST_PLANE: CraftDef = {
       shape: { type: 'box', size: [4.6, 0.14, 1.5] },
       color: '#f2c14e',
       modules: [
+        // Wing tank near the root, 30 kg of fuel. Burning it shifts the CoM slightly aft.
+        { type: 'fuel', offset: [-1.15, 0, 0], capacity: 30 },
         // Inboard panel: more incidence than the tip (washout), so the root stalls first and
         // the ailerons keep working through the stall, as on real trainers.
-        { type: 'aero', offset: [-1.15, 0, 0], span: 2.3, chord: 1.5, aspectRatio: 7, incidenceDeg: 3.5 },
+        {
+          type: 'aero',
+          offset: [-1.15, 0, 0],
+          span: 2.3,
+          chord: 1.5,
+          aspectRatio: 7,
+          incidenceDeg: 1.5,
+          camberDeg: 2, // NACA 2412-like: lifts at zero AoA, Cm0 ≈ -0.05
+          control: { channel: 'flaps', maxDeflectionDeg: 30, gain: 1, spanFraction: 0.9, chordFraction: 0.25 },
+        },
         {
           type: 'aero',
           offset: [1.15, 0, 0],
           span: 2.3,
           chord: 1.5,
           aspectRatio: 7,
-          incidenceDeg: 0.5,
+          incidenceDeg: -1.5,
+          camberDeg: 2,
           control: { channel: 'roll', maxDeflectionDeg: 18, gain: -1, spanFraction: 0.9, chordFraction: 0.28 },
         },
       ],
