@@ -10,6 +10,7 @@
     "sim": "node --experimental-transform-types --no-warnings scripts/headless.ts",
     "weather": "node --experimental-transform-types --no-warnings scripts/weather.ts",
     "destruction": "node --experimental-transform-types --no-warnings scripts/destruction.ts",
+    "buildings": "node --experimental-transform-types --no-warnings scripts/buildings.ts",
     "design": "node --experimental-transform-types --no-warnings scripts/design.ts"
   },
   "repository": {
