@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { TUNING } from '../tuning.ts';
+import { WorldEvents } from './events/WorldEvents.ts';
 
 /** State of the air at one altitude. */
 export interface AirState {
@@ -189,6 +190,9 @@ interface Wave {
 export class Atmosphere {
   settings: WeatherSettings;
   time = 0;
+  readonly events: WorldEvents;
+  /** Additive environmental sources (e.g. fire plumes); callbacks accumulate into out. */
+  readonly windContributors: Array<(p: THREE.Vector3, time: number, out: THREE.Vector3) => void> = [];
   private waves: Wave[] = [];
   private rand: () => number;
   // Current gust: direction, peak, start time, duration.
@@ -197,6 +201,7 @@ export class Atmosphere {
 
   constructor(settings: WeatherSettings = calmWeather()) {
     this.settings = { ...settings };
+    this.events = new WorldEvents(settings.seed);
     this.rand = mulberry32(settings.seed);
     this.reseed(settings.seed);
   }
@@ -216,6 +221,7 @@ export class Atmosphere {
   private reseed(seed: number): void {
     this.rand = mulberry32(seed);
     this.time = 0;
+    this.events.reset(seed);
     this.waves = [];
     // A few octaves per axis: long slow swells down to short quick bumps.
     for (let i = 0; i < 12; i++) {
@@ -270,7 +276,7 @@ export class Atmosphere {
   precipitationAt(p: THREE.Vector3, groundHeight = 0, out?: Precipitation): Precipitation {
     const o = out ?? { rate: 0, kind: 'none', waterContent: 0, velocity: new THREE.Vector3() };
     const s = this.settings;
-    let rate = (s.precipitation ?? 0) + (s.storm ?? 0) * 80;
+    let rate = (s.precipitation ?? 0) + (s.storm ?? 0) * 80 + this.events.rainAt(p.x, p.z);
     const h = p.y - groundHeight;
     if (rate > 0 && h > (s.cloudTop ?? 2500)) rate = 0; // above the tops: no precipitation
     // Showers fall from cells: patchy when cover < 1.
@@ -338,6 +344,7 @@ export class Atmosphere {
 
   advance(dt: number): void {
     this.time += dt;
+    this.events.advance(dt);
     const s = this.settings;
     if (s.gustStrength > 0 && this.time >= this.nextGust) {
       // New gust, mostly along the mean wind (or random if calm), with some vertical.
@@ -395,6 +402,8 @@ export class Atmosphere {
       out.z += uz * sigma * 0.5;
     }
     this.convection(p, h, out);
+    this.events.addWind(p, out);
+    for (const contributor of this.windContributors) contributor(p, this.time, out);
     return out;
   }
 }
