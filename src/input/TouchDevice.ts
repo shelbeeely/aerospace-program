@@ -52,8 +52,8 @@ export class TouchDevice implements InputDevice {
     this.lever = el('div', 'lever', el('div', 'lever-track'), this.leverKnob, this.leverLabel);
     this.stickKnob = el('div', 'stick-knob');
     this.stickBase = el('div', 'stick-base', this.stickKnob);
-    this.stickZone = el('div', 'tz tz-right', this.stickBase, el('span', 'tz-hint', 'pitch / roll'));
-    const leftZone = el('div', 'tz tz-left', this.lever, el('span', 'tz-hint', '↕ throttle  ↔ yaw'));
+    this.stickZone = el('div', 'tz tz-right', this.stickBase, el('span', 'tz-hint', 'Drag down: nose up\nSideways: bank'));
+    const leftZone = el('div', 'tz tz-left', this.lever, el('span', 'tz-hint', 'Up: more power\nSideways: steer'));
 
     const brake = el('button', 'tbtn tbtn-brake', 'BRAKE');
     brake.addEventListener('pointerdown', (e) => {
@@ -68,6 +68,7 @@ export class TouchDevice implements InputDevice {
       });
     }
 
+    let closeMenu = () => {};
     const button = (label: string, title: string, action: Action | (() => void)) => {
       const b = el('button', 'tbtn', label);
       b.title = title;
@@ -76,26 +77,38 @@ export class TouchDevice implements InputDevice {
         e.preventDefault();
         if (typeof action === 'function') action();
         else this.actions.push(action);
+        closeMenu();
       });
       return b;
     };
-    const bar = el(
-      'div',
-      'tbar',
-      button('↺', 'Reset to runway', 'reset'),
-      button('◎', 'Camera: chase / orbit', 'camera'),
-      button('‹', 'Previous craft', 'prevVehicle'),
-      button('›', 'Next craft', 'nextVehicle'),
-      button('✦', 'Hangar & Studio', 'studio'),
-      button('⚙', 'Debug & weather', 'debug'),
-      button('?', 'Help', 'help'),
-      button('FLAP', 'Flaps: next detent', () => (this.flapCycle = true)),
-      button('🔊', 'Sound on/off', 'mute'),
-      button('📷', 'Screenshot', 'screenshot'),
+    const more = el('button', 'tbtn', 'More ▾');
+    more.type = 'button'; more.setAttribute('aria-expanded', 'false');
+    more.setAttribute('aria-controls', 'touch-more');
+    const menu = el('div', 'tmore hidden',
+      button('Reset', 'Reset to runway', 'reset'),
+      button('Previous craft', 'Previous craft', 'prevVehicle'),
+      button('Next craft', 'Next craft', 'nextVehicle'),
+      button('Weather', 'Debug & weather', 'debug'),
+      button('Flaps', 'Flaps: next detent', () => (this.flapCycle = true)),
+      button('Sound', 'Sound on/off', 'mute'),
+      button('Photo', 'Screenshot', 'screenshot'),
     );
-    if (document.fullscreenEnabled) bar.append(button('⛶', 'Fullscreen', () => this.toggleFullscreen()));
+    menu.id = 'touch-more';
+    if (document.fullscreenEnabled) menu.append(button('Fullscreen', 'Fullscreen', () => this.toggleFullscreen()));
+    menu.append(button('Close menu', 'Close more controls', () => {}));
+    closeMenu = () => { menu.classList.add('hidden'); more.setAttribute('aria-expanded', 'false'); };
+    more.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      const open = menu.classList.contains('hidden');
+      menu.classList.toggle('hidden', !open); more.setAttribute('aria-expanded', String(open));
+    });
+    const bar = el('div', 'tbar',
+      button('Hangar', 'Hangar & Studio', 'studio'),
+      button('Camera', 'Camera: chase / orbit', 'camera'),
+      button('Controls', 'Help', 'help'), more,
+    );
 
-    this.root = el('div', 'touch hidden', leftZone, this.stickZone, brake, bar);
+    this.root = el('div', 'touch hidden', leftZone, this.stickZone, brake, bar, menu);
     document.body.append(this.root);
 
     this.bindLever(leftZone);
@@ -167,7 +180,7 @@ export class TouchDevice implements InputDevice {
   read(raw: RawInput, ctx: InputContext): void {
     this.updateVisibility(ctx);
     this.lastThrottle = ctx.throttle;
-    this.leverLabel.textContent = ctx.profile === 'rotorcraft' ? 'COLL' : 'THR';
+    this.leverLabel.textContent = `${ctx.profile === 'rotorcraft' ? 'LIFT' : 'POWER'} ${Math.round(ctx.throttle * 100)}%`;
     if (!this.visible) return;
     const expo = ctx.settings.expo;
 

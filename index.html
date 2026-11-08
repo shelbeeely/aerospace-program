@@ -42,7 +42,7 @@
     <div id="hangar-bar">
       <div id="craft-card" class="panel"></div>
       <button id="fly-btn" title="Fly this craft (N)">FLY ▸</button>
-      <button id="studio-open" class="panel" title="Open the Studio">✦ Studio</button>
+      <button id="studio-open" class="panel" title="Create aircraft, paint and music" aria-controls="studio" aria-expanded="false">✦ Create</button>
     </div>
     <!-- Flight mode: back to the hangar. -->
     <button id="to-hangar" class="panel" title="Back to the hangar (N)">◂ Hangar</button>
@@ -71,6 +71,7 @@
     </div>
 
     <div id="debug" class="panel hidden">
+      <button id="debug-close" class="panel-close" type="button">Close weather ✕</button>
       <h3>Debug</h3>
       <div id="d-stats"></div>
       <label>

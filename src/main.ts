@@ -138,6 +138,9 @@ async function start() {
   let pilot: ControlSource = player;
 
   let debugOn = false;
+  document.getElementById('debug-close')!.addEventListener('click', () => {
+    debugOn = false; sim.recordForces = false; debug.setVisible(false); hud.setDebugVisible(false);
+  });
   const comSlider = document.getElementById('d-com') as HTMLInputElement;
   const comVal = document.getElementById('d-com-val')!;
   comSlider.addEventListener('input', () => {
@@ -317,7 +320,10 @@ async function start() {
       audio.silence();
       callouts.reset();
       if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
-      studio.show();
+      if (mobile) {
+        studio.root.classList.add('hidden');
+        document.getElementById('studio-open')?.setAttribute('aria-expanded', 'false');
+      } else studio.show();
     } else {
       reset();
     }
