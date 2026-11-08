@@ -53,23 +53,27 @@ export class LightningSystem {
   private random: () => number;
   private untilStrike = 0;
   private serial = 0;
+  /** Normalized airframe static charge; storm field and precipitation charge it, air leaks it. */
+  staticCharge = 0;
   constructor(seed: number) { this.random = hazardRandom(seed); this.reset(seed); }
   reset(seed: number): void {
-    this.random = hazardRandom(seed); this.untilStrike = this.interval(); this.strikes.length = 0;
+    this.random = hazardRandom(seed); this.untilStrike = this.interval(); this.strikes.length = 0; this.staticCharge = 0;
   }
   private interval(): number { return HAZARDS.strikeIntervalMin + this.random() * HAZARDS.strikeIntervalRange; }
   trigger(time: number, x: number, z: number, targets: readonly StrikeTarget[], cloudHeight = 800): LightningStrike {
     const target = strikeTarget(x, z, targets);
+    if (target.craftPart) this.staticCharge *= 0.1;
     const strike = { id: ++this.serial, time, target, points: steppedLeader(target.position, cloudHeight, this.random), energyJ: HAZARDS.strikeEnergyMinJ + this.random() * HAZARDS.strikeEnergyRangeJ };
     this.strikes.push(strike);
     if (this.strikes.length > 32) this.strikes.shift();
     return strike;
   }
-  step(dt: number, time: number, intensity: number, center: THREE.Vector3, targets: readonly StrikeTarget[], cloudHeight = 800): LightningStrike | null {
+  step(dt: number, time: number, intensity: number, center: THREE.Vector3, targets: readonly StrikeTarget[] | (() => readonly StrikeTarget[]), cloudHeight = 800, precipitationCharging = 0): LightningStrike | null {
+    this.staticCharge = Math.max(0, Math.min(1, this.staticCharge + dt * (intensity * 0.12 + Math.max(0, precipitationCharging) - this.staticCharge * 0.08)));
     if (!(intensity > 0)) return null;
     this.untilStrike -= dt * Math.min(1, intensity);
     if (this.untilStrike > 0) return null;
     this.untilStrike += this.interval();
-    return this.trigger(time, center.x + (this.random() - 0.5) * 700, center.z + (this.random() - 0.5) * 700, targets, cloudHeight);
+    return this.trigger(time, center.x + (this.random() - 0.5) * 700, center.z + (this.random() - 0.5) * 700, typeof targets === 'function' ? targets() : targets, cloudHeight);
   }
 }

@@ -13,6 +13,7 @@ export class LightningView {
   private readonly corona = new THREE.LineSegments(this.coronaGeometry, this.coronaMaterial);
   private lastStrike = -1;
   constructor(scene: THREE.Scene) {
+    this.coronaGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(80 * 12), 3).setUsage(THREE.DynamicDrawUsage));
     this.bolt.frustumCulled = this.corona.frustumCulled = false;
     scene.add(this.bolt, this.corona);
   }
@@ -36,7 +37,9 @@ export class LightningView {
       lines.push(p.x - 0.06, p.y, p.z, p.x, p.y + height, p.z,
         p.x, p.y + height, p.z, p.x + 0.06, p.y, p.z);
     }
-    this.coronaGeometry.setAttribute('position', new THREE.Float32BufferAttribute(lines, 3));
+    const attribute = this.coronaGeometry.getAttribute('position') as THREE.BufferAttribute;
+    (attribute.array as Float32Array).set(lines); attribute.needsUpdate = true;
+    this.coronaGeometry.setDrawRange(0, lines.length / 3);
     this.coronaMaterial.opacity = Math.min(1, storm);
   }
   dispose(): void {

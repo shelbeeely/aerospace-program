@@ -8,7 +8,13 @@ export class FireView {
   private readonly geometry = new THREE.BufferGeometry();
   private readonly material = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false });
   private readonly lines = new THREE.LineSegments(this.geometry, this.material);
-  constructor(scene: THREE.Scene) { this.lines.frustumCulled = false; scene.add(this.lines); }
+  constructor(scene: THREE.Scene) {
+    // Reuse GPU buffers: replacing attributes every frame leaks backend buffers until disposal.
+    for (const name of ['position', 'color']) this.geometry.setAttribute(name,
+      new THREE.BufferAttribute(new Float32Array(80 * 65 * 6), 3).setUsage(THREE.DynamicDrawUsage));
+    this.geometry.setDrawRange(0, 0);
+    this.lines.frustumCulled = false; scene.add(this.lines);
+  }
   update(time: number, fire: FireSystem, craft: Craft): void {
     const positions: number[] = [], colors: number[] = [];
     const orange = glow('#ff6600', 4), pink = glow('#ff35bc', 2.2), smoke = glow('#8f53dc', 0.8);
@@ -20,7 +26,7 @@ export class FireView {
     };
     let n = 0;
     for (const p of fire.parts.values()) {
-      if (!p.burning || n++ > 80) continue;
+      if (!p.burning || n++ >= 80) continue;
       const origin = p.position.clone().applyQuaternion(q).add(new THREE.Vector3(t.x, t.y, t.z));
       const scale = Math.min(3, 0.4 + p.fuel * 0.15);
       for (let i = 0; i < 5; i++) {
@@ -40,8 +46,11 @@ export class FireView {
       }
     }
     this.lines.visible = positions.length > 0;
-    this.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    this.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    const position = this.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const color = this.geometry.getAttribute('color') as THREE.BufferAttribute;
+    (position.array as Float32Array).set(positions); (color.array as Float32Array).set(colors);
+    position.needsUpdate = color.needsUpdate = true;
+    this.geometry.setDrawRange(0, positions.length / 3);
   }
   dispose(): void { this.lines.removeFromParent(); this.geometry.dispose(); this.material.dispose(); }
 }

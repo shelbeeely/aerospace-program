@@ -30,6 +30,11 @@ const trace = (seed: number) => {
   return JSON.stringify(system.strikes);
 };
 check('storm scheduler trace is seed-deterministic', trace(31) === trace(31) && trace(31) !== trace(32));
+const charging = new LightningSystem(4);
+for (let i = 0; i < 20; i++) charging.step(1, i, 0, new THREE.Vector3(), [], 800, 0.1);
+const charged = charging.staticCharge;
+for (let i = 0; i < 20; i++) charging.step(1, i + 20, 0, new THREE.Vector3(), []);
+check('precipitation static builds up and leaks away in clear air', charged > 0.5 && charging.staticCharge < charged / 2);
 
 const part = (id: string, x: number): PartDef => ({ id, kind: 'fuel', position: [x, 0, 0], mass: 30, color: '#ff00ff', shape: { type: 'box', size: [1, 1, 1] } });
 const parts = [part('a', 0), part('b', 1.1), part('isolated', 20)];

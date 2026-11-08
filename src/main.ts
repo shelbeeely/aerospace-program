@@ -482,7 +482,7 @@ async function start() {
     }
     debrisView.update(sim.debris);
     townView.update(dt);
-    lightningView.update(sim.time, sim.lightning.strikes, sim.craft, sim.atmosphere.settings.storm ?? 0);
+    lightningView.update(sim.time, sim.lightning.strikes, sim.craft, Math.max(sim.lightning.staticCharge, (sim.atmosphere.settings.storm ?? 0) * 0.5));
     fireView.update(sim.time, sim.fire, sim.craft);
 
     // Haptics: parts breaking, hitting the ground hard, entering a stall.

@@ -375,14 +375,24 @@ export class Simulation {
 
   /** Actual, still-standing conductors, including individual craft parts. */
   lightningTargets(): StrikeTarget[] {
-    const targets: StrikeTarget[] = this.craft.parts.map((p) => ({ id: p.id, craftPart: p.id,
-      position: new THREE.Vector3(...p.position).applyQuaternion(this.rotation).add(this.position) }));
+    const targets: StrikeTarget[] = this.craft.parts.map((p) => {
+      const position = new THREE.Vector3(...p.position).applyQuaternion(this.rotation).add(this.position);
+      const shape = p.shape;
+      const localRotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(...(p.rotationDeg ?? [0, 0, 0]).map((d) => d * Math.PI / 180) as [number, number, number]));
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.rotation.clone().multiply(localRotation).invert());
+      const height = shape.type === 'sphere' ? shape.radius : shape.type === 'box'
+        ? (Math.abs(up.x) * shape.size[0] + Math.abs(up.y) * shape.size[1] + Math.abs(up.z) * shape.size[2]) / 2
+        : Math.abs(up.y) * shape.length / 2 + Math.hypot(up.x, up.z) * shape.radius;
+      position.y += height;
+      return { id: p.id, craftPart: p.id, position };
+    });
     for (const building of this.town.buildings) {
       let top: THREE.Vector3 | null = null;
       for (const block of building.list) if (block.alive && block.collider) {
         const p = block.collider.translation();
         if (!top || p.y > top.y) top = new THREE.Vector3(p.x, p.y, p.z);
       }
+      if (top) top.y += TUNING.blockSize / 2;
       if (top) targets.push({ id: `building:${building.def.id}`, position: top });
     }
     return targets;
@@ -428,10 +438,11 @@ export class Simulation {
 
   private stepHazards(): void {
     const intensity = this.atmosphere.settings.storm ?? 0;
-    if (intensity > 0) {
-      const strike = this.lightning.step(this.dt, this.time, intensity, this.position, this.lightningTargets(), this.atmosphere.settings.cloudBase);
-      if (strike) this.applyLightning(strike);
-    }
+    const strike = this.lightning.step(this.dt, this.time, intensity, this.position,
+      () => this.lightningTargets(), this.atmosphere.settings.cloudBase,
+      (this.atmosphere.settings.precipitation ?? 0) * this.linvel.length() * 0.00001);
+    if (strike) this.applyLightning(strike);
+    if (!this.fire.active) return;
     this.fire.step(this.dt, new Set(this.craft.parts.map((p) => p.id)), this.tankFuel());
     for (const fire of this.fire.parts.values()) {
       if (fire.consumed > 0) {
@@ -510,6 +521,7 @@ export class Simulation {
       });
       this.filteredLoads.delete(partId);
       this.damage.remove(partId);
+      this.fire.parts.delete(partId);
       this.version++;
     }
   }

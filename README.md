@@ -341,3 +341,21 @@ Generation roadmap, using more of OpenRouter's model types:
 - **Video** models for race trailers from replays.
 - **Procedural worlds** (Stage 3) seeded and themed by a model: biome palette, landmarks,
   airports.
+
+
+### Lightning, static and fire
+
+Thunderstorm intensity drives seeded lightning. Descending leaders intercept nearby tall
+buildings or aircraft, damage parts along an entry-to-exit path, couple surges into avionics,
+and can ignite fuel tanks. Precipitation and storm fields build airframe static, shown as
+violet St. Elmo coronas; charge leaks away in clear air. Thunder arrives after distance / 343
+seconds of simulation time, so pausing flight also pauses the delay.
+
+Finite per-part combustible mass burns, heats adjacent parts, consumes real tank fuel, weakens
+hot structure, and produces a smoke updraft. Detached parts stop contributing to the attached
+aircraft fire model. Neon leaders, wire flames and smoke rings follow that headless state.
+Reset repairs damage, restores fuel and clears hazards.
+
+Run `npm run hazards` for deterministic strike, heat propagation, burnout, electrical damage,
+and reset regressions. In the browser console, `game.sim.triggerLightning()` triggers a strike
+near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)` starts a fire.

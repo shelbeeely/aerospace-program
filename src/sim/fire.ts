@@ -20,15 +20,17 @@ function radius(p: PartDef): number {
  * Temperatures are °C, fuel kg. Heat propagation uses a snapshot so part order cannot matter. */
 export class FireSystem {
   readonly parts = new Map<string, PartFire>();
+  active = false;
+  private readonly smokeOrigin = new THREE.Vector3();
   reset(parts: readonly PartDef[], tankFuel: ReadonlyMap<string, number> = new Map()): void {
-    this.parts.clear();
+    this.parts.clear(); this.active = false;
     for (const p of parts) this.parts.set(p.id, { id: p.id, position: new THREE.Vector3(...p.position), radius: radius(p), temperature: HAZARDS.ambientTemperature,
       fuel: tankFuel.get(p.id) ?? Math.min(5, p.mass * 0.04), burning: false, consumed: 0 });
   }
   ignite(id: string): boolean {
     const p = this.parts.get(id);
     if (!p || p.fuel <= 0) return false;
-    p.temperature = Math.max(HAZARDS.flameTemperature, p.temperature); p.burning = true; return true;
+    p.temperature = Math.max(HAZARDS.flameTemperature, p.temperature); p.burning = true; this.active = true; return true;
   }
   strengthFactor(id: string): number {
     const t = this.parts.get(id)?.temperature ?? 20;
@@ -53,14 +55,17 @@ export class FireSystem {
         if (d <= reach) heat.set(q.id, (heat.get(q.id) ?? 0) + HAZARDS.neighborHeatRate * (1 - 0.5 * d / reach));
       }
     }
+    this.active = false;
     for (const p of this.parts.values()) {
       p.temperature = Math.min(HAZARDS.maximumTemperature, Math.max(HAZARDS.ambientTemperature, p.temperature + ((heat.get(p.id) ?? 0) - (p.temperature - HAZARDS.ambientTemperature) / HAZARDS.coolingTime) * dt));
       if (p.fuel <= 0) p.burning = false;
+      if (p.burning || p.temperature > HAZARDS.ambientTemperature + 0.05) this.active = true;
     }
   }
   /** Buoyant smoke updraft, accumulated into an existing world-space wind vector. */
   addSmokeWind(point: THREE.Vector3, craftPosition: THREE.Vector3, craftRotation: THREE.Quaternion, out: THREE.Vector3): void {
-    const origin = new THREE.Vector3();
+    if (!this.active) return;
+    const origin = this.smokeOrigin;
     for (const p of this.parts.values()) {
       if (!p.burning) continue;
       origin.copy(p.position).applyQuaternion(craftRotation).add(craftPosition);
