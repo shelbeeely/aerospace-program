@@ -29,7 +29,12 @@ npm run build          # typecheck + production build
 1. **Design.** In the Studio (N), describe a craft. The **Designer** model drafts it, using
    the full craft format and the sim's physics conventions
    (`src/gen/craftDesigner.ts → DESIGNER_SYSTEM_PROMPT`).
-2. **Validate.** `validateCraft` rejects malformed or out-of-range data.
+   With **parallel drafts** (default 2) the designer writes several independent drafts at
+   once; each is tested and the best one goes on to repair.
+2. **Validate and auto-fix.** `validateCraft` rejects malformed or out-of-range data.
+   `src/gen/autofix.ts` then fixes the mistakes models make most: control gain signs (checked
+   against the torque each surface makes about the CoM) and wheel springs (sized from the
+   static load on each wheel). The engineer is told what was corrected.
 3. **Flight test.** `src/sim/flightTest.ts` flies the craft headless through a test card: rest
    on the runway, take off, climb to 140 m, turn 90°, then fly hands-off with the elevator
    trimmed. It scores the run out of 100 and writes up actionable issues. About 150 simulated
@@ -107,7 +112,8 @@ stick expo, haptics, and touch controls auto/on/off.
 | B or Space | brakes |
 | T / G, Y | trim nose down / up, reset trim |
 | , / . (or F6 / F7) | flaps up / down a notch (3 notches, 10° each) |
-| R | reset to runway |
+| R | new plane on the runway (the world, wreckage and weather stay) |
+| Backspace | reset the whole world |
 | C | chase / orbit camera |
 | [ / ] | previous / next craft |
 | F3 | debug: force vectors, CoM/CoL/CoT, stats, CoM slider, weather |
@@ -128,7 +134,7 @@ The layout follows the craft:
 | LB / RB | yaw | |
 | D-pad ↑ / ↓ | trim | |
 
-Common to both: A (hold) brakes, Y resets, B toggles the camera, X or D-pad ←/→ change
+Common to both: A (hold) brakes, Y new plane, LB+Y resets the world, B toggles the camera, X or D-pad ←/→ change
 craft, Start opens the Studio, Back/View opens help, L3 resets trim, R3 toggles debug.
 Sticks have a radial deadzone and adjustable expo. Pads rumble on crashes, broken parts and
 stall onset, and a toast announces connect/disconnect.
@@ -140,7 +146,7 @@ stall onset, and a toast announces connect/disconnect.
 - **Right thumb:** a floating stick that centres where you touch. Drag down for nose up, sideways
   to roll. It springs back.
 - **BRAKE** (hold). The top bar has **Hangar**, **Camera**, **Controls**, and **More**.
-  **More** contains reset, craft selection, weather, flaps, sound, photos and fullscreen.
+  **More** contains New plane, Reset world, craft selection, weather, flaps, sound, photos and fullscreen.
 - **Create / Studio:** in the hangar, tap **Create**, type in **Describe your aircraft**, then
   tap **Generate aircraft**. GitHub Pages requires your OpenRouter key under **Key & spend**.
   Model choices are under **Models & generation settings**. Studio stays closed on mobile
@@ -391,6 +397,15 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
   Blocks around the impact die, a BFS anchor check from the ground-level blocks finds what is
   still supported, and everything else falls as rigid-body rubble that shatters on landing.
   Aircraft break apart too: a wing that hits a tower detaches and the lift goes asymmetric.
+- **Aircraft voxels and explosions.** Every part is a 0.25 m voxel grid. Hard contacts bite
+  voxels out at the contact point and throw glowing chips (buildings chip too); a damaged part
+  is drawn voxel by voxel, keeps mass, lift and thrust in proportion to what is left, and
+  breaks off below 35%. A crash that changes the craft's velocity by more than 30 m/s in
+  0.15 s blows it up: fireball, shockwave, boom, the parts thrown clear and nearby buildings
+  cratered. R puts a new plane on the runway with the wreckage left where it is; Backspace
+  rebuilds the whole world.
+- **Reinforcement (hangar → craft card → Reinforce):** levels 0-3 per part, each +15% part
+  mass, +60% strength and +80% impact HP. Saved with the craft; designers can set it too.
 - **Airport:** taxiway, apron, terminal with jet bridges and parked airliners, control tower and
   beacon, runway/approach/taxi lights with sequenced flashers, working PAPIs, a windsock that
   follows the real wind.
@@ -398,7 +413,7 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
   heading and forward speed on rotorcraft), takes off by itself from the runway, and climbs to
   clear buildings ahead. While engaged, stick pitch/roll and the throttle adjust its targets.
 
-Checks: `npm run city`, `npm run autopilot`.
+Checks: `npm run city`, `npm run autopilot`, `npm run destruction`, `npm run design-pipeline`.
 
 ### Credits
 

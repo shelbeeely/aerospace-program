@@ -1,3 +1,4 @@
+import type { CraftDef } from './craft/types.ts';
 import * as THREE from 'three/webgpu';
 import { TEST_PLANE } from './craft/testPlane.ts';
 import { Hud } from './hud/Hud.ts';
@@ -348,6 +349,64 @@ async function start() {
         row('SPAN', `${(span * 2).toFixed(1)} m`) +
         row('T/W', tw),
     );
+    craftCard.append(reinforcePanel());
+  };
+  /**
+   * Per-part reinforcement (hangar): levels 0-3, each +15% part mass, +60% strength, +80% impact
+   * HP. Saved into the craft definition (and the library entry, for generated craft).
+   */
+  let reinforceOpen = false;
+  const reinforcePanel = () => {
+    const def = sim.craft.def;
+    const details = document.createElement('details');
+    details.className = 'reinforce';
+    details.open = reinforceOpen;
+    details.addEventListener('toggle', () => (reinforceOpen = details.open));
+    const extra = def.parts.reduce((s, p) => s + p.mass * 0.15 * (p.reinforce ?? 0), 0);
+    const summary = document.createElement('summary');
+    summary.textContent = `REINFORCE${extra > 0 ? ` · +${extra.toFixed(0)} kg` : ''}`;
+    details.append(summary);
+    const list = document.createElement('div');
+    list.className = 'reinforce-list';
+    for (const p of def.parts) {
+      const label = document.createElement('label');
+      const name = document.createElement('span');
+      name.textContent = p.id;
+      name.title = p.kind;
+      const sel = document.createElement('select');
+      sel.setAttribute('aria-label', `Reinforcement for ${p.id}`);
+      for (let lv = 0; lv <= 3; lv++) {
+        const o = document.createElement('option');
+        o.value = String(lv);
+        o.textContent = lv ? `${'▮'.repeat(lv)} +${(p.mass * 0.15 * lv).toFixed(p.mass * 0.15 < 1 ? 1 : 0)} kg` : 'none';
+        sel.append(o);
+      }
+      sel.value = String(p.reinforce ?? 0);
+      sel.addEventListener('change', () => {
+        const next = structuredClone(def);
+        const part = next.parts.find((x) => x.id === p.id)!;
+        const lv = Number(sel.value);
+        if (lv) part.reinforce = lv;
+        else delete part.reinforce;
+        applyCraftEdit(next);
+      });
+      label.append(name, sel);
+      list.append(label);
+    }
+    details.append(list);
+    return details;
+  };
+  /** Swap in an edited version of the current craft (keeps its library entry in step). */
+  const applyCraftEdit = (def: CraftDef) => {
+    sim.loadCraft(def);
+    replaceCraftView();
+    viewVersion = sim.version;
+    if (currentEntry) {
+      library.update(currentEntry.id, { craft: def });
+      currentEntry = { ...currentEntry, craft: def };
+    }
+    if (mode === 'hangar') showOnTurntable();
+    else updateCraftCard();
   };
   const setMode = (m: AppMode) => {
     if (captureBusy) return;

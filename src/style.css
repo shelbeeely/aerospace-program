@@ -284,6 +284,13 @@ body.mode-flight #studio, body.mode-flight #hangar-bar { display: none !importan
 #craft-card .row { display: flex; align-items: baseline; gap: 8px; }
 #craft-card .row span { width: 52px; color: #9fb2c2; font-size: 11px; letter-spacing: 0.08em; }
 #craft-card .row b { font-variant-numeric: tabular-nums; }
+#craft-card .reinforce { margin-top: 6px; }
+#craft-card .reinforce summary { cursor: pointer; font-size: 11px; letter-spacing: 0.08em; color: #ffb36b; }
+#craft-card .reinforce-list { max-height: 34dvh; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+#craft-card .reinforce-list label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+#craft-card .reinforce-list span { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #cfe; }
+#craft-card .reinforce-list select { width: 112px; flex: none; background: rgba(0,0,0,0.35); color: #eaf2f8; border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; font: inherit; padding: 1px 4px; }
+body.touch-ui.portrait #craft-card .reinforce { display: none; }
 #fly-btn {
   font: bold 22px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0.12em;
   padding: 16px 28px; border-radius: 8px; cursor: pointer; color: #fff;
