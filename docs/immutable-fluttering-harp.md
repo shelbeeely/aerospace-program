@@ -11,11 +11,11 @@ Separate Hangar editor and Flight modes; neon synthwave wireframe visuals; exact
 | Unit | Scope | Recovered state |
 | --- | --- | --- |
 | 1 | Hangar/Flight modes, paused editor, N/Start/touch switching, URL mode, select versus fly | Merged before resumption |
-| 2 | Neon edges, dark fills/sky, cyan grid, rain/cloud wireframe, bloom/SMAA | Saved origin/batch/neon-look; review underway |
+| 2 | Neon edges, dark fills/sky, cyan grid, rain/cloud wireframe, bloom/SMAA | Merged and validated WebGPU/WebGL2 |
 | 3 | Trainer/twin/jet/quad; turbofan model; calm/moderate 100-point flight cards; retain heli/blimp cards | Merged before resumption |
 | 4 | Contact force events, per-part HP/energy damage, wheel sink exemption, soft CCD | Merged before resumption |
-| 5 | Grid block buildings, 6-neighbour support BFS, compound unsupported chunks, capped debris, seeded town x < -700 | Saved origin/batch/block-buildings; review underway |
-| 6 | Battery sag/SoC/heat/cutoff, motor Kv/Kt, generators, avionics, solved bus, FC brownout, HUD | Saved origin/batch/electrical; review underway |
+| 5 | Grid block buildings, 6-neighbour support BFS, compound unsupported chunks, capped debris, seeded town x < -700 | Merged; BFS/collision/cap tests and WebGPU/WebGL2 validated |
+| 6 | Battery sag/SoC/heat/cutoff, motor Kv/Kt, generators, avionics, solved bus, FC brownout, HUD | Merged; power conservation/damage fixes, 26 electrical checks passed |
 | 7 | Seeded events; Rankine tornado, Holland hurricane/surge, earthquake ground acceleration, controls and neon visuals | Pending |
 | 8 | Seeded lightning/strike geometry, electrical spike hook, fuel ignition, heat/spread/burnout, smoke wind and thunder | Pending |
 | 9 | Coast x > 2500; shared CPU/TSL Gerstner waves/surge; water drag/buoyancy/damage | Pending |
@@ -35,3 +35,7 @@ Specific checks: safe 0.5 m drop, damaging 30 m drop, 300 m/s thin-wall CCD; BFS
 ## Recovery correction
 
 The old plan said all workers were lost at c84027d. Remote inspection during this session instead found units 1/3/4 merged at ff2f5e3, and units 2/5/6 saved on remote branches. Preserve those commits.
+
+## Current checkpoint
+
+Wave 2 merged and pushed at c524eb6. All baseline suites plus electric/buildings/build pass. Units 7, 8, 9 running in isolated worktrees; unit 7 milestone pushed. Ray-trace reference intersection and packing checks committed/pushed on batch/raytrace-core; GPU work in progress. Optional live OpenRouter catalog access is blocked in this environment; browser visual checks use a catalog fixture and do not claim AI generation validation.
