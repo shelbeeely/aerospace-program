@@ -39,7 +39,7 @@ const shapeKey = (p: StructurePiece) => (p.shape === 'cone' ? `cone${nearestTape
  * Steel-blue façade: metallic, darker near the street, with sparse lit windows in the accent
  * colour and thin glowing orange bands every few floors (the 1980s computer-world look).
  */
-function facadeMaterial(accent: string, windows: boolean): THREE.MeshStandardNodeMaterial {
+export function facadeMaterial(accent: string, windows: boolean): THREE.MeshStandardNodeMaterial {
   const m = new THREE.MeshStandardNodeMaterial({
     metalness: 0.55,
     roughness: 0.38,
