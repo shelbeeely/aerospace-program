@@ -25,6 +25,7 @@ import { WeatherView } from './render/WeatherView.ts';
 import { CityView } from './render/CityView.ts';
 import { AirportView } from './render/AirportView.ts';
 import { KitTowersView } from './render/KitTowersView.ts';
+import { ChipsView } from './render/ChipsView.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
 import { FlightAutopilot } from './sim/flightAutopilot.ts';
@@ -140,6 +141,7 @@ async function start() {
   const cityView = new CityView(scene, sim.staticWorld);
   const airportView = new AirportView(scene);
   const kitView = new KitTowersView(scene, sim.staticWorld, import.meta.env.BASE_URL);
+  const chipsView = new ChipsView(scene, sim.chips);
   const _wind10 = new THREE.Vector3();
   const _tmpWindPoint = new THREE.Vector3();
   const oceanView = new OceanView(scene, sim.ocean, sim.atmosphere.events);
@@ -639,6 +641,7 @@ async function start() {
     townView.update(dt);
     cityView.update(dt);
     kitView.update();
+    chipsView.update(dt);
     oceanView.update(sim.time, camera);
     lightningView.update(sim.time, sim.lightning.strikes, sim.craft, Math.max(sim.lightning.staticCharge, (sim.atmosphere.settings.storm ?? 0) * 0.5));
     fireView.update(sim.time, sim.fire, sim.craft);

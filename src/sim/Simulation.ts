@@ -13,6 +13,7 @@ import { COAST, LAYOUT } from './layout.ts';
 import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
+import { ChipEmitter } from './chips.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
 import type { Telemetry } from './telemetry.ts';
 
@@ -68,6 +69,8 @@ export class Simulation {
   damage: DamageModel;
   /** Breakable block buildings and their rubble (src/world). */
   readonly town: Town;
+  /** Visual voxel chips knocked off buildings and aircraft (the renderer flies them). */
+  readonly chips = new ChipEmitter();
   /** Solid neon city and airport structures (static colliders). */
   readonly staticWorld: StaticWorld;
   readonly fire = new FireSystem();
@@ -141,6 +144,7 @@ export class Simulation {
     const seabed = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation((COAST.x + half) / 2, -COAST.depth - 5, 0));
     this.world.createCollider(RAPIER.ColliderDesc.cuboid((half - COAST.x) / 2, 5, half), seabed);
     this.town = new Town(this.world);
+    this.town.chips = this.chips;
     this.staticWorld = new StaticWorld(this.world, this.town);
 
     const { position, rotation } = this.spawnPose(null);
