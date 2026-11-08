@@ -123,7 +123,9 @@ export class ElectricalSystem {
       if (g <= 1e-12) {
         if (j <= 1e-12) return { v: 0, supply: 0 };
         // Pure current source into a constant-power load.
-        return load > 0 ? { v: Math.min(vReg, load / j), supply: 1 } : { v: vReg, supply: 1 };
+        if (load <= 0) return { v: vReg, supply: 1 };
+        const v = Math.min(vReg, load / j);
+        return { v, supply: Math.min(1, (j * v) / load) };
       }
       const disc = j * j - 4 * g * load;
       if (disc >= 0) return { v: (j + Math.sqrt(disc)) / (2 * g), supply: 1 };
@@ -171,7 +173,7 @@ export class ElectricalSystem {
         if (a.powered) essentialOn = true;
       }
     }
-    this.avionicsPowered = this.powered && (!essentialFitted || essentialOn);
+    this.avionicsPowered = this.powered && res.supply >= 0.9 && (!essentialFitted || essentialOn);
     for (const fc of this.flightControllers) fc.powered = this.avionicsPowered;
   }
 

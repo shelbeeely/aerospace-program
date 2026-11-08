@@ -4,12 +4,15 @@
  * simulation headless. Run with `npm run electric`. Exits non-zero on any failure.
  */
 import * as THREE from 'three';
-import { BUILTINS, QUADCOPTER } from '../src/craft/builtins.ts';
+import { BUILTINS, HELICOPTER, QUADCOPTER } from '../src/craft/builtins.ts';
 import { ElectricalSystem } from '../src/craft/ElectricalSystem.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
 import type { BatteryDef, CraftDef } from '../src/craft/types.ts';
 import { validateCraft } from '../src/craft/validate.ts';
 import { Battery } from '../src/modules/Battery.ts';
+import { Avionics } from '../src/modules/Avionics.ts';
+import { Engine } from '../src/modules/Engine.ts';
+import { FlightController } from '../src/modules/FlightController.ts';
 import { Generator } from '../src/modules/Generator.ts';
 import { calmWeather, WEATHER_PRESETS } from '../src/sim/atmosphere.ts';
 import { HoverPilot } from '../src/sim/autopilot.ts';
@@ -62,6 +65,49 @@ for (const amps of [20, 60]) {
   }
   check('SoC falls monotonically under load', monotonic && bat.soc < 0.05, `cut off (${bat.cutoff || 'none'}) after ${(t / 60).toFixed(1)} min at SoC ${(bat.soc * 100).toFixed(1)}%, pack ${bat.tempC.toFixed(1)} °C`);
   check('pack heats by I²R', bat.tempC > 22, `${bat.tempC.toFixed(1)} °C after a 60 A discharge`);
+}
+
+// A generator-only bus must not invent power when its current limit is reached.
+{
+  const engine = new Engine('engine', { type: 'engine', maxThrust: 1000 }, new THREE.Vector3(), new THREE.Quaternion());
+  engine.spool = 1;
+  const gen = new Generator('engine', { type: 'generator', ratedAmps: 1 }, new THREE.Vector3());
+  const load = new Avionics('instruments', { type: 'avionics', loadW: 1000 }, new THREE.Vector3());
+  gen.link([engine]);
+  const bus = new ElectricalSystem([gen, load]);
+  bus.step(1 / 120);
+  check('current-limited generator conserves delivered power', bus.loadW <= bus.generatorCurrent * bus.busVoltage + 1e-6 && !load.powered,
+    `${bus.loadW.toFixed(1)} W delivered from ${bus.generatorCurrent.toFixed(1)} A at ${bus.busVoltage.toFixed(1)} V`);
+}
+
+// A flight controller without a separate avionics box still browns out with its bus.
+{
+  const engine = new Engine('engine', { type: 'engine', maxThrust: 1000 }, new THREE.Vector3(), new THREE.Quaternion());
+  engine.spool = 1;
+  const gen = new Generator('engine', { type: 'generator', ratedAmps: 1 }, new THREE.Vector3());
+  gen.link([engine]);
+  const fc = new FlightController('fc', { type: 'flightController', mode: 'multirotor' }, new THREE.Vector3());
+  const demand = new Avionics('load', { type: 'avionics', essential: false, loadW: 1e6 }, new THREE.Vector3());
+  const bus = new ElectricalSystem([gen, fc, demand]);
+  bus.step(1 / 120);
+  check('brownout stops a flight controller without essential avionics', !fc.powered && !bus.avionicsPowered,
+    `${bus.busVoltage.toFixed(1)} V, controller powered ${fc.powered}`);
+}
+
+// Removing the complete electrical installation cannot resurrect a self-powered computer.
+{
+  const craft = structuredClone(HELICOPTER);
+  craft.parts.push({ id: 'power-pack', kind: 'battery', mass: 1, position: [0, 0, 0], color: '#00ffff',
+    shape: { type: 'box', size: [0.2, 0.2, 0.2] }, modules: [quadBattery] });
+  const sim = new Simulation(craft, calmWeather());
+  sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
+  const wasPowered = sim.craft.electrical?.avionicsPowered;
+  sim.craft.detachPart('power-pack');
+  sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
+  const controllers = sim.craft.modules.filter((m): m is FlightController => m instanceof FlightController);
+  check('losing the last electrical part leaves the controller unpowered', wasPowered === true &&
+    sim.craft.electrical !== null && controllers.length > 0 && controllers.every((fc) => !fc.powered),
+    `controller powered ${controllers[0]?.powered}`);
 }
 
 // ------------------------------------------------------------------ quad drivetrain
