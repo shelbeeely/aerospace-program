@@ -1,3 +1,5 @@
+import { thunderDelay } from '../sim/lightning.ts';
+import type { LightningStrike } from '../sim/lightning.ts';
 import type { Craft } from '../craft/Craft.ts';
 import type { Telemetry } from '../sim/telemetry.ts';
 
@@ -23,6 +25,8 @@ export class FlightAudio {
   private wasHit = false;
   private lastFailures = 0;
   private hornPhase = 0;
+  private lastThunderStrike = 0;
+  private readonly thunderQueue: Array<{ due: number; distance: number }> = [];
   volume = 0.7;
   muted = false;
 
@@ -236,6 +240,35 @@ export class FlightAudio {
     this.lastFailures = failures;
   }
 
+  /** Thunder follows light by distance / speed of sound in simulation seconds, never wall
+   * time: pausing flight also pauses the delay. Only synthesize after an audio gesture. */
+  updateThunder(strikes: readonly LightningStrike[], time: number, listener: { x: number; y: number; z: number }): void {
+    for (const strike of strikes) {
+      if (strike.id <= this.lastThunderStrike) continue;
+      this.lastThunderStrike = strike.id;
+      const p = strike.target.position;
+      const distance = Math.hypot(p.x - listener.x, p.y - listener.y, p.z - listener.z);
+      this.thunderQueue.push({ due: strike.time + thunderDelay(distance), distance });
+    }
+    for (let i = this.thunderQueue.length - 1; i >= 0; i--) {
+      const event = this.thunderQueue[i];
+      if (time < event.due) continue;
+      this.thunderQueue.splice(i, 1);
+      const ctx = this.ctx;
+      if (!ctx || ctx.state !== 'running') continue;
+      const source = ctx.createBufferSource(); source.buffer = this.noise;
+      const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 180;
+      const gain = ctx.createGain();
+      const peak = 0.5 / (1 + event.distance / 600);
+      gain.gain.setValueAtTime(0, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(peak, ctx.currentTime + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.8);
+      source.connect(filter).connect(gain).connect(this.master);
+      source.onended = () => { source.disconnect(); filter.disconnect(); gain.disconnect(); };
+      source.start(); source.stop(ctx.currentTime + 1.9);
+    }
+  }
+
   /** Fade every continuous voice to silence (e.g. in the hangar, where nothing is running). */
   silence(): void {
     const ctx = this.ctx;
@@ -249,6 +282,7 @@ export class FlightAudio {
 
   reset(): void {
     this.lastFailures = 0;
+    this.thunderQueue.length = 0;
     this.wasGrounded = true;
   }
 }

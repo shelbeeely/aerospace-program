@@ -19,6 +19,8 @@ import { DebugOverlay } from './render/DebugOverlay.ts';
 import { WorldView } from './render/WorldView.ts';
 import { OceanView } from './render/OceanView.ts';
 import { TownView } from './render/TownView.ts';
+import { FireView } from './render/FireView.ts';
+import { LightningView } from './render/LightningView.ts';
 import { WeatherView } from './render/WeatherView.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
@@ -78,6 +80,8 @@ async function start() {
   if (mobile) worldView.sun.shadow.mapSize.set(1024, 1024);
   const weatherView = new WeatherView(scene, worldView);
   const disasterView = new DisasterView(scene);
+  const lightningView = new LightningView(scene);
+  const fireView = new FireView(scene);
   // The hangar: a separate scene with its own orbit camera; its lighting is baked once here.
   const hangarView = new HangarView(renderer, canvas);
   hangarView.bakeEnvironment();
@@ -488,6 +492,7 @@ async function start() {
     const airframeHit = sim.airframeTouchingGround();
     flightLog.update(telemetry, dt, airframeHit);
     audio.update(telemetry, sim.craft, sim.failures.length, airframeHit, dt);
+    audio.updateThunder(sim.lightning.strikes, sim.time, camera.position);
     callouts.update(telemetry, sim.failures);
     // Structure changed: a part broke off (hide it), or the craft was rebuilt (new view).
     if (sim.version !== viewVersion) {
@@ -498,6 +503,8 @@ async function start() {
     debrisView.update(sim.debris);
     townView.update(dt);
     oceanView.update(sim.time, camera);
+    lightningView.update(sim.time, sim.lightning.strikes, sim.craft, Math.max(sim.lightning.staticCharge, (sim.atmosphere.settings.storm ?? 0) * 0.5));
+    fireView.update(sim.time, sim.fire, sim.craft);
 
     // Haptics: parts breaking, hitting the ground hard, entering a stall.
     if (sim.failures.length > failuresSeen) player.rumble(1, 400);
