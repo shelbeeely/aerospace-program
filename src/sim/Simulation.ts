@@ -9,7 +9,7 @@ import { Atmosphere, calmWeather, densityAltitude, type CloudSample, type Precip
 import { DamageModel, type ContactForceHandler, type ContactForceInfo } from './damage.ts';
 import { neutralControls, sanitizeControls, type ControlInputs } from './controls.ts';
 import { Ocean } from './ocean.ts';
-import { COAST, LAYOUT } from './layout.ts';
+import { COAST, isSea, LAYOUT, PLANET } from './layout.ts';
 import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
@@ -114,6 +114,10 @@ export class Simulation {
 
   controls: ControlInputs = neutralControls();
   private readonly groundCollider: RAPIER.Collider;
+  private readonly groundColliders: RAPIER.Collider[] = [];
+  /** Times the craft crossed a wrap edge, and the last shift applied (renderers follow it). */
+  wrapCount = 0;
+  readonly wrapShift = new THREE.Vector3();
   private readonly groundBody: RAPIER.RigidBody;
   private readonly groundMotion = new THREE.Vector3();
   private readonly groundOrigin = new THREE.Vector3();
@@ -144,18 +148,24 @@ export class Simulation {
     const atmosphere = this.atmosphere as Atmosphere & { windContributors?: Array<(point: THREE.Vector3, time: number, out: THREE.Vector3) => void> };
     atmosphere.windContributors?.push(this.smokeWind);
 
-    const half = LAYOUT.groundSize / 2;
-    const landWidth = COAST.x + half;
-    const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation((COAST.x - half) / 2, -5, 0));
+    // The planet's land: everything but the ocean band, on one (quake-movable) body. A strip
+    // past each wrap edge overlaps so nothing falls through at the seam.
+    const half = LAYOUT.groundSize / 2 + 600;
+    const seaEnd = COAST.x + COAST.width;
+    const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -5, 0));
     this.groundBody = ground;
     this.groundOrigin.copy(ground.translation());
     this.groundCollider = this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(landWidth / 2, 5, half).setFriction(0.8).setRestitution(0.1),
+      RAPIER.ColliderDesc.cuboid((COAST.x + half) / 2, 5, half).setTranslation((COAST.x - half) / 2, 0, 0).setFriction(0.8).setRestitution(0.1),
       ground,
     );
-    // Deep seabed replaces the old solid ground east of the coast.
-    const seabed = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation((COAST.x + half) / 2, -COAST.depth - 5, 0));
-    this.world.createCollider(RAPIER.ColliderDesc.cuboid((half - COAST.x) / 2, 5, half), seabed);
+    this.groundColliders.push(this.groundCollider, this.world.createCollider(
+      RAPIER.ColliderDesc.cuboid((half - seaEnd) / 2, 5, half).setTranslation((seaEnd + half) / 2, 0, 0).setFriction(0.8).setRestitution(0.1),
+      ground,
+    ));
+    // Deep seabed under the ocean band.
+    const seabed = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(COAST.x + COAST.width / 2, -COAST.depth - 5, 0));
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid(COAST.width / 2, 5, half), seabed);
     this.town = new Town(this.world);
     this.town.chips = this.chips;
     this.staticWorld = new StaticWorld(this.world, this.town);
@@ -191,7 +201,7 @@ export class Simulation {
       cloud: (p) => this.atmosphere.cloudAt(p, 0, this.cloudSample),
       groundWetness: 0,
       hasFuelSystem: false,
-      groundHeight: (x) => x > COAST.x + self.groundMotion.x ? -COAST.depth : self.groundMotion.y,
+      groundHeight: (x) => isSea(x - self.groundMotion.x) ? -COAST.depth : self.groundMotion.y,
       pointVelocity(p, out) {
         _tmp.copy(p).sub(self.com);
         return out.crossVectors(self.angvel, _tmp).add(self.linvel);
@@ -302,7 +312,7 @@ export class Simulation {
     let touching = false;
     const n = this.craft.body.numColliders();
     for (let i = 0; i < n && !touching; i++) {
-      this.world.contactPair(this.groundCollider, this.craft.body.collider(i), (m) => {
+      for (const gc of this.groundColliders) this.world.contactPair(gc, this.craft.body.collider(i), (m) => {
         // Ignore speculative (predicted, not yet touching) contacts from soft CCD.
         for (let j = 0; j < m.numContacts() && !touching; j++) if (m.contactDist(j) < 0.02) touching = true;
       });
@@ -423,9 +433,11 @@ export class Simulation {
       }
     });
     this.craft.updateSoftCcd(this.dt);
+    this.planetForces();
 
     this.world.step(this.events);
     this.readBodyState();
+    this.wrapAround();
     const resets = this.explosionResets;
     this.guardAgainstExplosion();
     // After an explosion reset the step's contacts belong to a craft that's gone: drop them.
@@ -624,6 +636,46 @@ export class Simulation {
   }
 
   /** Break a part off: debris body, failure record, structure version bump. */
+  /**
+   * The planet in a flat frame: the world's gravity is the surface value, so add back what
+   * altitude takes away ((R / (R + h))²) plus the centripetal lift v_h² / (R + h) of flying
+   * around a sphere. At ~280 m/s near the ground (less higher up) the craft is in orbit.
+   */
+  private planetForces(): void {
+    const R = PLANET.radius;
+    const lift = (y: number, vx: number, vz: number) => {
+      const r = R + Math.max(0, y);
+      return PLANET.gravity - PLANET.gravity * (R / r) ** 2 + (vx * vx + vz * vz) / r;
+    };
+    const b = this.craft.body;
+    b.addForce({ x: 0, y: b.mass() * lift(this.position.y, this.linvel.x, this.linvel.z), z: 0 }, true);
+    for (const d of this.debris) {
+      const t = d.body.translation();
+      const v = d.body.linvel();
+      d.body.applyImpulse({ x: 0, y: d.body.mass() * lift(t.y, v.x, v.z) * this.dt, z: 0 }, true);
+    }
+  }
+
+  /** Crossing a wrap edge: shift the craft and its debris by one circumference. */
+  private wrapAround(): void {
+    const half = PLANET.circumference / 2;
+    const sx = this.position.x > half ? -PLANET.circumference : this.position.x < -half ? PLANET.circumference : 0;
+    const sz = this.position.z > half ? -PLANET.circumference : this.position.z < -half ? PLANET.circumference : 0;
+    if (!sx && !sz) return;
+    const shift = (b: RAPIER.RigidBody) => {
+      const t = b.translation();
+      b.setTranslation({ x: t.x + sx, y: t.y, z: t.z + sz }, true);
+    };
+    shift(this.craft.body);
+    for (const d of this.debris) shift(d.body);
+    this.prevPosition.x += sx;
+    this.prevPosition.z += sz;
+    this.wrapShift.set(sx, 0, sz);
+    this.wrapCount++;
+    this.readBodyState();
+    this.staticWorld.stream(this.position.x, this.position.z, true);
+  }
+
   /**
    * Tail-strike protection (as on fly-by-wire airliners): while the main wheels are on the
    * ground, nose-up elevator fades out as the pitch (plus 0.3 s of pitch rate) nears the

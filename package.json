@@ -21,6 +21,7 @@
     "events": "node --experimental-transform-types --no-warnings scripts/events.ts",
     "ocean": "node --experimental-transform-types --no-warnings scripts/ocean.ts",
     "hazards": "node --experimental-transform-types --no-warnings scripts/hazards.ts",
+    "planet": "node --experimental-transform-types --no-warnings scripts/planet.ts",
     "raymode": "node --experimental-transform-types --no-warnings scripts/raymode.ts"
   },
   "repository": {

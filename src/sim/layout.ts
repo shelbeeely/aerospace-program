@@ -1,7 +1,26 @@
+/**
+ * The Grid is a small planet. Physics runs in a flat frame that wraps around every
+ * `circumference` metres in x and z (fly far enough and you are back where you started);
+ * gravity weakens with altitude and horizontal speed gives the v²/(R+h) lift of flying around a
+ * sphere, so orbits are real. The renderer bends everything around a sphere under the camera.
+ */
+export const PLANET = {
+  radius: 8000,
+  circumference: 2 * Math.PI * 8000,
+  /** Surface gravity (m/s²); falls off as (R / (R + h))². */
+  gravity: 9.81,
+} as const;
+
+/** Wrap a flat coordinate into [-C/2, C/2). */
+export const wrapCoord = (v: number) => {
+  const c = PLANET.circumference;
+  return v - c * Math.floor((v + c / 2) / c);
+};
+
 /** Static world layout shared by the simulation and the renderer. */
 export const LAYOUT = {
-  /** Ground is a square of this size (m), top surface at y = 0. */
-  groundSize: 10_000,
+  /** Ground: the whole planet (one circumference square, wrapping), top surface at y = 0. */
+  groundSize: 2 * Math.PI * 8000,
   runway: {
     length: 1400,
     width: 30,
@@ -35,7 +54,13 @@ export const TOWN = {
 } as const;
 
 /** Coast is east of all runway and town paths; ocean floor lies below the waves. */
-export const COAST = { x: 2500, seaLevel: -1.8, depth: 80 } as const;
+export const COAST = { x: 2500, width: 9000, seaLevel: -1.8, depth: 80 } as const;
+
+/** True over the ocean band (x from the coast to coast + width, wrapping). */
+export function isSea(x: number): boolean {
+  const w = wrapCoord(x);
+  return w > COAST.x && w < COAST.x + COAST.width;
+}
 
 /**
  * The Grid: one city covering all the land (west edge to the coast), seeded. Several downtown

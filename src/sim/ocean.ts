@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { Craft } from '../craft/Craft.ts';
 import { partQuaternion } from '../craft/massProperties.ts';
 import type { ShapeDef } from '../craft/types.ts';
-import { COAST } from './layout.ts';
+import { COAST, isSea } from './layout.ts';
 
 /** Shared CPU/TSL Gerstner waves. Directions are unit XZ vectors; amplitudes are metres. */
 export const OCEAN_WAVES = [
@@ -82,7 +82,7 @@ export class Ocean {
       const volume = dimensions(part.shape, size);
       centre.set(...part.position).applyQuaternion(worldRotation).add(position);
       // No water work on land (the broad phase also avoids spending waves on runway tests).
-      if (centre.x + size.length() * 0.5 <= COAST.x) continue;
+      if (!isSea(centre.x - size.length() * 0.5) && !isSea(centre.x + size.length() * 0.5)) continue;
       partRotation.copy(partQuaternion(part)).premultiply(worldRotation);
       // Each sample represents one eighth of the displaced volume and half the part height.
       const vertical = Math.max(0.05, size.y * Math.abs(new THREE.Vector3(0, 1, 0).applyQuaternion(partRotation).y)
@@ -91,7 +91,7 @@ export class Ocean {
       let slam = 0;
       for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
         point.set(sx * size.x / 4, sy * size.y / 4, sz * size.z / 4).applyQuaternion(partRotation).add(centre);
-        if (point.x <= COAST.x) continue;
+        if (!isSea(point.x)) continue;
         const fraction = THREE.MathUtils.clamp((this.height(point.x, point.z, time) - point.y) / (vertical * 0.5) + 0.5, 0, 1);
         if (fraction === 0) continue;
         const displacedMass = 1025 * volume / 8 * fraction;
