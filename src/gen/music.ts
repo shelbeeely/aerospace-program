@@ -9,10 +9,21 @@ export interface MusicResult {
   text: string;
 }
 
+/** Genre presets: the model follows concrete instrumentation far better than a genre name. */
+export const MUSIC_STYLES: Record<string, { label: string; prompt: string }> = {
+  synthwave: { label: 'Synthwave', prompt: 'Synthwave / retrowave: warm analog polysynth pads, pulsing arpeggiated sawtooth bass, gated-reverb snare, LinnDrum-style beat, soaring lead synth melody, 80s retro-futurist night drive, 105 BPM' },
+  outrun: { label: 'Outrun', prompt: 'Outrun: fast driving 80s synth music, octave-bouncing bass, bright brassy synth stabs, punchy gated drums, sunset-highway energy, 118 BPM' },
+  darksynth: { label: 'Darksynth', prompt: 'Darksynth: heavy distorted analog bass, ominous minor-key arpeggios, cold digital pads, hard-hitting drum machine, cyberpunk tension, 100 BPM' },
+  grid: { label: 'Grid ambient', prompt: 'Ambient electronic in a vast digital world: slow evolving glassy synth pads, sparkling arpeggios, deep sub bass, light electronic percussion, calm and wide, 90 BPM' },
+  adventure: { label: 'Flying adventure', prompt: 'Breezy, optimistic orchestral-electronic flying adventure theme' },
+};
+
 export interface MusicRequest {
   model: string;
   fallbacks?: string[];
   prompt: string;
+  /** A MUSIC_STYLES key (default synthwave); the free-text prompt adds to it. */
+  style?: string;
   /** Optional context so the track fits what's on screen. */
   craftName?: string;
   signal?: AbortSignal;
@@ -32,8 +43,8 @@ export async function composeMusic(client: OpenRouter, req: MusicRequest): Promi
       {
         role: 'user',
         content:
-          `Instrumental soundtrack for a flying game${req.craftName ? ` (the player is flying "${req.craftName}")` : ''}. ` +
-          `${req.prompt}. Loopable, no vocals.`,
+          `Instrumental soundtrack for a neon flying game set inside a computer world${req.craftName ? ` (the player is flying "${req.craftName}")` : ''}. ` +
+          `${req.style ? `${MUSIC_STYLES[req.style]?.prompt ?? req.style}. ` : ''}${req.prompt ? `${req.prompt}. ` : ''}Loopable, no vocals.`,
       },
     ],
   });
