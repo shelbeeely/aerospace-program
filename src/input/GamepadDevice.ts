@@ -16,6 +16,7 @@ export const GAMEPAD_HELP: Record<'airplane' | 'rotorcraft', Array<[string, stri
     ['A (hold)', 'brakes'],
     ['D-pad ↑/↓', 'trim nose down / up'],
     ['L3', 'reset trim'],
+    ['X', 'flaps (cycle detents)'],
   ],
   rotorcraft: [
     ['Left stick ↕', 'collective (centred = hover)'],
@@ -28,7 +29,7 @@ export const GAMEPAD_HELP: Record<'airplane' | 'rotorcraft', Array<[string, stri
 export const GAMEPAD_COMMON: Array<[string, string]> = [
   ['Y', 'reset'],
   ['B', 'camera'],
-  ['D-pad ←/→ or X', 'previous / next craft'],
+  ['D-pad ←/→', 'previous / next craft'],
   ['Start', 'Studio'],
   ['Back / View', 'help'],
 ];
@@ -128,7 +129,8 @@ export class GamepadDevice implements InputDevice {
     };
     edge(B.Y, 'reset');
     edge(B.B, 'camera');
-    edge(B.X, 'nextVehicle');
+    // X cycles flaps (airplanes); craft cycling stays on the D-pad.
+    if (pressed(B.X) && !this.prevButtons[B.X]) raw.flapCycle = true;
     edge(B.RIGHT, 'nextVehicle');
     edge(B.LEFT, 'prevVehicle');
     edge(B.START, 'studio');

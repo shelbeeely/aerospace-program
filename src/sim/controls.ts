@@ -15,10 +15,12 @@ export interface ControlInputs {
   throttle: number;
   /** 0..1 */
   brake: number;
+  /** 0..1 flap setting (0 = up, 1 = fully down). Optional; defaults to 0. */
+  flaps?: number;
 }
 
 export function neutralControls(): ControlInputs {
-  return { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 0 };
+  return { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 0, flaps: 0 };
 }
 
 /**
@@ -38,5 +40,6 @@ export function sanitizeControls(c: ControlInputs): ControlInputs {
     yaw: clamp(c.yaw, -1, 1),
     throttle: clamp(c.throttle, 0, 1),
     brake: clamp(c.brake, 0, 1),
+    flaps: clamp(c.flaps ?? 0, 0, 1),
   };
 }

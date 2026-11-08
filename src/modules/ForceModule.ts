@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type { ControlInputs } from '../sim/controls.ts';
-import type { Atmosphere } from '../sim/atmosphere.ts';
+import type { AirState, Atmosphere, CloudSample, Precipitation } from '../sim/atmosphere.ts';
 
 /** Category used for debug vector colours. */
 export type ForceKind = 'lift' | 'drag' | 'thrust' | 'wheel' | 'buoyancy';
@@ -31,8 +31,16 @@ export interface StepContext {
   com: THREE.Vector3;
   linvel: THREE.Vector3;
   angvel: THREE.Vector3;
-  /** Air density at an altitude (m). */
+  /** Air density at an altitude (m), including temperature, pressure and humidity. */
   airDensity(altitude: number): number;
+  /** Full air state (temperature, pressure, density, speed of sound, viscosity) at an altitude. */
+  air(altitude: number): AirState;
+  /** Rain/snow falling through a world point (shared object: copy what you need). */
+  precipitation(worldPoint: THREE.Vector3): Precipitation;
+  /** Cloud at a world point (shared object). */
+  cloud(worldPoint: THREE.Vector3): CloudSample;
+  /** Runway/ground wetness 0..1 (standing water builds up in rain and drains after). */
+  groundWetness: number;
   /** Terrain height under a point (flat ground for now; terrain later). */
   groundHeight(x: number, z: number): number;
   /** Velocity of a world point rigidly attached to the body (includes angular contribution). */

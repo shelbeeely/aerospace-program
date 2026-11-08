@@ -18,7 +18,7 @@ export interface DesignMetrics {
   wingLoading: number;
   /** Rough 1g stall speed estimate (m/s). */
   stallSpeed: number;
-  controls: { pitch: boolean; roll: boolean; yaw: boolean };
+  controls: { pitch: boolean; roll: boolean; yaw: boolean; flaps: boolean };
   wheels: number;
 }
 
@@ -79,7 +79,7 @@ export function analyzeDesign(sim: Simulation): DesignMetrics {
   const weight = mp.mass * TUNING.gravity;
   const thrust = craft.engines.reduce((t, e) => t + e.def.maxThrust, 0);
   const clMax = area > 0 ? clMaxArea / area : 1;
-  const ctl = { pitch: false, roll: false, yaw: false };
+  const ctl = { pitch: false, roll: false, yaw: false, flaps: false };
   for (const s of craft.aeroSurfaces) if (s.def.control) ctl[s.def.control.channel] = true;
   return {
     mass: Math.round(mp.mass),

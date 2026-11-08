@@ -61,8 +61,10 @@ export function validateCraft(input: unknown): string[] {
     switch (m.type) {
       case 'aero':
         if (!isNum(m.span, 0.01, 200) || !isNum(m.chord, 0.01, 200)) e.push(`${at}: span/chord invalid`);
+        if (m.camberDeg !== undefined && !isNum(m.camberDeg, -10, 10)) e.push(`${at}: camberDeg -10..10`);
+        if (m.cm0 !== undefined && !isNum(m.cm0, -0.5, 0.5)) e.push(`${at}: cm0 -0.5..0.5`);
         if (m.control) {
-          if (!['pitch', 'roll', 'yaw'].includes(m.control.channel)) e.push(`${at}: bad control channel`);
+          if (!['pitch', 'roll', 'yaw', 'flaps'].includes(m.control.channel)) e.push(`${at}: bad control channel`);
           if (!isNum(m.control.maxDeflectionDeg, 0, 60)) e.push(`${at}: maxDeflectionDeg 0..60`);
           if (!isNum(m.control.gain, -1, 1)) e.push(`${at}: control gain -1..1`);
         }
@@ -76,6 +78,10 @@ export function validateCraft(input: unknown): string[] {
         break;
       case 'drag':
         if (!isNum(m.cdA, 0, 1000)) e.push(`${at}: cdA invalid`);
+        break;
+      case 'body':
+        if (!isNum(m.length, 0.05, 300) || !isNum(m.diameter, 0.01, 50)) e.push(`${at}: body length/diameter invalid`);
+        if (m.cdFront !== undefined && !isNum(m.cdFront, 0, 2)) e.push(`${at}: cdFront 0..2`);
         break;
       case 'fuel':
         if (!isNum(m.capacity, 0, 1e5)) e.push(`${at}: fuel capacity 0..100000 kg`);

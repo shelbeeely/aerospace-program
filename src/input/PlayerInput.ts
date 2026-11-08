@@ -23,6 +23,9 @@ export class PlayerInput implements ControlSource {
   readonly devices: InputDevice[];
   throttle = 0;
   trim = 0;
+  /** Flap detent 0..FLAP_DETENTS (0 = up). */
+  flapNotch = 0;
+  static readonly FLAP_DETENTS = 3;
   /** Control layout for the current craft (rotorcraft use mode-2 sticks). */
   profile: ControlProfile = 'airplane';
   settings: InputSettings = loadInputSettings();
@@ -34,7 +37,7 @@ export class PlayerInput implements ControlSource {
   }
 
   static emptyRaw(): RawInput {
-    return { pitch: 0, roll: 0, yaw: 0, throttleRate: 0, throttleSet: null, brake: 0, trimRate: 0 };
+    return { pitch: 0, roll: 0, yaw: 0, throttleRate: 0, throttleSet: null, brake: 0, trimRate: 0, flapSteps: 0, flapCycle: false };
   }
 
   updateSettings(patch: Partial<InputSettings>): void {
@@ -48,6 +51,9 @@ export class PlayerInput implements ControlSource {
     const ctx = { profile: this.profile, throttle: this.throttle, settings: this.settings };
     for (const d of this.devices) d.read(this.raw, ctx);
     if (this.raw.throttleSet !== null) this.throttle = this.raw.throttleSet;
+    const max = PlayerInput.FLAP_DETENTS;
+    if (this.raw.flapCycle) this.flapNotch = (this.flapNotch + 1) % (max + 1);
+    this.flapNotch = Math.max(0, Math.min(max, this.flapNotch + this.raw.flapSteps));
     const actions: Action[] = [];
     for (const d of this.devices) d.drainActions(actions);
     return actions;
@@ -62,6 +68,7 @@ export class PlayerInput implements ControlSource {
   reset(): void {
     // Rotorcraft start with the collective lever down too; they spin up as you raise it.
     this.throttle = 0;
+    this.flapNotch = 0;
     this.smoothed.pitch = this.smoothed.roll = this.smoothed.yaw = 0;
   }
 
@@ -80,6 +87,7 @@ export class PlayerInput implements ControlSource {
       yaw: this.smoothed.yaw,
       throttle: this.throttle,
       brake: Math.min(1, r.brake),
+      flaps: this.flapNotch / PlayerInput.FLAP_DETENTS,
     };
   }
 }

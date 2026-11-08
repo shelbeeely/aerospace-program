@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { ModuleDef, PartDef } from '../craft/types.ts';
 import { AeroSurface } from './AeroSurface.ts';
+import { Body } from './Body.ts';
 import { Buoyancy } from './Buoyancy.ts';
 import { Drag } from './Drag.ts';
 import { Engine } from './Engine.ts';
@@ -33,6 +34,8 @@ export function createModule(
       return new Wheel(part.id, def, position, rotation);
     case 'drag':
       return new Drag(part.id, def, position);
+    case 'body':
+      return new Body(part.id, def, position, rotation);
     case 'fuel':
       return new FuelTank(part.id, def, position);
     case 'buoyancy':

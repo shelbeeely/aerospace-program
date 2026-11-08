@@ -28,7 +28,8 @@ export const TEST_PLANE: CraftDef = {
       position: [0, 0, 0],
       shape: { type: 'box', size: [1.1, 1.2, 4.2] },
       color: '#e8e4da',
-      modules: [{ type: 'drag', cdA: 0.32 }],
+      // Slender-body fuselage: axial drag, crossflow drag, destabilising Munk moment.
+      modules: [{ type: 'body', length: 4.2, diameter: 1.15, cdFront: 0.25 }],
     },
     {
       id: 'tailboom',
@@ -60,14 +61,24 @@ export const TEST_PLANE: CraftDef = {
         { type: 'fuel', offset: [1.15, 0, 0], capacity: 30 },
         // Inboard panel: more incidence than the tip (washout), so the root stalls first and
         // the ailerons keep working through the stall, as on real trainers.
-        { type: 'aero', offset: [1.15, 0, 0], span: 2.3, chord: 1.5, aspectRatio: 7, incidenceDeg: 3.5 },
+        {
+          type: 'aero',
+          offset: [1.15, 0, 0],
+          span: 2.3,
+          chord: 1.5,
+          aspectRatio: 7,
+          incidenceDeg: 1.5,
+          camberDeg: 2, // NACA 2412-like: lifts at zero AoA, Cm0 ≈ -0.05
+          control: { channel: 'flaps', maxDeflectionDeg: 30, gain: 1, spanFraction: 0.9, chordFraction: 0.25 },
+        },
         {
           type: 'aero',
           offset: [-1.15, 0, 0],
           span: 2.3,
           chord: 1.5,
           aspectRatio: 7,
-          incidenceDeg: 0.5,
+          incidenceDeg: -1.5,
+          camberDeg: 2,
           control: { channel: 'roll', maxDeflectionDeg: 18, gain: 1, spanFraction: 0.9, chordFraction: 0.28 },
         },
       ],
@@ -85,14 +96,24 @@ export const TEST_PLANE: CraftDef = {
         { type: 'fuel', offset: [-1.15, 0, 0], capacity: 30 },
         // Inboard panel: more incidence than the tip (washout), so the root stalls first and
         // the ailerons keep working through the stall, as on real trainers.
-        { type: 'aero', offset: [-1.15, 0, 0], span: 2.3, chord: 1.5, aspectRatio: 7, incidenceDeg: 3.5 },
+        {
+          type: 'aero',
+          offset: [-1.15, 0, 0],
+          span: 2.3,
+          chord: 1.5,
+          aspectRatio: 7,
+          incidenceDeg: 1.5,
+          camberDeg: 2, // NACA 2412-like: lifts at zero AoA, Cm0 ≈ -0.05
+          control: { channel: 'flaps', maxDeflectionDeg: 30, gain: 1, spanFraction: 0.9, chordFraction: 0.25 },
+        },
         {
           type: 'aero',
           offset: [1.15, 0, 0],
           span: 2.3,
           chord: 1.5,
           aspectRatio: 7,
-          incidenceDeg: 0.5,
+          incidenceDeg: -1.5,
+          camberDeg: 2,
           control: { channel: 'roll', maxDeflectionDeg: 18, gain: -1, spanFraction: 0.9, chordFraction: 0.28 },
         },
       ],

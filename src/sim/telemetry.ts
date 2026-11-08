@@ -40,5 +40,24 @@ export interface Telemetry {
   /** 0..1, how stalled the main wings are. */
   stall: number;
   /** Current control inputs actually applied. */
-  controls: { pitch: number; roll: number; yaw: number; throttle: number; brake: number };
+  controls: { pitch: number; roll: number; yaw: number; throttle: number; brake: number; flaps?: number };
+  /** Mach number (airspeed / local speed of sound). */
+  mach: number;
+  /** Outside air temperature (°C). */
+  oat: number;
+  /** Density altitude (m): how high the air "feels" to wings and engines. */
+  densityAltitude: number;
+  /** Weather at the craft. */
+  weather: {
+    /** Precipitation rate mm/h and kind. */
+    precipitation: number;
+    precipitationKind: 'none' | 'rain' | 'snow';
+    inCloud: boolean;
+    /** Max ice thickness on any surface/rotor (mm). */
+    iceMm: number;
+    /** Water clinging to the airframe (kg). */
+    waterKg: number;
+    /** Runway wetness 0..1. */
+    groundWetness: number;
+  };
 }

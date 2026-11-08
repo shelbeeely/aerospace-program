@@ -3,13 +3,14 @@ import type { Action, InputDevice, RawInput } from './types.ts';
 const GAME_CODES = new Set([
   'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyB', 'KeyR', 'KeyC', 'KeyZ', 'KeyX',
   'KeyT', 'KeyG', 'KeyH', 'KeyY', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'F3',
-  'Space', 'KeyN', 'BracketLeft', 'BracketRight', 'KeyM', 'KeyP', 'KeyK', 'KeyF',
+  'Space', 'KeyN', 'BracketLeft', 'BracketRight', 'KeyM', 'KeyP', 'KeyK', 'KeyF', 'Period', 'Comma', 'F6', 'F7',
 ]);
 
 export class KeyboardDevice implements InputDevice {
   private readonly down = new Set<string>();
   private actions: Action[] = [];
   private throttleSet: number | null = null;
+  private flapSteps = 0;
 
   constructor(target: Window = window) {
     target.addEventListener('keydown', (e) => {
@@ -32,6 +33,8 @@ export class KeyboardDevice implements InputDevice {
         case 'KeyP': this.actions.push('screenshot'); break;
         case 'KeyK': this.actions.push('record'); break;
         case 'KeyF': this.actions.push('mouseFlight'); break;
+        case 'Period': case 'F7': this.flapSteps++; break; // flaps down a notch
+        case 'Comma': case 'F6': this.flapSteps--; break; // flaps up a notch
         case 'KeyZ': this.throttleSet = 1; break;
         case 'KeyX': this.throttleSet = 0; break;
       }
@@ -54,6 +57,8 @@ export class KeyboardDevice implements InputDevice {
     raw.throttleRate += (up ? 1 : 0) - (dn ? 1 : 0);
     if (this.down.has('KeyB') || this.down.has('Space')) raw.brake = 1;
     raw.trimRate += this.axis('KeyT', 'KeyG'); // T = nose-down trim, G = nose-up trim
+    raw.flapSteps += this.flapSteps;
+    this.flapSteps = 0;
     if (this.throttleSet !== null) {
       raw.throttleSet = this.throttleSet;
       this.throttleSet = null;

@@ -16,6 +16,7 @@ export class Hud {
     thrBar: $('h-thr-bar'),
     spoolBar: $('h-spool-bar'),
     trim: $('h-trim'),
+    flaps: $('h-flaps'),
     flags: $('h-flags'),
     wind: $('h-wind'),
     windArrow: $('h-wind-arrow'),
@@ -45,6 +46,8 @@ export class Hud {
     this.el.thrBar.style.width = `${t.throttle * 100}%`;
     this.el.spoolBar.style.width = `${t.engineSpool * 100}%`;
     this.set(this.el.trim, (trim >= 0 ? '+' : '') + (trim * 100).toFixed(0));
+    const flaps = t.controls.flaps ?? 0;
+    this.set(this.el.flaps, flaps <= 0 ? 'UP' : `${Math.round(flaps * 30)}°`);
     // Wind: speed, and where it comes from relative to the nose (arrow points where it blows).
     const ws = Math.hypot(t.wind[0], t.wind[2]);
     this.set(this.el.wind, ws < 0.5 ? 'calm' : `${(ws * MS_TO_KT).toFixed(0)} kt`);

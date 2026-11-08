@@ -5,7 +5,7 @@ import type { CraftDef, PartDef } from '../craft/types.ts';
 import { validateCraft } from '../craft/validate.ts';
 import type { DebugForce, ForceKind, StepContext } from '../modules/ForceModule.ts';
 import { TUNING } from '../tuning.ts';
-import { airDensity, Atmosphere, calmWeather, type WeatherSettings } from './atmosphere.ts';
+import { Atmosphere, calmWeather, densityAltitude, type CloudSample, type Precipitation, type WeatherSettings } from './atmosphere.ts';
 import { neutralControls, sanitizeControls, type ControlInputs } from './controls.ts';
 import { LAYOUT } from './layout.ts';
 import type { Telemetry } from './telemetry.ts';
@@ -76,6 +76,10 @@ export class Simulation {
   private gForceFiltered = 1;
   private readonly ctx: StepContext;
   private readonly loadsThisStep = new Map<string, number>();
+  private readonly precip: Precipitation = { rate: 0, kind: 'none', waterContent: 0, velocity: new THREE.Vector3() };
+  private readonly cloudSample: CloudSample = { inCloud: false, liquidWater: 0 };
+  /** Standing water on the ground 0..1 (builds up in rain, drains when it stops). */
+  groundWetness = 0;
   private readonly filteredLoads = new Map<string, number>();
 
   constructor(craftDef: CraftDef, weather: WeatherSettings = calmWeather()) {
@@ -107,7 +111,11 @@ export class Simulation {
       com: this.com,
       linvel: this.linvel,
       angvel: this.angvel,
-      airDensity,
+      airDensity: (alt) => this.atmosphere.density(alt),
+      air: (alt) => this.atmosphere.air(alt),
+      precipitation: (p) => this.atmosphere.precipitationAt(p, 0, this.precip),
+      cloud: (p) => this.atmosphere.cloudAt(p, 0, this.cloudSample),
+      groundWetness: 0,
       hasFuelSystem: false,
       groundHeight: () => 0,
       pointVelocity(p, out) {
@@ -201,6 +209,7 @@ export class Simulation {
     const { position, rotation } = this.spawnPose(this.craft);
     this.craft.reset(position, rotation);
     this.atmosphere.restart();
+    this.settleGroundWater();
     this.controls = neutralControls();
     this.prevVelocity.set(0, 0, 0);
     this.gForceFiltered = 1;
@@ -256,6 +265,7 @@ export class Simulation {
     this.guardAgainstExplosion();
     this.checkStructure();
     this.craft.updateFuelMass();
+    this.updateWeather();
 
     // Load factor: (acceleration + gravity) projected on craft up, in g.
     _tmp.copy(this.linvel).sub(this.prevVelocity).divideScalar(this.dt);
@@ -267,6 +277,37 @@ export class Simulation {
     this.time += this.dt;
     this.steps++;
     this.lastStepMs = performance.now() - t0;
+  }
+
+  private readonly groundProbe = new THREE.Vector3();
+  /** Standing water on the runway (mm). */
+  private waterDepth = 0;
+
+  /**
+   * Weather bookkeeping each step: water film / ice mass on the airframe, and standing water on
+   * the ground (half the rain runs off, the rest drains over ~10 min; 3 mm counts as flooded).
+   */
+  private updateWeather(): void {
+    const p = this.atmosphere.precipitationAt(this.com, 0, this.precip);
+    _tmp.copy(this.linvel);
+    const wind = this.atmosphere.windAt(this.com, 0, _tmp2);
+    const airspeed = _tmp.sub(wind).length();
+    this.craft.updateWeatherMass(p.rate, p.kind, airspeed, this.dt);
+    this.groundProbe.set(this.com.x, 0.5, this.com.z);
+    const g = this.atmosphere.precipitationAt(this.groundProbe, 0, this.precip);
+    const inflow = g.kind === 'rain' ? (0.5 * g.rate) / 3600 : 0;
+    this.waterDepth = Math.max(0, this.waterDepth + (inflow - this.waterDepth / 600) * this.dt);
+    this.groundWetness = Math.min(1, this.waterDepth / 3);
+    (this.ctx as { groundWetness: number }).groundWetness = this.groundWetness;
+  }
+
+  /** Runway water at equilibrium with the current rain (used on reset / weather change). */
+  settleGroundWater(): void {
+    this.groundProbe.set(this.com.x, 0.5, this.com.z);
+    const g = this.atmosphere.precipitationAt(this.groundProbe, 0, this.precip);
+    this.waterDepth = g.kind === 'rain' ? ((0.5 * g.rate) / 3600) * 600 : 0;
+    this.groundWetness = Math.min(1, this.waterDepth / 3);
+    (this.ctx as { groundWetness: number }).groundWetness = this.groundWetness;
   }
 
   /** Filter each part's load; anything over its strength breaks off and becomes debris. */
@@ -350,6 +391,9 @@ export class Simulation {
 
     const r = (x: number, d = 2) => Math.round(x * 10 ** d) / 10 ** d;
     const cap = craft.fuelCapacity;
+    const air = this.atmosphere.air(this.com.y);
+    const precip = this.atmosphere.precipitationAt(this.com, 0);
+    const cloud = this.atmosphere.cloudAt(this.com, 0);
     return {
       time: r(this.time, 3),
       position: [r(this.position.x), r(this.position.y), r(this.position.z)],
@@ -372,6 +416,17 @@ export class Simulation {
       stall: r(stallW > 0 ? stallSum / stallW : 0),
       brokenParts: [...craft.detached],
       controls: { ...this.controls },
+      mach: r(speed / air.speedOfSound, 3),
+      oat: r(air.temperature - 273.15, 1),
+      densityAltitude: Math.round(densityAltitude(air.density)),
+      weather: {
+        precipitation: r(precip.rate, 1),
+        precipitationKind: precip.kind,
+        inCloud: cloud.inCloud,
+        iceMm: r(craft.maxIce * 1000, 1),
+        waterKg: r(craft.water, 2),
+        groundWetness: r(this.groundWetness, 2),
+      },
     };
   }
 

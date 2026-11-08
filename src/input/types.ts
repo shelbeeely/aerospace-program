@@ -12,6 +12,9 @@ export interface RawInput {
   throttleSet: number | null;
   brake: number;
   trimRate: number; // -1 nose down .. +1 nose up
+  /** Flap detent steps this frame: +1 = one notch down, -1 = one notch up, 'cycle' = next notch (wraps). */
+  flapSteps: number;
+  flapCycle: boolean;
 }
 
 export type Action =

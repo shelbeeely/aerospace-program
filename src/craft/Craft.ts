@@ -99,8 +99,48 @@ export class Craft {
     return this.modules.find((m): m is FlightController => m instanceof FlightController);
   }
 
-  // ---------------------------------------------------------------- mass & fuel
-  /** Parts plus fuel (as point masses at each tank) -> mass properties. */
+  // ---------------------------------------------------------------- mass, fuel, water, ice
+  /** Water clinging to the airframe in rain (kg). */
+  water = 0;
+
+  /** Total external surface area of the attached parts (m²): where rain film collects. */
+  get wettedArea(): number {
+    let a = 0;
+    for (const p of this.parts) {
+      const s = p.shape;
+      if (s.type === 'box') a += 2 * (s.size[0] * s.size[1] + s.size[1] * s.size[2] + s.size[0] * s.size[2]);
+      else if (s.type === 'sphere') a += 4 * Math.PI * s.radius * s.radius;
+      else a += 2 * Math.PI * s.radius * (s.radius + s.length);
+    }
+    return a;
+  }
+
+  /** Thickest ice on any surface or rotor blade (m). */
+  get maxIce(): number {
+    let m = 0;
+    for (const s of this.aeroSurfaces) m = Math.max(m, s.ice);
+    for (const r of this.rotors) m = Math.max(m, r.ice);
+    return m;
+  }
+
+  private get iceMass(): number {
+    return this.aeroSurfaces.reduce((a, s) => a + s.iceMass, 0) + this.rotors.reduce((a, r) => a + r.iceMass, 0);
+  }
+
+  /**
+   * Rain wets every surface: a film ~0.05-0.2 mm thick (heavier rain, thicker film) builds up
+   * over ~20 s and dries over minutes (faster with airflow). Snow sticks less. Ice mass comes
+   * from the surfaces. Mass properties update once the change is worth it.
+   */
+  updateWeatherMass(precipRate: number, kind: 'none' | 'rain' | 'snow', airspeed: number, dt: number): void {
+    const film = kind === 'none' ? 0 : (0.05e-3 + 0.15e-3 * Math.min(1, precipRate / 50)) * (kind === 'snow' ? 0.5 : 1);
+    const target = film * this.wettedArea * 1000;
+    const tau = target > this.water ? 20 : 240 / (1 + airspeed / 20);
+    this.water += (target - this.water) * (1 - Math.exp(-dt / tau));
+    if (Math.abs(this.massAtLastUpdate - (this.massPartsOnly() + this.fuel + this.water + this.iceMass)) > 0.3) this.applyMass();
+  }
+
+  /** Parts plus fuel, water film and ice (as point masses) -> mass properties. */
   private computeMass(): MassProperties {
     const fuelMasses: PartDef[] = this.fuelTanks
       .filter((t) => t.fuel > 0.01)
@@ -112,7 +152,31 @@ export class Craft {
         shape: { type: 'sphere', radius: 0.2 },
         color: '#000',
       }));
-    return computeMassProperties([...this.parts, ...fuelMasses], this.comOffset);
+    const extra: PartDef[] = [];
+    const point = (id: string, mass: number, pos: THREE.Vector3): PartDef => ({
+      id,
+      kind: id,
+      mass,
+      position: [pos.x, pos.y, pos.z],
+      shape: { type: 'sphere', radius: 0.2 },
+      color: '#000',
+    });
+    if (this.water > 0.01) {
+      // Spread over the airframe: put it at the parts' area-weighted centre.
+      const c = new THREE.Vector3();
+      let w = 0;
+      for (const p of this.parts) {
+        const m = Math.max(0.01, p.mass);
+        c.x += p.position[0] * m;
+        c.y += p.position[1] * m;
+        c.z += p.position[2] * m;
+        w += m;
+      }
+      extra.push(point('water', this.water, c.divideScalar(w)));
+    }
+    for (const s of this.aeroSurfaces) if (s.iceMass > 0.01) extra.push(point(`ice:${s.partId}`, s.iceMass, s.localPosition));
+    for (const r of this.rotors) if (r.iceMass > 0.001) extra.push(point(`ice:${r.partId}`, r.iceMass, r.localPosition));
+    return computeMassProperties([...this.parts, ...fuelMasses, ...extra], this.comOffset);
   }
 
   private applyMass(): void {
@@ -246,7 +310,8 @@ export class Craft {
 
   /**
    * Craft-local centre of lift for pitch (static neutral point estimate): lift-slope-weighted
-   * average of the surfaces, weighted by how horizontal each surface is. If the CoM is behind
+   * average of the surfaces, weighted by how horizontal each surface is and reduced for the
+   * downwash each one sits in. If the CoM is behind
    * this point the craft is pitch-unstable.
    */
   centerOfLift(out = new THREE.Vector3()): THREE.Vector3 {
@@ -255,7 +320,8 @@ export class Craft {
     const n = new THREE.Vector3();
     for (const s of this.aeroSurfaces) {
       const horiz = Math.abs(s.localNormal(n).y);
-      const wi = s.liftSlope * s.area * horiz;
+      // Downwash from surfaces ahead reduces this surface's effective lift slope by (1 - dε/dα).
+      const wi = s.liftSlope * s.area * horiz * Math.max(0, 1 - s.downwashGradient);
       out.addScaledVector(s.localPosition, wi);
       w += wi;
     }
@@ -310,7 +376,8 @@ export class Craft {
     this.body.resetForces(true);
     this.body.resetTorques(true);
     for (const m of this.modules) m.reset();
-    if (this.fuelTanks.length) this.applyMass();
+    this.water = 0;
+    this.applyMass();
   }
 }
 

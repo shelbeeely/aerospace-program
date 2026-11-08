@@ -13,7 +13,7 @@ export type ShapeDef =
   | { type: 'sphere'; radius: number };
 
 /** Which pilot input channel a control surface (or steering) responds to. */
-export type ControlChannel = 'pitch' | 'roll' | 'yaw';
+export type ControlChannel = 'pitch' | 'roll' | 'yaw' | 'flaps';
 
 export interface ControlDef {
   channel: ControlChannel;
@@ -46,7 +46,29 @@ export interface AeroSurfaceDef {
   incidenceDeg?: number;
   cd0?: number;
   stallAngleDeg?: number;
+  /**
+   * Airfoil camber as a zero-lift angle shift (deg): cambered sections lift at zero angle of
+   * attack. ~2 for a NACA 2412-like wing, 0 for symmetric tails and fins.
+   */
+  camberDeg?: number;
+  /** Pitching-moment coefficient about the aerodynamic centre (negative = nose-down). Default -0.025 × camberDeg. */
+  cm0?: number;
+  /** Mach number where wave drag starts to rise (thinner sections: higher). Default 0.72. */
+  criticalMach?: number;
   control?: ControlDef;
+}
+
+/**
+ * Slender body (fuselage, pod, nacelle) along the part's -Z axis: axial drag, viscous crossflow
+ * drag, and the destabilising Munk moment from potential flow that tail fins have to overcome.
+ */
+export interface BodyDef {
+  type: 'body';
+  offset?: Vec3Tuple;
+  length: number;
+  diameter: number;
+  /** Axial drag coefficient on the frontal area. Default 0.2 (streamlined ~0.05-0.1, blunt ~0.5). */
+  cdFront?: number;
 }
 
 /** Thrust along the part's forward (-Z) axis. */
@@ -167,6 +189,7 @@ export type ModuleDef =
   | EngineDef
   | WheelDef
   | DragDef
+  | BodyDef
   | FuelTankDef
   | BuoyancyDef
   | RotorDef

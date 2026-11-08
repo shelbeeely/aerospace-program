@@ -40,6 +40,7 @@ export class TouchDevice implements InputDevice {
   private right: Drag | null = null;
   private brake = false;
   private pendingThrottle: number | null = null;
+  private flapCycle = false;
   private actions: Action[] = [];
   private visible = false;
   private touchSeen = false;
@@ -88,6 +89,7 @@ export class TouchDevice implements InputDevice {
       button('✦', 'Studio', 'studio'),
       button('⚙', 'Debug & weather', 'debug'),
       button('?', 'Help', 'help'),
+      button('FLAP', 'Flaps: next detent', () => (this.flapCycle = true)),
       button('🔊', 'Sound on/off', 'mute'),
       button('📷', 'Screenshot', 'screenshot'),
     );
@@ -195,6 +197,10 @@ export class TouchDevice implements InputDevice {
       raw.pitch += applyExpo(dy / R, expo) * inv; // drag down = stick back = nose up
     }
     if (this.brake) raw.brake = 1;
+    if (this.flapCycle) {
+      raw.flapCycle = true;
+      this.flapCycle = false;
+    }
   }
 
   private updateVisibility(ctx: InputContext): void {

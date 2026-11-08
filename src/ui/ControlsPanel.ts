@@ -9,6 +9,7 @@ const KEYBOARD: Array<[string, string]> = [
   ['Z / X', 'full / cut throttle'],
   ['B or Space', 'brakes'],
   ['T / G, Y', 'trim down / up, reset'],
+  [', / . (F6 / F7)', 'flaps up / down a notch'],
   ['R', 'reset'],
   ['C', 'chase / orbit camera'],
   ['[ / ]', 'previous / next craft'],

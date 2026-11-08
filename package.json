@@ -8,6 +8,7 @@
     "preview": "vite preview",
     "typecheck": "tsc",
     "sim": "node --experimental-transform-types --no-warnings scripts/headless.ts",
+    "weather": "node --experimental-transform-types --no-warnings scripts/weather.ts",
     "design": "node --experimental-transform-types --no-warnings scripts/design.ts"
   },
   "repository": {

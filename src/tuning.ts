@@ -89,6 +89,8 @@ export const TUNING = {
   rollingResistance: 0.02,
   /** Brake friction coefficient (fraction of load) at full brake. */
   brakeFriction: 0.7,
+  /** Dynamic hydroplaning speed on standing water (m/s): 9·√(30 psi) kt for light-aircraft tyres. */
+  hydroplaneSpeed: 25,
   /** Nose-wheel steering is faded out between 0 m/s and this speed down to `steerHighSpeedFactor`. */
   steerFadeSpeed: 30,
   steerHighSpeedFactor: 0.25,
