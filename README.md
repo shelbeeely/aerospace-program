@@ -31,6 +31,8 @@ npm run build          # typecheck + production build
    (`src/gen/craftDesigner.ts → DESIGNER_SYSTEM_PROMPT`).
    With **parallel drafts** (default 2) the designer writes several independent drafts at
    once; each is tested and the best one goes on to repair.
+   Designers may use up to 200 parts (the format itself allows 500); replies get up to 64K
+   tokens, clamped to each model's own output limit.
 2. **Validate and auto-fix.** `validateCraft` rejects malformed or out-of-range data.
    `src/gen/autofix.ts` then fixes the mistakes models make most: control gain signs (checked
    against the torque each surface makes about the CoM) and wheel springs (sized from the
@@ -38,7 +40,7 @@ npm run build          # typecheck + production build
 3. **Flight test.** `src/sim/flightTest.ts` flies the craft headless through a test card: rest
    on the runway, take off, climb to 140 m, turn 90°, then fly hands-off with the elevator
    trimmed. It scores the run out of 100 and writes up actionable issues. About 150 simulated
-   seconds take about half a second.
+   seconds take about 5 s (in a Web Worker in the browser); a 200-part craft about twice that.
 4. **Repair.** The **Engineer** model (a different model) gets the errors or test report and
    fixes the design, until it passes or the round budget runs out.
 5. **Fly.** The best design lands on the runway and in the **hangar** (localStorage). Each

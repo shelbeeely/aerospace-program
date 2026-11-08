@@ -97,7 +97,7 @@ Blimps:
 General:
 - Weather is real: wind, gusts, rain (costs lift and adds water weight), icing in supercooled cloud, thermals and storm downdrafts, wet runways (longer braking, aquaplaning above ~25 m/s). Margins matter.
 - Structures break when overloaded: wings at about 8 g of their share of the weight, gear on very hard landings. Don't give tiny surfaces huge control throws.
-- At most 60 parts.
+- At most 200 parts (most good designs need 10-40). For large craft, write compact JSON without extra whitespace so it fits in one reply.
 
 ## Damage and crashes
 Every part is a grid of 0.25 m voxels. Hard contacts (buildings, the ground, debris) bite voxels out at the contact point; a part keeps its mass, lift and thrust in proportion to the voxels it has left and breaks off below about 35%. A crash that changes the craft's velocity by more than ~30 m/s in a fraction of a second makes it explode (reinforcement raises that a little). Use "reinforce" 1-2 on wing roots, gear and the fuselage of rugged or combat designs, and only where it's worth the weight; most parts need none.
@@ -245,7 +245,8 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
         messages,
         format: 'json',
         temperature,
-        maxTokens: 16000,
+        // Room for a 200-part craft (~250 tokens a part); clamped to each model's own limit.
+        maxTokens: 64000,
         // Designers get room to think; engineers make targeted fixes and must not run out of
         // tokens mid-JSON (free reasoning models will happily think for 40K characters).
         reasoningEffort: role === 'designer' ? 'medium' : 'low',
