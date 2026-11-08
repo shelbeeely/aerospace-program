@@ -41,6 +41,7 @@
     <!-- Hangar mode: craft card and launch button (Studio sits alongside). -->
     <div id="hangar-bar">
       <div id="craft-card" class="panel"></div>
+      <label class="panel">Render <select id="hangar-render-mode"><option value="raster">Raster</option><option value="raytrace">Ray traced</option></select></label>
       <button id="fly-btn" title="Fly this craft (N)">FLY ▸</button>
       <button id="studio-open" class="panel" title="Open the Studio">✦ Studio</button>
     </div>
@@ -59,6 +60,7 @@
         <tr><td>T / G</td><td>trim nose down / up (Y resets)</td></tr>
         <tr><td>R</td><td>reset to runway</td></tr>
         <tr><td>C</td><td>chase / orbit camera</td></tr>
+        <tr><td>P</td><td>save photo (progressive when ray traced)</td></tr>
         <tr><td>F3</td><td>debug forces &amp; stats</td></tr>
         <tr><td>N</td><td>hangar (Studio, pick a craft) / fly</td></tr>
         <tr><td>H</td><td>toggle this help</td></tr>
@@ -71,6 +73,10 @@
     </div>
 
     <div id="debug" class="panel hidden">
+      <h3>Render</h3>
+      <label>Mode <select id="render-mode"><option value="raster">Raster</option><option value="raytrace">Ray traced</option></select></label>
+      <div id="render-status" class="muted small">Raster</div>
+      <p class="muted small">P saves a photo. Ray tracing uses analytic scenery; raster shows all weather and effects.</p>
       <h3>Debug</h3>
       <div id="d-stats"></div>
       <label>

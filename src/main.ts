@@ -30,6 +30,8 @@ import { HangarView } from './render/HangarView.ts';
 import { applyModeClass, modeFromQuery, parseMode, type AppMode } from './app/Mode.ts';
 import { DisasterView } from './render/DisasterView.ts';
 import type { EventKind } from './sim/events/WorldEvents.ts';
+import { RayTraceMode, type RenderMode } from './render/raytrace/RayTraceMode.ts';
+import { flightShapes, hangarShapes } from './render/raytrace/sceneShapes.ts';
 import { PostFX, QUALITIES, type Quality } from './render/postfx.ts';
 
 async function start() {
@@ -94,6 +96,36 @@ async function start() {
 
   // --- Simulation
   const sim = new Simulation(TEST_PLANE);
+  let captureBusy = false;
+  const requestedRender: Record<AppMode, RenderMode> = {
+    hangar: mobile || params.get('render') === 'raster' ? 'raster' : 'raytrace',
+    flight: params.get('render') === 'raytrace' ? 'raytrace' : 'raster',
+  };
+  const suspendedRT: Record<AppMode, boolean> = { hangar: false, flight: false };
+  const rayModes = new Map<AppMode, RayTraceMode>();
+  const renderSelects = ['render-mode', 'hangar-render-mode'].map(id => document.getElementById(id) as HTMLSelectElement);
+  const renderStatus = document.getElementById('render-status')!;
+  const actualRenderMode = (): RenderMode => requestedRender[mode] === 'raytrace' && !mobile && !perf.powerSaver &&
+    !suspendedRT[mode] && (mode === 'hangar' || perf.rayTraceHeadroom || rayModes.has('flight')) ? 'raytrace' : 'raster';
+  const syncRenderControls = () => {
+    for (const select of renderSelects) {
+      select.value = requestedRender[mode];
+      const option = select.querySelector<HTMLOptionElement>('option[value="raytrace"]')!;
+      option.disabled = mobile || perf.powerSaver || (mode === 'flight' && !perf.rayTraceHeadroom && actualRenderMode() !== 'raytrace');
+    }
+    renderStatus.textContent = actualRenderMode() === 'raytrace' ? 'Ray traced · progressive' : requestedRender[mode] === 'raytrace'
+      ? 'Raster fallback · power or frame budget' : 'Raster';
+  };
+  const setRenderMode = (value: RenderMode) => {
+    if (value !== 'raster' && value !== 'raytrace') throw new Error('Use raster or raytrace');
+    requestedRender[mode] = value;
+    suspendedRT[mode] = false;
+    syncRenderControls();
+    return actualRenderMode();
+  };
+  for (const select of renderSelects) select.addEventListener('change', () => {
+    setRenderMode(select.value as RenderMode); select.blur();
+  });
   let craftView = new CraftView(sim.craft);
   craftScene().add(craftView.root);
   const debug = new DebugOverlay(scene, craftView.root);
@@ -294,7 +326,9 @@ async function start() {
     );
   };
   const setMode = (m: AppMode) => {
+    if (captureBusy) return;
     mode = m;
+    syncRenderControls();
     applyModeClass(m);
     const hangar = m === 'hangar';
     craftScene().add(craftView.root); // re-parents from the other scene
@@ -367,6 +401,65 @@ async function start() {
     toast(`${next.name}${BUILTINS.find((b) => `builtin:${b.id}` === next.id)?.hint ? ` · ${BUILTINS.find((b) => `builtin:${b.id}` === next.id)!.hint}` : ''}`);
   };
 
+  const activeRayMode = () => {
+    let rt = rayModes.get(mode);
+    if (!rt) {
+      rt = new RayTraceMode(renderer, mode === 'hangar' ? hangarView.scene : scene, mode === 'hangar' ? hangarView.camera : camera);
+      rayModes.set(mode, rt);
+    }
+    rt.setShapes(mode === 'hangar' ? hangarShapes(sim, craftView.root.position, craftView.root.quaternion)
+      : flightShapes(sim, craftView.root.position, craftView.root.quaternion, camera.position));
+    return rt;
+  };
+  const renderActive = () => {
+    if (actualRenderMode() === 'raytrace') {
+      if (perf.rayTraceOverloaded) {
+        suspendedRT[mode] = true;
+        syncRenderControls();
+      } else {
+        try { activeRayMode().render(); return; }
+        catch (error) {
+          suspendedRT[mode] = true;
+          console.warn('Ray tracing unavailable; using raster.', error);
+          toast('Ray tracing unavailable; using raster.');
+          syncRenderControls();
+        }
+      }
+    }
+    (mode === 'hangar' ? hangarFX : flightFX).render();
+  };
+  let captureInfo = { renderMode: 'raster' as RenderMode, samples: 1, width: 0, traceWidth: 0 };
+  const capture = async (width = 1280, samples = 1) => {
+    if (captureBusy) throw new Error('A photo is already being captured');
+    captureBusy = true;
+    const controlsEnabled = hangarView.controls.enabled;
+    hangarView.controls.enabled = false;
+    const capturedMode = mode;
+    const method = actualRenderMode();
+    try {
+      const rt = method === 'raytrace' ? activeRayMode() : null;
+      const pass = rt ? rt.photoPass(samples, Math.min(width, samples > 1 ? 768 : 320)) : capturedMode === 'hangar' ? hangarFX : flightFX;
+      const image = await captureFrame(renderer, capturedMode === 'hangar' ? hangarView.scene : scene,
+        capturedMode === 'hangar' ? hangarView.camera : camera, width, pass);
+      captureInfo = { renderMode: method, samples: rt?.samples ?? 1, width, traceWidth: rt?.renderWidth ?? 0 };
+      return image;
+    } finally {
+      hangarView.controls.enabled = controlsEnabled;
+      captureBusy = false;
+    }
+  };
+  const takePhoto = async () => {
+    try {
+      toast('Rendering photo…');
+      const blob = await capture(1280, 16);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `aerospace-${mode}-${captureInfo.renderMode}.png`; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      toast(`Saved ${captureInfo.renderMode === 'raytrace' ? 'ray traced' : 'raster'} photo`);
+    } catch (error) { toast(`Photo failed: ${error instanceof Error ? error.message : String(error)}`); }
+  };
+
   // Exposed for debugging, automated tests, and future AI-pilot experiments in the console.
   Object.assign(window, {
     game: {
@@ -382,10 +475,13 @@ async function start() {
       /** Flight-test a craft in the worker (same path the Studio uses). */
       flightTest: runFlightTest,
       /** PNG of the current 3D view (GPU readback; works on WebGPU and WebGL2). */
-      capture: (width?: number) =>
-        mode === 'hangar'
-          ? captureFrame(renderer, hangarView.scene, hangarView.camera, width, hangarFX)
-          : captureFrame(renderer, scene, camera, width, flightFX),
+      capture,
+      takePhoto,
+      get captureInfo() { return captureInfo; },
+      get renderMode() { return actualRenderMode(); },
+      get requestedRenderMode() { return requestedRender[mode]; },
+      get raytrace() { return rayModes.get(mode); },
+      setRenderMode,
       /** Post-processing quality for both scenes: 'low' | 'medium' | 'high'. */
       setQuality: (q: Quality) => {
         if (!QUALITIES.includes(q)) throw new Error(`Unknown quality "${q}"`);
@@ -443,11 +539,14 @@ async function start() {
       accumulator = 0;
       return;
     }
+    if (captureBusy) { accumulator = 0; return; }
     const renderThisFrame = perf.frame(dt);
+    syncRenderControls();
 
     for (const a of player.poll()) {
       if (a === 'studio') setMode(mode === 'flight' ? 'hangar' : 'flight');
       else if (a === 'mute') toast(audio.toggleMute() ? '🔇 Sound off' : '🔊 Sound on');
+      else if (a === 'screenshot') void takePhoto();
       else if (a === 'nextVehicle') cycleCraft(1);
       else if (a === 'prevVehicle') cycleCraft(-1);
       else if (mode !== 'flight') continue; // the rest only means something in flight
@@ -470,7 +569,7 @@ async function start() {
       // Physics paused; the craft sits on the turntable under the orbit camera.
       accumulator = 0;
       hangarView.update(dt);
-      if (presentToCanvas && renderThisFrame) hangarFX.render();
+      if (presentToCanvas && renderThisFrame) renderActive();
       return;
     }
 
@@ -534,7 +633,7 @@ async function start() {
     }
     // `?nopresent` (automated tests): simulate and update everything but skip presenting to the
     // canvas. Headless browsers can't composite a WebGPU canvas; game.capture() still renders.
-    if (presentToCanvas && renderThisFrame) flightFX.render();
+    if (presentToCanvas && renderThisFrame) renderActive();
 
     if (debugOn) {
       const mp = sim.craft.massProps;

@@ -75,7 +75,14 @@ export class RayTracer {
           accept(near, normalize(o.add(d.mul(near)))); accept(far, normalize(o.add(d.mul(far))));
         });
       }).ElseIf(header.x.equal(4), () => {
-        If(abs(d.y).greaterThan(1e-6), () => accept(o.y.negate().div(d.y), vec3(0, d.y.lessThan(0).select(1,-1), 0)));
+        If(abs(d.y).greaterThan(1e-6), () => {
+          const distance = o.y.negate().div(d.y);
+          const p = o.add(d.mul(distance));
+          // Positive X/Z half-extents bound a grid plane; zero preserves infinite planes.
+          const insideX = dimensions.x.lessThanEqual(0).or(abs(p.x).lessThanEqual(dimensions.x));
+          const insideZ = dimensions.z.lessThanEqual(0).or(abs(p.z).lessThanEqual(dimensions.z));
+          If(insideX.and(insideZ), () => accept(distance, vec3(0, d.y.lessThan(0).select(1,-1), 0)));
+        });
       }).ElseIf(header.x.equal(1), () => {
         // Parallel rays inside a slab impose no interval limit, even exactly on its face.
         // Merely clamping the reciprocal makes a face-parallel ray exit at t=0.
