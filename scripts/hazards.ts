@@ -1,5 +1,6 @@
 /** Seeded lightning, heat spread, fuel use, electrical coupling and reset regressions. */
 import * as THREE from 'three';
+import { BLIMP } from '../src/craft/builtins.ts';
 import type { CraftDef, PartDef } from '../src/craft/types.ts';
 import { FireSystem } from '../src/sim/fire.ts';
 import { LightningSystem, strikeTarget, thunderDelay } from '../src/sim/lightning.ts';
@@ -57,6 +58,23 @@ fire.step(0.1, new Set(['b']));
 check('detached parts cannot continue burning on the aircraft', !fire.parts.has('a'));
 
 await initPhysics();
+const blimp = new Simulation(BLIMP, calmWeather());
+const envelope = blimp.craft.parts.find((p) => p.id === 'envelope')!;
+const envelopeTarget = blimp.lightningTargets().find((p) => p.craftPart === envelope.id)!;
+check('lightning contacts the top of a horizontal cylinder, not its half-length',
+  envelope.shape.type === 'cylinder' && Math.abs(envelopeTarget.position.y - blimp.position.y - envelope.position[1] - envelope.shape.radius) < 1e-9);
+blimp.world.free();
+const cylinders: CraftDef = { formatVersion: 1, name: 'rotated conductors', parts: [
+  { ...part('axis-x', 0), shape: { type: 'cylinder', axis: 'x', radius: 1, length: 10 } },
+  { ...part('axis-y', 0), shape: { type: 'cylinder', axis: 'y', radius: 1, length: 10 } },
+  { ...part('rotated-z', 0), rotationDeg: [90, 0, 0], shape: { type: 'cylinder', axis: 'z', radius: 1, length: 10 } },
+] };
+const conductors = new Simulation(cylinders, calmWeather());
+const heights = new Map(conductors.lightningTargets().filter((t) => t.craftPart).map((t) => [t.craftPart, t.position.y - conductors.position.y]));
+check('cylinder conductor heights respect every axis and part rotation',
+  Math.abs(heights.get('axis-x')! - 1) < 1e-9 && Math.abs(heights.get('axis-y')! - 5) < 1e-9 && Math.abs(heights.get('rotated-z')! - 5) < 1e-9);
+conductors.world.free();
+
 const craft: CraftDef = { formatVersion: 1, name: 'hazard fixture', parts: [
   { ...part('tank', 0), hp: 1e8, modules: [{ type: 'fuel', capacity: 3, fill: 1 }] },
   { ...part('electronics', 0), position: [0, 1, 0], hp: 1e8, modules: [

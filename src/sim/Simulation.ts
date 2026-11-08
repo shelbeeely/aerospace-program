@@ -380,9 +380,10 @@ export class Simulation {
       const shape = p.shape;
       const localRotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(...(p.rotationDeg ?? [0, 0, 0]).map((d) => d * Math.PI / 180) as [number, number, number]));
       const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.rotation.clone().multiply(localRotation).invert());
+      const axialProjection = shape.type === 'cylinder' ? up[shape.axis ?? 'y'] : 0;
       const height = shape.type === 'sphere' ? shape.radius : shape.type === 'box'
         ? (Math.abs(up.x) * shape.size[0] + Math.abs(up.y) * shape.size[1] + Math.abs(up.z) * shape.size[2]) / 2
-        : Math.abs(up.y) * shape.length / 2 + Math.hypot(up.x, up.z) * shape.radius;
+        : Math.abs(axialProjection) * shape.length / 2 + Math.sqrt(Math.max(0, 1 - axialProjection ** 2)) * shape.radius;
       position.y += height;
       return { id: p.id, craftPart: p.id, position };
     });
