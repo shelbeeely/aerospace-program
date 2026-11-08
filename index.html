@@ -31,6 +31,8 @@
       <div class="row"><span>OAT</span><b id="h-oat">15°C</b><small></small></div>
       <div class="row"><span>WX</span><b id="h-wx">—</b><small></small></div>
       <div class="row" id="h-fuel-row"><span>FUEL</span><b id="h-fuel">--</b><small>%</small></div>
+      <div class="row" id="h-batt-row" style="display: none"><span>BATT</span><b id="h-batt">--</b><small>%</small></div>
+      <div class="row" id="h-bus-row" style="display: none"><span>BUS</span><b id="h-volts">--</b><small id="h-amps">V</small></div>
       <div id="h-flags"></div>
     </div>
 
@@ -39,8 +41,9 @@
     <!-- Hangar mode: craft card and launch button (Studio sits alongside). -->
     <div id="hangar-bar">
       <div id="craft-card" class="panel"></div>
+      <label class="panel">Render <select id="hangar-render-mode"><option value="raster">Raster</option><option value="raytrace">Ray traced</option></select></label>
       <button id="fly-btn" title="Fly this craft (N)">FLY ▸</button>
-      <button id="studio-open" class="panel" title="Open the Studio">✦ Studio</button>
+      <button id="studio-open" class="panel" title="Create aircraft, paint and music" aria-controls="studio" aria-expanded="false">✦ Create</button>
     </div>
     <!-- Flight mode: back to the hangar. -->
     <button id="to-hangar" class="panel" title="Back to the hangar (N)">◂ Hangar</button>
@@ -57,6 +60,7 @@
         <tr><td>T / G</td><td>trim nose down / up (Y resets)</td></tr>
         <tr><td>R</td><td>reset to runway</td></tr>
         <tr><td>C</td><td>chase / orbit camera</td></tr>
+        <tr><td>P</td><td>save photo (progressive when ray traced)</td></tr>
         <tr><td>F3</td><td>debug forces &amp; stats</td></tr>
         <tr><td>N</td><td>hangar (Studio, pick a craft) / fly</td></tr>
         <tr><td>H</td><td>toggle this help</td></tr>
@@ -69,6 +73,11 @@
     </div>
 
     <div id="debug" class="panel hidden">
+      <button id="debug-close" class="panel-close" type="button">Close weather ✕</button>
+      <h3>Render</h3>
+      <label>Mode <select id="render-mode"><option value="raster">Raster</option><option value="raytrace">Ray traced</option></select></label>
+      <div id="render-status" class="muted small">Raster</div>
+      <p class="muted small">P saves a photo. Ray tracing uses analytic scenery; raster shows all weather and effects.</p>
       <h3>Debug</h3>
       <div id="d-stats"></div>
       <label>
@@ -89,6 +98,14 @@
       <label>Thermals <input id="w-thermal" type="range" min="0" max="1" step="0.1" value="0" /></label>
       <label>Storm <input id="w-storm" type="range" min="0" max="1" step="0.1" value="0" /></label>
       <label>Visibility (m) <input id="w-vis" type="range" min="200" max="30000" step="100" value="30000" /></label>
+      <h3>Disasters</h3>
+      <div class="disaster-controls">
+        <button type="button" data-disaster="tornado">Tornado</button>
+        <button type="button" data-disaster="hurricane">Hurricane</button>
+        <button type="button" data-disaster="earthquake">Earthquake</button>
+        <button type="button" data-disaster="clear">Clear events</button>
+      </div>
+      <p class="muted small">Triggers affect flight physics. Reset clears events.</p>
       <div class="legend">
         <span style="color:#33ff55">■ lift</span>
         <span style="color:#ff3333">■ drag</span>

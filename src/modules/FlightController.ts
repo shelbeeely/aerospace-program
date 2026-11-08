@@ -35,6 +35,8 @@ export class FlightController implements ForceModule {
   readonly def: FlightControllerDef;
 
   private mix: MixEntry[] = [];
+  /** Every rotor this controller drives (all of them get nothing when it loses power). */
+  private managed: Rotor[] = [];
   private mainRotors: Rotor[] = [];
   private tailRotors: Rotor[] = [];
   private tailSigns: number[] = [];
@@ -42,6 +44,8 @@ export class FlightController implements ForceModule {
   hoverFraction = 0.5;
   private yawIntegral = 0;
   private massKg = 1;
+  /** Set by the craft's ElectricalSystem each step. Unpowered, it commands nothing. */
+  powered = true;
 
   constructor(
     readonly partId: string,
@@ -56,6 +60,7 @@ export class FlightController implements ForceModule {
   link(modules: readonly ForceModule[], com?: THREE.Vector3, mass?: number): void {
     const rotors = modules.filter((m): m is Rotor => m instanceof Rotor);
     for (const r of rotors) r.managed = true;
+    this.managed = rotors;
     const c = com ?? new THREE.Vector3();
     this.massKg = mass ?? this.massKg;
     if (this.def.mode === 'multirotor') {
@@ -86,9 +91,20 @@ export class FlightController implements ForceModule {
 
   reset(): void {
     this.yawIntegral = 0;
+    this.powered = true;
   }
 
   step(ctx: StepContext): void {
+    if (!this.powered) {
+      // Dead flight computer: every rotor it drives gets no command (motors stop, governed
+      // rotors are left to windmill).
+      for (const r of this.managed) {
+        r.command = 0;
+        r.cyclicPitch = r.cyclicRoll = 0;
+      }
+      this.yawIntegral = 0;
+      return;
+    }
     const c = ctx.controls;
     // Attitude from the body rotation (same conventions as telemetry).
     _fwd.set(0, 0, -1).applyQuaternion(ctx.rotation);

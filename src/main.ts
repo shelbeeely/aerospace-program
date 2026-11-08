@@ -17,6 +17,10 @@ import { Callouts } from './platform/speech.ts';
 import { runFlightTest } from './sim/flightTestClient.ts';
 import { DebugOverlay } from './render/DebugOverlay.ts';
 import { WorldView } from './render/WorldView.ts';
+import { OceanView } from './render/OceanView.ts';
+import { TownView } from './render/TownView.ts';
+import { FireView } from './render/FireView.ts';
+import { LightningView } from './render/LightningView.ts';
 import { WeatherView } from './render/WeatherView.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
@@ -26,6 +30,10 @@ import { TUNING } from './tuning.ts';
 import { builtinEntry, CAP_STORAGE, KEY_STORAGE, Studio } from './ui/Studio.ts';
 import { HangarView } from './render/HangarView.ts';
 import { applyModeClass, modeFromQuery, parseMode, type AppMode } from './app/Mode.ts';
+import { DisasterView } from './render/DisasterView.ts';
+import type { EventKind } from './sim/events/WorldEvents.ts';
+import { RayTraceMode, type RenderMode } from './render/raytrace/RayTraceMode.ts';
+import { flightShapes, hangarShapes } from './render/raytrace/sceneShapes.ts';
 import { PostFX, QUALITIES, type Quality } from './render/postfx.ts';
 
 async function start() {
@@ -71,6 +79,9 @@ async function start() {
   const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.3, 20000);
   const worldView = new WorldView(scene, renderer);
   const weatherView = new WeatherView(scene, worldView);
+  const disasterView = new DisasterView(scene);
+  const lightningView = new LightningView(scene);
+  const fireView = new FireView(scene);
   // The hangar: a separate scene with its own orbit camera; its lighting is baked once here.
   const hangarView = new HangarView(renderer, canvas);
   hangarView.bakeEnvironment();
@@ -87,10 +98,42 @@ async function start() {
 
   // --- Simulation
   const sim = new Simulation(TEST_PLANE);
+  let captureBusy = false;
+  const requestedRender: Record<AppMode, RenderMode> = {
+    hangar: mobile || params.get('render') === 'raster' ? 'raster' : 'raytrace',
+    flight: params.get('render') === 'raytrace' ? 'raytrace' : 'raster',
+  };
+  const suspendedRT: Record<AppMode, boolean> = { hangar: false, flight: false };
+  const rayModes = new Map<AppMode, RayTraceMode>();
+  const renderSelects = ['render-mode', 'hangar-render-mode'].map(id => document.getElementById(id) as HTMLSelectElement);
+  const renderStatus = document.getElementById('render-status')!;
+  const actualRenderMode = (): RenderMode => requestedRender[mode] === 'raytrace' && !mobile && !perf.powerSaver &&
+    !suspendedRT[mode] && (mode === 'hangar' || perf.rayTraceHeadroom || rayModes.has('flight')) ? 'raytrace' : 'raster';
+  const syncRenderControls = () => {
+    for (const select of renderSelects) {
+      select.value = requestedRender[mode];
+      const option = select.querySelector<HTMLOptionElement>('option[value="raytrace"]')!;
+      option.disabled = mobile || perf.powerSaver || (mode === 'flight' && !perf.rayTraceHeadroom && actualRenderMode() !== 'raytrace');
+    }
+    renderStatus.textContent = actualRenderMode() === 'raytrace' ? 'Ray traced · progressive' : requestedRender[mode] === 'raytrace'
+      ? 'Raster fallback · power or frame budget' : 'Raster';
+  };
+  const setRenderMode = (value: RenderMode) => {
+    if (value !== 'raster' && value !== 'raytrace') throw new Error('Use raster or raytrace');
+    requestedRender[mode] = value;
+    suspendedRT[mode] = false;
+    syncRenderControls();
+    return actualRenderMode();
+  };
+  for (const select of renderSelects) select.addEventListener('change', () => {
+    setRenderMode(select.value as RenderMode); select.blur();
+  });
   let craftView = new CraftView(sim.craft);
   craftScene().add(craftView.root);
   const debug = new DebugOverlay(scene, craftView.root);
   const debrisView = new DebrisView(scene);
+  const townView = new TownView(scene, sim.town);
+  const oceanView = new OceanView(scene, sim.ocean, sim.atmosphere.events);
   let viewVersion = sim.version;
   let currentLivery: string | null = null;
   /** Rebuild the craft's visuals (new craft, or the sim rebuilt a broken one on reset). */
@@ -125,6 +168,9 @@ async function start() {
   let pilot: ControlSource = player;
 
   let debugOn = false;
+  document.getElementById('debug-close')!.addEventListener('click', () => {
+    debugOn = false; sim.recordForces = false; debug.setVisible(false); hud.setDebugVisible(false);
+  });
   const comSlider = document.getElementById('d-com') as HTMLInputElement;
   const comVal = document.getElementById('d-com-val')!;
   comSlider.addEventListener('input', () => {
@@ -189,6 +235,19 @@ async function start() {
     presetSel.value = urlWx;
     setPreset(urlWx);
   } else applyWeather();
+
+  // Explicit disaster triggers keep ordinary flights calm. Place the event safely to the left.
+  const triggerDisaster = (kind: EventKind) => sim.atmosphere.events.trigger(kind, {
+    x: sim.position.x - (kind === 'hurricane' ? 1200 : 500), z: sim.position.z - 500,
+  });
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-disaster]')) {
+    button.addEventListener('click', () => {
+      const kind = button.dataset.disaster;
+      if (kind === 'clear') sim.atmosphere.events.clear();
+      else triggerDisaster(kind as EventKind);
+      button.blur();
+    });
+  }
 
   const flightLog = new FlightLog();
   const reset = () => {
@@ -272,8 +331,14 @@ async function start() {
     );
   };
   const setMode = (m: AppMode) => {
+    if (captureBusy) return;
     mode = m;
+    syncRenderControls();
     applyModeClass(m);
+    if (mobile) {
+      document.getElementById('help')!.classList.add('hidden');
+      debugOn = false; sim.recordForces = false; hud.setDebugVisible(false);
+    }
     const hangar = m === 'hangar';
     craftScene().add(craftView.root); // re-parents from the other scene
     rig.setSuspended(hangar);
@@ -291,7 +356,10 @@ async function start() {
       audio.silence();
       callouts.reset();
       if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
-      studio.show();
+      if (mobile) {
+        studio.root.classList.add('hidden');
+        document.getElementById('studio-open')?.setAttribute('aria-expanded', 'false');
+      } else studio.show();
     } else {
       reset();
     }
@@ -345,6 +413,65 @@ async function start() {
     toast(`${next.name}${BUILTINS.find((b) => `builtin:${b.id}` === next.id)?.hint ? ` · ${BUILTINS.find((b) => `builtin:${b.id}` === next.id)!.hint}` : ''}`);
   };
 
+  const activeRayMode = () => {
+    let rt = rayModes.get(mode);
+    if (!rt) {
+      rt = new RayTraceMode(renderer, mode === 'hangar' ? hangarView.scene : scene, mode === 'hangar' ? hangarView.camera : camera);
+      rayModes.set(mode, rt);
+    }
+    rt.setShapes(mode === 'hangar' ? hangarShapes(sim, craftView.root.position, craftView.root.quaternion)
+      : flightShapes(sim, craftView.root.position, craftView.root.quaternion, camera.position));
+    return rt;
+  };
+  const renderActive = () => {
+    if (actualRenderMode() === 'raytrace') {
+      if (perf.rayTraceOverloaded) {
+        suspendedRT[mode] = true;
+        syncRenderControls();
+      } else {
+        try { activeRayMode().render(); return; }
+        catch (error) {
+          suspendedRT[mode] = true;
+          console.warn('Ray tracing unavailable; using raster.', error);
+          toast('Ray tracing unavailable; using raster.');
+          syncRenderControls();
+        }
+      }
+    }
+    (mode === 'hangar' ? hangarFX : flightFX).render();
+  };
+  let captureInfo = { renderMode: 'raster' as RenderMode, samples: 1, width: 0, traceWidth: 0 };
+  const capture = async (width = 1280, samples = 1) => {
+    if (captureBusy) throw new Error('A photo is already being captured');
+    captureBusy = true;
+    const controlsEnabled = hangarView.controls.enabled;
+    hangarView.controls.enabled = false;
+    const capturedMode = mode;
+    const method = actualRenderMode();
+    try {
+      const rt = method === 'raytrace' ? activeRayMode() : null;
+      const pass = rt ? rt.photoPass(samples, Math.min(width, samples > 1 ? 768 : 320)) : capturedMode === 'hangar' ? hangarFX : flightFX;
+      const image = await captureFrame(renderer, capturedMode === 'hangar' ? hangarView.scene : scene,
+        capturedMode === 'hangar' ? hangarView.camera : camera, width, pass);
+      captureInfo = { renderMode: method, samples: rt?.samples ?? 1, width, traceWidth: rt?.renderWidth ?? 0 };
+      return image;
+    } finally {
+      hangarView.controls.enabled = controlsEnabled;
+      captureBusy = false;
+    }
+  };
+  const takePhoto = async () => {
+    try {
+      toast('Rendering photo…');
+      const blob = await capture(1280, 16);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `aerospace-${mode}-${captureInfo.renderMode}.png`; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      toast(`Saved ${captureInfo.renderMode === 'raytrace' ? 'ray traced' : 'raster'} photo`);
+    } catch (error) { toast(`Photo failed: ${error instanceof Error ? error.message : String(error)}`); }
+  };
+
   // Exposed for debugging, automated tests, and future AI-pilot experiments in the console.
   Object.assign(window, {
     game: {
@@ -360,16 +487,21 @@ async function start() {
       /** Flight-test a craft in the worker (same path the Studio uses). */
       flightTest: runFlightTest,
       /** PNG of the current 3D view (GPU readback; works on WebGPU and WebGL2). */
-      capture: (width?: number) =>
-        mode === 'hangar'
-          ? captureFrame(renderer, hangarView.scene, hangarView.camera, width, hangarFX)
-          : captureFrame(renderer, scene, camera, width, flightFX),
+      capture,
+      takePhoto,
+      get captureInfo() { return captureInfo; },
+      get renderMode() { return actualRenderMode(); },
+      get requestedRenderMode() { return requestedRender[mode]; },
+      get raytrace() { return rayModes.get(mode); },
+      setRenderMode,
       /** Post-processing quality for both scenes: 'low' | 'medium' | 'high'. */
       setQuality: (q: Quality) => {
         if (!QUALITIES.includes(q)) throw new Error(`Unknown quality "${q}"`);
         flightFX.setQuality(q);
         hangarFX.setQuality(q);
       },
+      worldEvents: sim.atmosphere.events,
+      triggerDisaster,
       client,
       library,
       studio,
@@ -419,11 +551,14 @@ async function start() {
       accumulator = 0;
       return;
     }
+    if (captureBusy) { accumulator = 0; return; }
     const renderThisFrame = perf.frame(dt);
+    syncRenderControls();
 
     for (const a of player.poll()) {
       if (a === 'studio') setMode(mode === 'flight' ? 'hangar' : 'flight');
       else if (a === 'mute') toast(audio.toggleMute() ? '🔇 Sound off' : '🔊 Sound on');
+      else if (a === 'screenshot') void takePhoto();
       else if (a === 'nextVehicle') cycleCraft(1);
       else if (a === 'prevVehicle') cycleCraft(-1);
       else if (mode !== 'flight') continue; // the rest only means something in flight
@@ -446,7 +581,7 @@ async function start() {
       // Physics paused; the craft sits on the turntable under the orbit camera.
       accumulator = 0;
       hangarView.update(dt);
-      if (presentToCanvas && renderThisFrame) hangarFX.render();
+      if (presentToCanvas && renderThisFrame) renderActive();
       return;
     }
 
@@ -464,6 +599,7 @@ async function start() {
     const airframeHit = sim.airframeTouchingGround();
     flightLog.update(telemetry, dt, airframeHit);
     audio.update(telemetry, sim.craft, sim.failures.length, airframeHit, dt);
+    audio.updateThunder(sim.lightning.strikes, sim.time, camera.position);
     callouts.update(telemetry, sim.failures);
     // Structure changed: a part broke off (hide it), or the craft was rebuilt (new view).
     if (sim.version !== viewVersion) {
@@ -472,6 +608,10 @@ async function start() {
       viewVersion = sim.version;
     }
     debrisView.update(sim.debris);
+    townView.update(dt);
+    oceanView.update(sim.time, camera);
+    lightningView.update(sim.time, sim.lightning.strikes, sim.craft, Math.max(sim.lightning.staticCharge, (sim.atmosphere.settings.storm ?? 0) * 0.5));
+    fireView.update(sim.time, sim.fire, sim.craft);
 
     // Haptics: parts breaking, hitting the ground hard, entering a stall.
     if (sim.failures.length > failuresSeen) player.rumble(1, 400);
@@ -492,6 +632,7 @@ async function start() {
     velocity.set(v.x, v.y, v.z);
     rig.update(dt, renderPos, renderRot, velocity);
     worldView.update(camera, renderPos);
+    disasterView.update(sim.atmosphere.events);
     weatherView.update(dt, camera, velocity, sim.atmosphere, sim.groundWetness, sim.atmosphere.cloudAt(camera.position, 0).inCloud);
 
     renderOffset.copy(renderPos).sub(sim.position);
@@ -507,7 +648,7 @@ async function start() {
     }
     // `?nopresent` (automated tests): simulate and update everything but skip presenting to the
     // canvas. Headless browsers can't composite a WebGPU canvas; game.capture() still renders.
-    if (presentToCanvas && renderThisFrame) flightFX.render();
+    if (presentToCanvas && renderThisFrame) renderActive();
 
     if (debugOn) {
       const mp = sim.craft.massProps;

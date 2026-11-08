@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { abs, float, fwidth, max, smoothstep, step, uniform, uv, vec2 } from 'three/tsl';
-import { LAYOUT } from '../sim/layout.ts';
+import { COAST, LAYOUT } from '../sim/layout.ts';
 import { NEON, glow, groundGridNode, mergeLines, neonFillMaterial, neonize, neonLineMaterial, synthSkyNode, type TslNode } from './neon.ts';
 
 const HORIZON = new THREE.Color(NEON.horizon);
@@ -88,7 +88,9 @@ export class WorldView {
       major: 100,
       fade: 6000,
     });
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(LAYOUT.groundSize, LAYOUT.groundSize), this.groundMat);
+    const landWidth = COAST.x + LAYOUT.groundSize / 2;
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(landWidth, LAYOUT.groundSize), this.groundMat);
+    ground.position.x = (COAST.x - LAYOUT.groundSize / 2) / 2;
     ground.rotation.x = -Math.PI / 2;
     scene.add(ground);
 
@@ -166,7 +168,7 @@ export class WorldView {
       for (let k = 0; k < clusterSize && n < count; k++) {
         p.set(cx + (rnd() - 0.5) * 120, 0, cz + (rnd() - 0.5) * 120);
         const nearRunway = Math.abs(p.x) < 150 && Math.abs(p.z - centerZ) < length / 2 + 400;
-        if (nearRunway) continue;
+        if (nearRunway || p.x > COAST.x - 4) continue;
         const s = 0.6 + rnd() * 0.9;
         sc.set(s, s * (0.8 + rnd() * 0.6), s);
         const m = new THREE.Matrix4().compose(p, q, sc);

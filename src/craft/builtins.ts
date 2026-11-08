@@ -1,7 +1,7 @@
 import { JET } from './jet.ts';
 import { TEST_PLANE } from './testPlane.ts';
 import { TWIN_PLANE } from './twinPlane.ts';
-import type { CraftDef, RotorDef } from './types.ts';
+import type { CraftDef, ModuleDef, RotorDef } from './types.ts';
 
 /**
  * Built-in craft, one per vehicle family. Same JSON format the Designer generates and the
@@ -130,6 +130,12 @@ const quadRotor = (spin: 1 | -1): RotorDef => ({
   spin,
 });
 
+/**
+ * Heavy-lift outrunner on a 12S pack: 130 rpm/V (no-load ~5800 rpm at 44 V, so 4500 rpm with
+ * margin), 50 mΩ, 120 A ESC. Hover ≈ 26 A per motor, full thrust ≈ 70 A.
+ */
+const quadMotor: ModuleDef = { type: 'motor', kv: 130, rWinding: 0.05, maxCurrent: 120 };
+
 /** 25 kg heavy-lift quadcopter (X layout). Unflyable without its flight controller, as in reality. */
 export const QUADCOPTER: CraftDef = {
   name: 'Lifter Q-4',
@@ -145,15 +151,19 @@ export const QUADCOPTER: CraftDef = {
       modules: [
         { type: 'flightController', mode: 'multirotor', maxTiltDeg: 30, maxYawRateDeg: 120 },
         { type: 'drag', cdA: 0.08 },
+        // 12S 16 Ah LiPo (~710 Wh, ~4.5 kg, part of the body's mass): ~15 min hover.
+        { type: 'battery', cells: 12, capacityAh: 16, cellResistance: 0.0025, cellVmax: 4.2, cellVmin: 3.3, thermalMass: 4500, maxTempC: 70 },
+        // Flight computer, GPS, radio and ESC logic.
+        { type: 'avionics', loadW: 40, essential: true },
       ],
     },
     { id: 'arm.a', kind: 'drone.arm', mass: 1, position: [0, 0.45, 0], rotationDeg: [0, 45, 0], shape: { type: 'box', size: [1.75, 0.05, 0.08] }, color: '#555b66', collider: false },
     { id: 'arm.b', kind: 'drone.arm', mass: 1, position: [0, 0.45, 0], rotationDeg: [0, -45, 0], shape: { type: 'box', size: [1.75, 0.05, 0.08] }, color: '#555b66', collider: false },
     // Diagonal pairs spin the same way; yaw comes from speeding up one pair.
-    { id: 'motor.fl', kind: 'drone.motor', mass: 2.5, position: [-0.62, 0.5, -0.62], shape: { type: 'cylinder', radius: 0.06, length: 0.1 }, color: '#c94f3d', modules: [quadRotor(1)] },
-    { id: 'motor.fr', kind: 'drone.motor', mass: 2.5, position: [0.62, 0.5, -0.62], shape: { type: 'cylinder', radius: 0.06, length: 0.1 }, color: '#c94f3d', modules: [quadRotor(-1)] },
-    { id: 'motor.rl', kind: 'drone.motor', mass: 2.5, position: [-0.62, 0.5, 0.62], shape: { type: 'cylinder', radius: 0.06, length: 0.1 }, color: '#e8e4da', modules: [quadRotor(-1)] },
-    { id: 'motor.rr', kind: 'drone.motor', mass: 2.5, position: [0.62, 0.5, 0.62], shape: { type: 'cylinder', radius: 0.06, length: 0.1 }, color: '#e8e4da', modules: [quadRotor(1)] },
+    { id: 'motor.fl', kind: 'drone.motor', mass: 2.5, position: [-0.62, 0.5, -0.62], shape: { type: 'cylinder', radius: 0.06, length: 0.1 }, color: '#c94f3d', modules: [quadRotor(1), quadMotor] },
+    { id: 'motor.fr', kind: 'drone.motor', mass: 2.5, position: [0.62, 0.5, -0.62], shape: { type: 'cylinder', radius: 0.06, length: 0.1 }, color: '#c94f3d', modules: [quadRotor(-1), quadMotor] },
+    { id: 'motor.rl', kind: 'drone.motor', mass: 2.5, position: [-0.62, 0.5, 0.62], shape: { type: 'cylinder', radius: 0.06, length: 0.1 }, color: '#e8e4da', modules: [quadRotor(-1), quadMotor] },
+    { id: 'motor.rr', kind: 'drone.motor', mass: 2.5, position: [0.62, 0.5, 0.62], shape: { type: 'cylinder', radius: 0.06, length: 0.1 }, color: '#e8e4da', modules: [quadRotor(1), quadMotor] },
     { id: 'skid.left', kind: 'skid', mass: 0.5, position: [-0.3, 0.03, 0], shape: { type: 'box', size: [0.05, 0.05, 0.8] }, color: '#222222' },
     { id: 'skid.right', kind: 'skid', mass: 0.5, position: [0.3, 0.03, 0], shape: { type: 'box', size: [0.05, 0.05, 0.8] }, color: '#222222' },
   ],

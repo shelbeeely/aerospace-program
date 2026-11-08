@@ -22,6 +22,11 @@ export class Hud {
     windArrow: $('h-wind-arrow'),
     fuel: $('h-fuel'),
     fuelRow: $('h-fuel-row'),
+    batt: $('h-batt'),
+    battRow: $('h-batt-row'),
+    volts: $('h-volts'),
+    amps: $('h-amps'),
+    busRow: $('h-bus-row'),
     oat: $('h-oat'),
     wx: $('h-wx'),
     stall: $('stall'),
@@ -38,12 +43,24 @@ export class Hud {
   }
 
   update(t: Telemetry, trim: number, braking: boolean): void {
-    this.set(this.el.speed, (t.airspeed * MS_TO_KT).toFixed(0));
-    this.set(this.el.alt, t.altitude.toFixed(0));
-    this.set(this.el.vs, (t.verticalSpeed >= 0 ? '+' : '') + t.verticalSpeed.toFixed(1));
-    this.set(this.el.aoa, t.airspeed > 3 ? t.angleOfAttack.toFixed(1) : '--');
-    this.set(this.el.g, t.gForce.toFixed(1));
-    this.set(this.el.hdg, Math.round(t.heading % 360).toString().padStart(3, '0'));
+    const e = t.electrical ?? null;
+    // Without power to the flight instruments, they go blank.
+    const inst = !e || e.avionics;
+    const blank = (s: string) => (inst ? s : '--');
+    this.set(this.el.speed, blank((t.airspeed * MS_TO_KT).toFixed(0)));
+    this.set(this.el.alt, blank(t.altitude.toFixed(0)));
+    this.set(this.el.vs, blank((t.verticalSpeed >= 0 ? '+' : '') + t.verticalSpeed.toFixed(1)));
+    this.set(this.el.aoa, blank(t.airspeed > 3 ? t.angleOfAttack.toFixed(1) : '--'));
+    this.set(this.el.g, blank(t.gForce.toFixed(1)));
+    this.set(this.el.hdg, blank(Math.round(t.heading % 360).toString().padStart(3, '0')));
+    this.el.battRow.style.display = e && e.battery !== null ? '' : 'none';
+    this.el.busRow.style.display = e ? '' : 'none';
+    if (e) {
+      if (e.battery !== null) this.set(this.el.batt, (e.battery * 100).toFixed(0));
+      this.set(this.el.volts, e.busVolts.toFixed(1));
+      // Battery current: positive = discharging, negative = charging.
+      this.set(this.el.amps, `V ${e.batteryAmps.toFixed(0)}A`);
+    }
     this.set(this.el.thr, (t.throttle * 100).toFixed(0));
     this.el.thrBar.style.width = `${t.throttle * 100}%`;
     this.el.spoolBar.style.width = `${t.engineSpool * 100}%`;
@@ -79,6 +96,7 @@ export class Hud {
       t.vortexRing > 0.3 ? 'VORTEX RING' : '',
       w.aquaplaning > 0.3 ? 'AQUAPLANING' : '',
       t.brokenParts.length ? `BROKEN: ${t.brokenParts.join(', ')}` : '',
+      ...electricalFlags(e),
     ]
       .filter(Boolean)
       .join('  ');
@@ -97,4 +115,16 @@ export class Hud {
   setStats(text: string): void {
     this.set(this.el.stats, text);
   }
+}
+
+/** Warnings for the electrical system: dead bus, failed instruments, battery and generator. */
+function electricalFlags(e: Telemetry['electrical']): string[] {
+  if (!e) return [];
+  return [
+    !e.powered ? 'ELEC FAIL' : !e.avionics ? 'INSTRUMENTS FAIL' : '',
+    e.batteryCutoff === 'overheat' ? 'BATT OVERHEAT' : e.batteryCutoff ? 'BATT CUTOFF' : '',
+    !e.batteryCutoff && e.batteryTempC !== null && e.batteryTempC > 55 ? 'BATT HOT' : '',
+    e.battery !== null && e.battery < 0.2 && !e.batteryCutoff ? 'LOW BATT' : '',
+    e.failed.length ? `AVIONICS FAILED: ${e.failed.join(', ')}` : '',
+  ];
 }

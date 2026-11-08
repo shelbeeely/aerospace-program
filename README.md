@@ -139,8 +139,12 @@ stall onset, and a toast announces connect/disconnect.
   rotorcraft the middle is hover. Drag sideways for yaw, which springs back.
 - **Right thumb:** a floating stick that centres where you touch. Drag down for nose up, sideways
   to roll. It springs back.
-- **BRAKE** (hold), and a top bar with reset, camera, previous/next craft, Studio, debug and
-  weather, help, and fullscreen (where the browser supports it).
+- **BRAKE** (hold). The top bar has **Hangar**, **Camera**, **Controls**, and **More**.
+  **More** contains reset, craft selection, weather, flaps, sound, photos and fullscreen.
+- **Create / Studio:** in the hangar, tap **Create**, type in **Describe your aircraft**, then
+  tap **Generate aircraft**. GitHub Pages requires your OpenRouter key under **Key & spend**.
+  Model choices are under **Models & generation settings**. Studio stays closed on mobile
+  until opened; its ✕ closes it. Controls and weather panels have labeled close buttons.
 - The layout adapts to orientation and notches (safe areas). Portrait gets a compact HUD strip
   and the Studio as a bottom sheet; landscape gets a corner HUD and the Studio as a side
   drawer. Phones render at capped resolution with smaller shadow maps to hold the frame
@@ -317,6 +321,21 @@ geometry (incidence, dihedral, washout, control throws, spring rates) is in `tes
 After a change, `npm run sim` prints lift-off speed, stall altitude loss and the instability
 test, so you can see the effect without flying.
 
+## Disasters
+
+F3 has explicit **Tornado**, **Hurricane**, **Earthquake**, and **Clear events** buttons.
+Ordinary flights have no scheduled disasters. Tornadoes move along seeded paths, add
+Rankine-vortex swirl/inflow/updrafts, and appear as rotating neon rings. Hurricanes add a
+Holland wind field and spiral rain bands; earthquakes physically shake the runway with an
+analytic, seeded ground motion. Reset clears the event timeline.
+
+The headless API is `sim.atmosphere.events`: `trigger(kind, { x, z, duration, strength })`,
+`schedule(kind, absoluteWeatherTime, options)`, `clear()`, `groundAcceleration()` and
+`surgeHeight(x, z)`. Weather time restarts on reset. Additional smoke/wind sources may register
+an additive callback in `sim.atmosphere.windContributors`. Browser helpers are
+`game.worldEvents` and `game.triggerDisaster(kind)`. `npm run events` checks deterministic
+wind, surge, rain, scheduler lifecycle and actual Rapier ground motion.
+
 ## Roadmap
 
 1. **Flight core** ✅
@@ -341,3 +360,21 @@ Generation roadmap, using more of OpenRouter's model types:
 - **Video** models for race trailers from replays.
 - **Procedural worlds** (Stage 3) seeded and themed by a model: biome palette, landmarks,
   airports.
+
+
+### Lightning, static and fire
+
+Thunderstorm intensity drives seeded lightning. Descending leaders intercept nearby tall
+buildings or aircraft, damage parts along an entry-to-exit path, couple surges into avionics,
+and can ignite fuel tanks. Precipitation and storm fields build airframe static, shown as
+violet St. Elmo coronas; charge leaks away in clear air. Thunder arrives after distance / 343
+seconds of simulation time, so pausing flight also pauses the delay.
+
+Finite per-part combustible mass burns, heats adjacent parts, consumes real tank fuel, weakens
+hot structure, and produces a smoke updraft. Detached parts stop contributing to the attached
+aircraft fire model. Neon leaders, wire flames and smoke rings follow that headless state.
+Reset repairs damage, restores fuel and clears hazards.
+
+Run `npm run hazards` for deterministic strike, heat propagation, burnout, electrical damage,
+and reset regressions. In the browser console, `game.sim.triggerLightning()` triggers a strike
+near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)` starts a fire.

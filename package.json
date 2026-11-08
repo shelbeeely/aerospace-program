@@ -10,7 +10,14 @@
     "sim": "node --experimental-transform-types --no-warnings scripts/headless.ts",
     "weather": "node --experimental-transform-types --no-warnings scripts/weather.ts",
     "destruction": "node --experimental-transform-types --no-warnings scripts/destruction.ts",
-    "design": "node --experimental-transform-types --no-warnings scripts/design.ts"
+    "electric": "node --experimental-transform-types --no-warnings scripts/electric.ts",
+    "buildings": "node --experimental-transform-types --no-warnings scripts/buildings.ts",
+    "design": "node --experimental-transform-types --no-warnings scripts/design.ts",
+    "raytrace": "node --experimental-transform-types --no-warnings scripts/raytrace.ts",
+    "events": "node --experimental-transform-types --no-warnings scripts/events.ts",
+    "ocean": "node --experimental-transform-types --no-warnings scripts/ocean.ts",
+    "hazards": "node --experimental-transform-types --no-warnings scripts/hazards.ts",
+    "raymode": "node --experimental-transform-types --no-warnings scripts/raymode.ts"
   },
   "repository": {
     "type": "git",
