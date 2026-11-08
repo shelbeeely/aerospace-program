@@ -276,7 +276,7 @@ export class Atmosphere {
   precipitationAt(p: THREE.Vector3, groundHeight = 0, out?: Precipitation): Precipitation {
     const o = out ?? { rate: 0, kind: 'none', waterContent: 0, velocity: new THREE.Vector3() };
     const s = this.settings;
-    let rate = (s.precipitation ?? 0) + (s.storm ?? 0) * 80 + this.events.rainAt(p.x, p.z);
+    let rate = (s.precipitation ?? 0) + (s.storm ?? 0) * 80;
     const h = p.y - groundHeight;
     if (rate > 0 && h > (s.cloudTop ?? 2500)) rate = 0; // above the tops: no precipitation
     // Showers fall from cells: patchy when cover < 1.
@@ -285,6 +285,8 @@ export class Atmosphere {
       const v = this.cellValue(p.x, p.z);
       rate *= Math.max(0, Math.min(1, (v - (1 - cover)) / 0.1));
     }
+    // Event rain bands are independent of the background preset's cloud coverage.
+    if (h <= 2500) rate += this.events.rainAt(p.x, p.z);
     o.rate = rate;
     if (rate <= 0) {
       o.kind = 'none';

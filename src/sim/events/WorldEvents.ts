@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { DISASTER_TUNING as D } from '../../tuning.ts';
 import { groundAcceleration, groundDisplacement } from './earthquake.ts';
 import { hurricaneRain, hurricaneWind, surgeHeight, type Hurricane } from './hurricane.ts';
 import { tornadoWind, type Tornado } from './tornado.ts';
@@ -59,7 +60,7 @@ export class WorldEvents {
     for (const value of [options.x, options.z, options.duration, options.strength]) {
       if (value !== undefined && !Number.isFinite(value)) throw new Error('Event options must be finite');
     }
-    const duration = options.duration ?? (kind === 'earthquake' ? 20 : kind === 'tornado' ? 120 : 240);
+    const duration = options.duration ?? (kind === 'earthquake' ? D.earthquakeDuration : kind === 'tornado' ? D.tornadoDuration : D.hurricaneDuration);
     if (duration <= 0) throw new Error('Event duration must be positive');
     const angle = this.random() * Math.PI * 2;
     const x = options.x ?? -900 + this.random() * 300;
@@ -68,12 +69,12 @@ export class WorldEvents {
       id: this.nextId++, kind, start, duration,
       strength: Math.max(0, Math.min(2, options.strength ?? 1)),
       seed: (this.random() * 4294967296) >>> 0,
-      tornado: { x, z, velocityX: Math.cos(angle) * 4, velocityZ: Math.sin(angle) * 4, coreRadius: 75, peakSpeed: 55, height: 900 },
-      hurricane: { x, z, maxRadius: 1200, peakSpeed: 48, hollandB: 1.5 },
+      tornado: { x, z, velocityX: Math.cos(angle) * D.tornadoTravelSpeed, velocityZ: Math.sin(angle) * D.tornadoTravelSpeed, coreRadius: D.tornadoCoreRadius, peakSpeed: D.tornadoPeakSpeed, height: D.tornadoHeight },
+      hurricane: { x, z, maxRadius: D.hurricaneMaxRadius, peakSpeed: D.hurricanePeakSpeed, hollandB: D.hurricaneHollandB },
     };
     // Bound retained events even under repeated UI triggers.
     this.events = this.events.filter(e => e.start + e.duration > this.time);
-    if (this.events.length >= 32) throw new Error('At most 32 world events may be scheduled');
+    if (this.events.length >= D.maxEvents) throw new Error('At most 32 world events may be scheduled');
     this.events.push(event);
     return event;
   }
@@ -96,7 +97,7 @@ export class WorldEvents {
   intensity(event: WorldEvent): number {
     const age = this.time - event.start;
     if (age < 0 || age >= event.duration) return 0;
-    const edge = Math.min(2, event.duration / 4);
+    const edge = Math.min(D.fadeSeconds, event.duration / 4);
     const x = Math.min(1, age / edge, (event.duration - age) / edge);
     return event.strength * x * x * (3 - 2 * x);
   }
@@ -132,7 +133,7 @@ export class WorldEvents {
   groundDisplacement(out = new THREE.Vector3()): THREE.Vector3 {
     out.set(0, 0, 0);
     for (const e of this.events) if (e.kind === 'earthquake') {
-      groundDisplacement(this.time - e.start, e.duration, e.seed, 0.12 * e.strength, this.scratch);
+      groundDisplacement(this.time - e.start, e.duration, e.seed, D.earthquakeAmplitude * e.strength, this.scratch);
       out.add(this.scratch);
     }
     return out;
@@ -141,7 +142,7 @@ export class WorldEvents {
   groundAcceleration(out = new THREE.Vector3()): THREE.Vector3 {
     out.set(0, 0, 0);
     for (const e of this.events) if (e.kind === 'earthquake') {
-      groundAcceleration(this.time - e.start, e.duration, e.seed, 0.12 * e.strength, this.scratch);
+      groundAcceleration(this.time - e.start, e.duration, e.seed, D.earthquakeAmplitude * e.strength, this.scratch);
       out.add(this.scratch);
     }
     return out;

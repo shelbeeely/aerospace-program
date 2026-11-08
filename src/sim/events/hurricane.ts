@@ -4,6 +4,7 @@ import * as THREE from 'three';
 export function hurricaneSpeed(radius: number, maxRadius: number, peakSpeed: number, hollandB = 1.5): number {
   if (radius <= 0 || maxRadius <= 0) return 0;
   const q = (maxRadius / radius) ** hollandB;
+  if (q > 1500) return 0; // eye limit, including exponent overflow
   // Evaluate in log space to avoid Infinity * 0 at the centre.
   return peakSpeed * Math.exp(0.5 * (Math.log(q) + 1 - q));
 }

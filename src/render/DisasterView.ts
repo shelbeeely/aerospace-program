@@ -4,7 +4,7 @@ import { NEON, neonLineMaterial } from './neon.ts';
 
 /** Only visuals: wind and ground motion come from the deterministic headless event models. */
 export class DisasterView {
-  private readonly groups = new Map<number, THREE.Group>();
+  private readonly groups = new Map<WorldEvent, THREE.Group>();
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -55,15 +55,15 @@ export class DisasterView {
 
   update(events: WorldEvents): void {
     const active = events.active;
-    const live = new Set(active.map(e => e.id));
-    for (const [id, group] of this.groups) if (!live.has(id)) {
+    const live = new Set(active);
+    for (const [event, group] of this.groups) if (!live.has(event)) {
       group.traverse(o => { if (o instanceof THREE.Line) o.geometry.dispose(); });
       this.scene.remove(group);
-      this.groups.delete(id);
+      this.groups.delete(event);
     }
     for (const event of active) {
-      let group = this.groups.get(event.id);
-      if (!group) { group = this.create(event); this.groups.set(event.id, group); }
+      let group = this.groups.get(event);
+      if (!group) { group = this.create(event); this.groups.set(event, group); }
       const age = events.time - event.start;
       group.visible = events.intensity(event) > 0.001;
       const origin = event.kind === 'tornado' ? event.tornado : event.hurricane;

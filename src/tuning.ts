@@ -214,3 +214,20 @@ export const TUNING = {
 } as const;
 
 export const DEG = Math.PI / 180;
+
+/** Game-scale disaster defaults, kept separate from craft tuning. SI units throughout. */
+export const DISASTER_TUNING = {
+  maxEvents: 32,
+  fadeSeconds: 2,
+  tornadoDuration: 120,
+  tornadoCoreRadius: 75,
+  tornadoPeakSpeed: 55,
+  tornadoHeight: 900,
+  tornadoTravelSpeed: 4,
+  hurricaneDuration: 240,
+  hurricaneMaxRadius: 1200,
+  hurricanePeakSpeed: 48,
+  hurricaneHollandB: 1.5,
+  earthquakeDuration: 20,
+  earthquakeAmplitude: 0.12,
+} as const;
