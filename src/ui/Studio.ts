@@ -128,7 +128,9 @@ export class Studio {
 
     const prompt = h('textarea', {
       rows: '3',
-      placeholder: 'Describe a craft… (Ctrl+Enter to design)',
+      id: 'aircraft-prompt',
+      'aria-label': 'Describe your aircraft',
+      placeholder: 'e.g. a small electric quadcopter or a twin-engine cargo plane',
       onkeydown: (e) => {
         const k = e as KeyboardEvent;
         if (k.key === 'Enter' && (k.ctrlKey || k.metaKey)) void this.design(false);
@@ -137,7 +139,7 @@ export class Studio {
     const rounds = h('select', { title: 'Model calls allowed: 1 designer draft, then engineer repair rounds' });
     for (const n of [1, 2, 3, 4, 5]) rounds.append(h('option', { value: String(n) }, `${n} round${n > 1 ? 's' : ''}`));
     rounds.value = '3';
-    const designBtn = h('button', { class: 'primary', onclick: () => this.design(false) }, 'Design new');
+    const designBtn = h('button', { class: 'primary', onclick: () => this.design(false) }, 'Generate aircraft');
     const refineBtn = h('button', { onclick: () => this.design(true), title: 'Modify the craft you are flying, using your flight as feedback' }, 'Refine current');
     const cancel = h('button', { class: 'hidden', onclick: () => this.busy?.abort() }, 'Cancel');
     const liveryPrompt = h('input', { type: 'text', placeholder: 'e.g. racing stripes, red and cream' });
@@ -183,23 +185,24 @@ export class Studio {
       'div',
       { id: 'studio', class: 'panel' },
       h('div', { class: 'studio-head' },
-        h('h3', {}, '✦ STUDIO'),
+        h('h3', {}, '✦ CREATE · STUDIO'),
         this.el.spend,
         h('button', { class: 'studio-close', title: 'Close', 'aria-label': 'Close Studio', onclick: () => this.toggle() }, '✕'),
       ),
       this.el.status,
       h('section', {},
-        h('div', { class: 'row spread' }, h('h4', {}, 'Crew'), h('label', { class: 'inline' }, freeOnly, ' Free only')),
-        crew,
-        settings,
-      ),
-      h('section', {},
-        h('h4', {}, 'Design'),
+        h('label', { for: 'aircraft-prompt', class: 'prompt-label' }, 'Describe your aircraft'),
         prompt,
         chips,
-        h('div', { class: 'row' }, rounds, designBtn, refineBtn, cancel),
+        h('div', { class: 'row' }, designBtn, refineBtn, cancel),
         this.el.log,
         this.el.result,
+      ),
+      settings,
+      h('details', { class: 'settings crew-settings' },
+        h('summary', {}, 'Models & generation settings'),
+        h('div', { class: 'row spread' }, h('h4', {}, 'Crew'), h('label', { class: 'inline' }, freeOnly, ' Free only')),
+        crew, h('label', {}, 'Design and repair rounds', rounds),
       ),
       h('section', {}, h('h4', {}, 'Livery'), h('div', { class: 'row' }, liveryPrompt, paintBtn, unpaintBtn)),
       h('section', {},
@@ -222,6 +225,8 @@ export class Studio {
 
   show(): void {
     this.root.classList.remove('hidden');
+    document.getElementById('studio-open')?.setAttribute('aria-expanded', 'true');
+    this.root.scrollTop = 0;
   }
 
   /** Start a new design from text (e.g. a spoken "design a seaplane"). */
@@ -233,6 +238,9 @@ export class Studio {
 
   toggle(): void {
     this.root.classList.toggle('hidden');
+    const open = !this.root.classList.contains('hidden');
+    document.getElementById('studio-open')?.setAttribute('aria-expanded', String(open));
+    if (!open) document.getElementById('studio-open')?.focus({ preventScroll: true });
   }
 
   // ---------------------------------------------------------------- models & crew
@@ -356,11 +364,15 @@ export class Studio {
     if (!this.canGenerate()) {
       this.setStatus('Add your OpenRouter key under "Key & spend" first (free models cost nothing).', 'error');
       this.el.settings.open = true;
+      this.el.keyInput.scrollIntoView({ block: 'nearest' });
+      this.el.keyInput.focus({ preventScroll: true });
       return null;
     }
     const c = this.crew(job);
     if (!c.model) {
-      this.setStatus(`Pick a ${JOBS[job].label} model first.`, 'error');
+      this.setStatus(`Pick a ${JOBS[job].label} model under Models & generation settings.`, 'error');
+      const models = this.root.querySelector<HTMLDetailsElement>('.crew-settings');
+      if (models) { models.open = true; models.scrollIntoView({ block: 'nearest' }); }
       return null;
     }
     return c;

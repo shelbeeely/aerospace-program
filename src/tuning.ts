@@ -138,6 +138,33 @@ export const TUNING = {
   /** Debris faster than this (m/s) gets continuous collision detection. */
   debrisCcdSpeed: 30,
 
+  // ---------------------------------------------------------------- electrical
+  /** Battery temperature at spawn and the air it cools into (°C). */
+  batteryAmbientC: 20,
+  /** Battery convective cooling time constant (s). */
+  batteryCoolingTime: 600,
+  /** A cell must sit below its Vmin under load this long (s) before the pack cuts off. */
+  batteryCutoffDelay: 0.5,
+  /**
+   * Under-load cutoff per cell as a fraction of cellVmin (the empty resting voltage): 0.9 puts
+   * a LiPo's at ~3.0 V, so hard climbs on a part-charged pack sag without tripping it.
+   */
+  batteryCutoffFraction: 0.9,
+  /**
+   * Generator regulator setpoint as a multiple of the battery's full open-circuit voltage: a
+   * little above it, so the battery recharges and then floats at a trickle.
+   */
+  generatorRegulation: 1.02,
+  /** Generator source resistance in regulation (Ω): how stiffly it holds the setpoint. */
+  generatorResistance: 0.01,
+  /** Avionics drop out below this fraction of the battery's full voltage. */
+  avionicsMinVoltage: 0.7,
+  /** Spike energy (J) that burns out a non-essential avionics box; essential ones take 4×. */
+  avionicsSpikeTolerance: 2000,
+  /** Fraction of a spike's energy that ends up as heat in the battery. */
+  batterySpikeHeatFraction: 0.3,
+  /** Spike energy (J) that doubles the battery's internal resistance (cell damage). */
+  batterySpikeDamageJ: 50000,
   // ---------------------------------------------------------------- block buildings (src/world)
   /** Edge length of one building block (m). */
   blockSize: 3,
@@ -187,3 +214,39 @@ export const TUNING = {
 } as const;
 
 export const DEG = Math.PI / 180;
+
+/** Game-scale disaster defaults, kept separate from craft tuning. SI units throughout. */
+export const DISASTER_TUNING = {
+  maxEvents: 32,
+  fadeSeconds: 2,
+  tornadoDuration: 120,
+  tornadoCoreRadius: 75,
+  tornadoPeakSpeed: 55,
+  tornadoHeight: 900,
+  tornadoTravelSpeed: 4,
+  hurricaneDuration: 240,
+  hurricaneMaxRadius: 1200,
+  hurricanePeakSpeed: 48,
+  hurricaneHollandB: 1.5,
+  earthquakeDuration: 20,
+  earthquakeAmplitude: 0.12,
+} as const;
+
+/** Hazard simulation constants. Electrical coupling is a fraction of the strike energy. */
+export const HAZARDS = {
+  strikeIntervalMin: 5,
+  strikeIntervalRange: 15,
+  strikeRadius: 200,
+  strikeEnergyMinJ: 12000,
+  strikeEnergyRangeJ: 16000,
+  electricalCoupling: 0.4,
+  ignitionTemperature: 280,
+  flameTemperature: 700,
+  maximumTemperature: 1000,
+  ambientTemperature: 20,
+  coolingTime: 8,
+  heatRate: 180,
+  neighborHeatRate: 100,
+  heatDamagePerDegree: 0.5,
+  soundSpeed: 343,
+} as const;

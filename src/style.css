@@ -305,3 +305,46 @@ body.touch-ui.portrait #hangar-bar {
 body.touch-ui.portrait #craft-card { min-width: 0; flex: 1; }
 /* Portrait: keep the turntable in view between the craft card and the Studio sheet. */
 body.mode-hangar.touch-ui.portrait #studio { top: 55dvh; }
+
+/* Mobile actions stay readable; optional tools live behind More. */
+body.touch-ui .tbar, body.touch-ui.portrait .tbar {
+  left: max(10px, env(safe-area-inset-left)); right: max(10px, env(safe-area-inset-right));
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 440px; gap: 6px;
+}
+body.touch-ui .tbar .tbtn, body.touch-ui.portrait .tbar .tbtn {
+  min-width: 0; max-width: none; width: 100%; height: 44px; font-size: 12px; padding: 0 5px; border-radius: 8px;
+}
+.tmore {
+  position: absolute; top: max(62px, calc(env(safe-area-inset-top) + 54px));
+  right: max(10px, env(safe-area-inset-right)); display: grid; grid-template-columns: 1fr 1fr;
+  gap: 8px; padding: 12px; max-width: min(340px, 94vw); max-height: calc(100dvh - 80px);
+  overflow-y: auto; background: #0c1225; border: 1px solid #526b8d; border-radius: 12px;
+  pointer-events: auto; touch-action: pan-y; z-index: 12;
+}
+.tmore .tbtn { min-height: 44px; min-width: 0; border-radius: 8px; font-size: 12px; }
+body.touch-ui .tz-hint { white-space: pre-line; text-align: center; font-size: 11px; line-height: 1.4; color: #d2e5f3; }
+body.touch-ui .lever { margin-bottom: 28px; }
+body.touch-ui .lever-label { white-space: nowrap; font-size: 10px; }
+.panel-close { display: block; margin: 0 0 12px auto; min-height: 44px; padding: 8px 12px; background: #182e49; color: #fff; border: 1px solid #728dab; border-radius: 6px; font: inherit; }
+#studio .prompt-label { font-size: 15px; color: #eaf2f8; font-weight: bold; }
+#studio .studio-head { position: sticky; top: -10px; z-index: 2; background: #0b1424; align-items: center; padding: 6px 0; }
+#studio .studio-close { min-height: 44px; min-width: 44px; }
+#studio .crew-settings > div, #studio .crew-settings > label { margin-top: 10px; }
+#studio-open { display: block; }
+body.touch-ui #studio { background: rgba(8, 16, 30, 0.97); }
+body.touch-ui.portrait #hangar-bar { flex-wrap: wrap; gap: 8px; }
+body.touch-ui.portrait #craft-card { flex: 1 1 100%; padding: 8px 10px; }
+body.touch-ui.portrait #craft-card .row { display: none; }
+body.touch-ui.portrait #craft-card .card-name { margin: 0; max-width: 100%; font-size: 13px; }
+body.touch-ui.portrait #fly-btn, body.touch-ui.portrait #studio-open { flex: 1; padding: 12px; min-height: 48px; font-size: 16px; }
+body.mode-hangar.touch-ui.portrait #studio { top: 22dvh; bottom: max(8px, env(safe-area-inset-bottom)); }
+body.touch-ui #studio .chips { display: none; }
+body.touch-ui #studio .studio-head h3 { font-size: 12px; }
+body.touch-ui #studio .studio-head .muted { font-size: 10px; }
+body.touch-ui #studio textarea { min-height: 80px; }
+body.touch-ui #help details { margin: 12px 0; }
+body.touch-ui #help summary { padding: 10px 0; cursor: pointer; }
+body.touch-ui .lever { margin-bottom: 56px; }
+body.touch-ui .tz-left .tz-hint { left: max(10px, env(safe-area-inset-left)); font-size: 10px; }
+#hangar-bar > label.panel { position: static; }
+body.touch-ui #hangar-bar > label.panel { display: none; }

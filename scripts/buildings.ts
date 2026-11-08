@@ -180,7 +180,10 @@ console.log('\n--- collapse: knock out a whole floor');
   const top = b.list.filter((x) => x.y >= 2).length;
   for (const x of b.list) if (x.y === 1) b.remove(x);
   // Removing blocks directly doesn't run the anchor check; a hit does. Strike one ground block.
-  (sim.town as unknown as { blockImpulse: Map<unknown, number> }).blockImpulse.set(b.list[0], 1e9);
+  sim.town.onContact({
+    collider1: b.list[0].collider!.handle, collider2: -1,
+    totalForceMagnitude: 1e9 / sim.dt, maxForceMagnitude: 1e9 / sim.dt, dt: sim.dt, time: sim.time,
+  });
   const idle0: ControlInputs = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 };
   sim.step(idle0);
   const chunks = sim.town.pool.chunks.filter((c) => c.building === b);
@@ -193,6 +196,33 @@ console.log('\n--- collapse: knock out a whole floor');
   }
   check(shattered || (chunks[0] && chunks[0].body.translation().y < y0 - 1), 'the chunk falls (and shatters on landing)', shattered ? 'shattered' : `y ${y0.toFixed(1)} -> ${chunks[0]?.body.translation().y.toFixed(1)}`);
   check(sim.town.destroyed > 0, 'landing destroyed blocks', `${sim.town.destroyed} destroyed`);
+}
+
+// Exercise the hard limits with live rubble rather than only an intact town.
+console.log('\n--- rubble capacity');
+{
+  const sim = new Simulation(TEST_PLANE);
+  const b = tallest(sim);
+  const pool = sim.town.pool;
+  const block = b.list[0];
+  b.remove(block);
+  // More than one chunk per permitted slot must freeze the oldest chunks, never overflow.
+  let capsHeld = true;
+  for (let i = 0; i < TUNING.maxDynamicChunks + 8; i++) {
+    pool.spawn(b, [block], sim.time);
+    capsHeld &&= pool.dynamicChunks <= TUNING.maxDynamicChunks && pool.dynamicColliders <= TUNING.maxDynamicChunkColliders;
+  }
+  check(capsHeld && pool.chunks.some((c) => c.frozen), 'chunk cap freezes oldest rubble without overflowing');
+  pool.clear();
+  // Three large groups force eviction on the collider limit before the chunk limit.
+  const group = b.list.slice(0, 180);
+  for (const block of group) b.remove(block);
+  for (let i = 0; i < 3; i++) pool.spawn(b, group, sim.time);
+  check(pool.dynamicChunks === 2 && pool.dynamicColliders === group.length * 2 && pool.chunks[0].frozen, 'collider cap freezes oldest compound rubble');
+  const before = pool.chunks.length;
+  check(pool.spawn(b, Array.from({ length: TUNING.maxDynamicChunkColliders + 1 }, () => block), sim.time) === null && pool.chunks.length === before, 'oversized groups cannot bypass collider cap');
+  sim.resetToRunway();
+  check(pool.chunks.length === 0 && b.aliveCount === b.list.length, 'reset removes frozen and dynamic rubble and restores blocks');
 }
 
 if (failed) {

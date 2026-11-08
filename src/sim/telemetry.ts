@@ -1,3 +1,5 @@
+import type { ElectricalTelemetry } from '../craft/ElectricalSystem.ts';
+
 /**
  * A plain, JSON-serializable snapshot of the craft's flight state. This is what the HUD shows
  * and what a future AI/LLM pilot would receive as its observation.
@@ -66,4 +68,6 @@ export interface Telemetry {
   };
   /** 0..1 how deep any rotor is in vortex ring state. */
   vortexRing: number;
+  /** Electrical bus (battery, generator, avionics), or null/absent if the craft has none. */
+  electrical?: ElectricalTelemetry | null;
 }

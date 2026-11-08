@@ -4,11 +4,14 @@ import { Craft } from '../craft/Craft.ts';
 import type { CraftDef, PartDef } from '../craft/types.ts';
 import { validateCraft } from '../craft/validate.ts';
 import type { DebugForce, ForceKind, StepContext } from '../modules/ForceModule.ts';
-import { TUNING } from '../tuning.ts';
+import { HAZARDS, TUNING } from '../tuning.ts';
 import { Atmosphere, calmWeather, densityAltitude, type CloudSample, type Precipitation, type WeatherSettings } from './atmosphere.ts';
 import { DamageModel, type ContactForceHandler, type ContactForceInfo } from './damage.ts';
 import { neutralControls, sanitizeControls, type ControlInputs } from './controls.ts';
-import { LAYOUT } from './layout.ts';
+import { Ocean } from './ocean.ts';
+import { COAST, LAYOUT } from './layout.ts';
+import { FireSystem } from './fire.ts';
+import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
 import type { Telemetry } from './telemetry.ts';
 
@@ -45,6 +48,7 @@ export class Simulation {
   readonly dt = 1 / TUNING.physicsHz;
   readonly world: RAPIER.World;
   readonly atmosphere: Atmosphere;
+  readonly ocean = new Ocean();
   craft: Craft;
   time = 0;
   steps = 0;
@@ -55,7 +59,7 @@ export class Simulation {
   /** Bumped whenever the craft's structure changes (new craft, part broke off, rebuilt). */
   version = 0;
   /** Parts that broke off since the last reset, with the load that broke them. */
-  readonly failures: Array<{ partId: string; load: number; strength: number; time: number; cause?: 'load' | 'impact' }> = [];
+  readonly failures: Array<{ partId: string; load: number; strength: number; time: number; cause?: 'load' | 'impact' | 'lightning' | 'fire' }> = [];
   debris: Debris[] = [];
   /** Contact events of every world step (one persistent queue; drained each step). */
   readonly events = new RAPIER.EventQueue(true);
@@ -63,6 +67,11 @@ export class Simulation {
   damage: DamageModel;
   /** Breakable block buildings and their rubble (src/world). */
   readonly town: Town;
+  readonly fire = new FireSystem();
+  readonly lightning: LightningSystem;
+  private readonly smokeWind = (point: THREE.Vector3, _time: number, out: THREE.Vector3): void => {
+    this.fire.addSmokeWind(point, this.position, this.rotation, out);
+  };
   private readonly contactForceHandlers: ContactForceHandler[] = [];
   private readonly contactInfo: ContactForceInfo = {
     collider1: 0,
@@ -86,6 +95,10 @@ export class Simulation {
 
   controls: ControlInputs = neutralControls();
   private readonly groundCollider: RAPIER.Collider;
+  private readonly groundBody: RAPIER.RigidBody;
+  private readonly groundMotion = new THREE.Vector3();
+  private readonly groundOrigin = new THREE.Vector3();
+  private groundMoving = false;
   private readonly linvel = new THREE.Vector3();
   private readonly angvel = new THREE.Vector3();
   private readonly com = new THREE.Vector3();
@@ -105,13 +118,25 @@ export class Simulation {
     this.world = new RAPIER.World({ x: 0, y: -TUNING.gravity, z: 0 });
     this.world.timestep = this.dt;
     this.atmosphere = new Atmosphere(weather);
+    this.ocean.surge = (x, z) => this.atmosphere.events.surgeHeight(x, z);
+    this.lightning = new LightningSystem(weather.seed);
+    // Shared atmosphere extension supplied by the world-events unit. Until that unit is
+    // merged, the simulation's air-velocity paths below provide the same smoke contribution.
+    const atmosphere = this.atmosphere as Atmosphere & { windContributors?: Array<(point: THREE.Vector3, time: number, out: THREE.Vector3) => void> };
+    atmosphere.windContributors?.push(this.smokeWind);
 
     const half = LAYOUT.groundSize / 2;
-    const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -5, 0));
+    const landWidth = COAST.x + half;
+    const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation((COAST.x - half) / 2, -5, 0));
+    this.groundBody = ground;
+    this.groundOrigin.copy(ground.translation());
     this.groundCollider = this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(half, 5, half).setFriction(0.8).setRestitution(0.1),
+      RAPIER.ColliderDesc.cuboid(landWidth / 2, 5, half).setFriction(0.8).setRestitution(0.1),
       ground,
     );
+    // Deep seabed replaces the old solid ground east of the coast.
+    const seabed = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation((COAST.x + half) / 2, -COAST.depth - 5, 0));
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid((half - COAST.x) / 2, 5, half), seabed);
     this.town = new Town(this.world);
 
     const { position, rotation } = this.spawnPose(null);
@@ -143,14 +168,16 @@ export class Simulation {
       cloud: (p) => this.atmosphere.cloudAt(p, 0, this.cloudSample),
       groundWetness: 0,
       hasFuelSystem: false,
-      groundHeight: () => 0,
+      groundHeight: (x) => x > COAST.x + self.groundMotion.x ? -COAST.depth : self.groundMotion.y,
       pointVelocity(p, out) {
         _tmp.copy(p).sub(self.com);
         return out.crossVectors(self.angvel, _tmp).add(self.linvel);
       },
       airVelocity(p, out) {
         this.pointVelocity(p, out);
-        return out.sub(self.atmosphere.windAt(p, 0, _wind));
+        self.atmosphere.windAt(p, 0, _wind);
+        if (!('windContributors' in self.atmosphere)) self.smokeWind(p, self.time, _wind);
+        return out.sub(_wind);
       },
       toWorldPoint(local, out) {
         return out.copy(local).applyQuaternion(self.rotation).add(self.position);
@@ -270,9 +297,15 @@ export class Simulation {
     this.failures.length = 0;
     this.filteredLoads.clear();
     this.damage.reset(this.craft);
+    this.lightning.reset(this.atmosphere.settings.seed);
     const { position, rotation } = this.spawnPose(this.craft);
     this.craft.reset(position, rotation);
+    this.fire.reset(this.craft.parts, this.tankFuel());
     this.atmosphere.restart();
+    this.groundMotion.set(0, 0, 0);
+    this.groundBody.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+    this.groundBody.setTranslation(this.groundOrigin, true);
+    this.groundMoving = false;
     this.settleGroundWater();
     this.controls = neutralControls();
     this.prevVelocity.set(0, 0, 0);
@@ -317,12 +350,23 @@ export class Simulation {
     while (this.debugForces.length) this.forcePool.push(this.debugForces.pop()!);
 
     this.atmosphere.advance(this.dt);
+    this.updateGroundMotion();
     const body = this.craft.body;
     body.resetForces(false);
     body.resetTorques(false);
     this.readBodyState();
     this.loadsThisStep.clear();
+    this.craft.stepElectrical(this.dt, this.atmosphere.air(this.com.y).temperature - 273.15);
     for (const m of this.craft.modules) m.step(this.ctx);
+    this.ocean.apply(this.craft, this.time, this.dt, ({ partId, force }) => {
+      for (let i = 0; i < body.numColliders(); i++) {
+        const collider = body.collider(i);
+        if (this.craft.partIdForCollider(collider.handle) !== partId) continue;
+        this.damage.onContact({ collider1: collider.handle, collider2: -2, totalForceMagnitude: force,
+          maxForceMagnitude: force, dt: this.dt, time: this.time });
+        break;
+      }
+    });
     this.craft.updateSoftCcd(this.dt);
 
     this.world.step(this.events);
@@ -332,6 +376,7 @@ export class Simulation {
     // After an explosion reset the step's contacts belong to a craft that's gone: drop them.
     this.dispatchContactForces(resets === this.explosionResets);
     this.town.update(this.time);
+    this.stepHazards();
     this.checkStructure();
     this.applyImpactDamage();
     this.craft.updateFuelMass();
@@ -347,6 +392,115 @@ export class Simulation {
     this.time += this.dt;
     this.steps++;
     this.lastStepMs = performance.now() - t0;
+  }
+
+  /** Drive the runway with analytic ground motion; fixed outside quakes preserves normal cards. */
+  private updateGroundMotion(): void {
+    const moving = this.atmosphere.events.active.some(e => e.kind === 'earthquake');
+    if (moving) {
+      if (!this.groundMoving) this.groundBody.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+      this.atmosphere.events.groundDisplacement(this.groundMotion);
+      this.groundBody.setNextKinematicTranslation({
+        x: this.groundOrigin.x + this.groundMotion.x,
+        y: this.groundOrigin.y + this.groundMotion.y,
+        z: this.groundOrigin.z + this.groundMotion.z,
+      });
+    } else if (this.groundMoving) {
+      this.groundMotion.set(0, 0, 0);
+      this.groundBody.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+      this.groundBody.setTranslation(this.groundOrigin, true);
+    }
+    this.groundMoving = moving;
+  }
+
+  private tankFuel(): Map<string, number> {
+    const fuel = new Map<string, number>();
+    for (const t of this.craft.fuelTanks) fuel.set(t.partId, (fuel.get(t.partId) ?? 0) + t.fuel);
+    return fuel;
+  }
+
+  /** Actual, still-standing conductors, including individual craft parts. */
+  lightningTargets(): StrikeTarget[] {
+    const targets: StrikeTarget[] = this.craft.parts.map((p) => {
+      const position = new THREE.Vector3(...p.position).applyQuaternion(this.rotation).add(this.position);
+      const shape = p.shape;
+      const localRotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(...(p.rotationDeg ?? [0, 0, 0]).map((d) => d * Math.PI / 180) as [number, number, number]));
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.rotation.clone().multiply(localRotation).invert());
+      const axialProjection = shape.type === 'cylinder' ? up[shape.axis ?? 'y'] : 0;
+      const height = shape.type === 'sphere' ? shape.radius : shape.type === 'box'
+        ? (Math.abs(up.x) * shape.size[0] + Math.abs(up.y) * shape.size[1] + Math.abs(up.z) * shape.size[2]) / 2
+        : Math.abs(axialProjection) * shape.length / 2 + Math.sqrt(Math.max(0, 1 - axialProjection ** 2)) * shape.radius;
+      position.y += height;
+      return { id: p.id, craftPart: p.id, position };
+    });
+    for (const building of this.town.buildings) {
+      let top: THREE.Vector3 | null = null;
+      for (const block of building.list) if (block.alive && block.collider) {
+        const p = block.collider.translation();
+        if (!top || p.y > top.y) top = new THREE.Vector3(p.x, p.y, p.z);
+      }
+      if (top) top.y += TUNING.blockSize / 2;
+      if (top) targets.push({ id: `building:${building.def.id}`, position: top });
+    }
+    return targets;
+  }
+
+  /** Debug/manual strike at a world position; the same interception rules as natural strikes. */
+  triggerLightning(x = this.position.x, z = this.position.z): LightningStrike {
+    const strike = this.lightning.trigger(this.time, x, z, this.lightningTargets(), this.atmosphere.settings.cloudBase);
+    this.applyLightning(strike);
+    return strike;
+  }
+
+  private hazardDamage(partId: string, energyJ: number, cause: 'lightning' | 'fire'): void {
+    const hp = this.damage.hp.get(partId);
+    if (hp === undefined || !Number.isFinite(hp)) return;
+    const left = Math.max(0, hp - energyJ);
+    this.damage.hp.set(partId, left);
+    if (left === 0) this.breakPart(partId, energyJ, this.craft.strength.get(partId) ?? Infinity, cause);
+  }
+
+  private applyLightning(strike: LightningStrike): void {
+    const entry = strike.target.craftPart;
+    if (!entry) return;
+    const parts = [...this.craft.parts];
+    const start = parts.find((p) => p.id === entry);
+    if (!start) return;
+    // Current seeks the lowest exit. Include every part close to that entry-to-exit path.
+    const world = (p: PartDef) => new THREE.Vector3(...p.position).applyQuaternion(this.rotation).add(this.position);
+    const exit = parts.reduce((a, b) => world(a).y < world(b).y ? a : b);
+    const a = world(start), b = world(exit), ab = b.clone().sub(a);
+    const l2 = ab.lengthSq();
+    const path = parts.filter((p) => {
+      const point = world(p);
+      const t = l2 > 0 ? Math.max(0, Math.min(1, point.clone().sub(a).dot(ab) / l2)) : 0;
+      return p.id === entry || p.id === exit.id || point.distanceTo(a.clone().addScaledVector(ab, t)) < 1;
+    });
+    this.craft.onElectricalSpike(strike.energyJ * HAZARDS.electricalCoupling);
+    for (const p of path) {
+      if (p.modules?.some((m) => m.type === 'fuel')) this.fire.ignite(p.id);
+      this.hazardDamage(p.id, strike.energyJ / Math.max(1, path.length), 'lightning');
+    }
+  }
+
+  private stepHazards(): void {
+    const intensity = Math.max(this.atmosphere.settings.storm ?? 0,
+      Math.min(1, this.atmosphere.events.rainAt(this.position.x, this.position.z) / 50));
+    const strike = this.lightning.step(this.dt, this.time, intensity, this.position,
+      () => this.lightningTargets(), this.atmosphere.settings.cloudBase,
+      (this.atmosphere.settings.precipitation ?? 0) * this.linvel.length() * 0.00001);
+    if (strike) this.applyLightning(strike);
+    if (!this.fire.active) return;
+    this.fire.step(this.dt, new Set(this.craft.parts.map((p) => p.id)), this.tankFuel());
+    for (const fire of this.fire.parts.values()) {
+      if (fire.consumed > 0) {
+        let left = fire.consumed;
+        for (const tank of this.craft.fuelTanks) if (tank.partId === fire.id) {
+          const burn = Math.min(tank.fuel, left); tank.fuel -= burn; left -= burn;
+        }
+      }
+      if (fire.burning) this.hazardDamage(fire.id, this.dt * Math.max(0, fire.temperature - 200) * HAZARDS.heatDamagePerDegree, 'fire');
+    }
   }
 
   private readonly groundProbe = new THREE.Vector3();
@@ -387,7 +541,7 @@ export class Simulation {
     for (const [partId, load] of this.loadsThisStep) {
       const f = (this.filteredLoads.get(partId) ?? 0) + (load - (this.filteredLoads.get(partId) ?? 0)) * k;
       this.filteredLoads.set(partId, f);
-      const strength = this.craft.strength.get(partId) ?? Infinity;
+      const strength = (this.craft.strength.get(partId) ?? Infinity) * this.fire.strengthFactor(partId);
       if (f > strength) broken.push([partId, f, strength]);
     }
     for (const [partId, load, strength] of broken) this.breakPart(partId, load, strength, 'load');
@@ -399,7 +553,7 @@ export class Simulation {
   }
 
   /** Break a part off: debris body, failure record, structure version bump. */
-  private breakPart(partId: string, load: number, strength: number, cause: 'load' | 'impact'): void {
+  private breakPart(partId: string, load: number, strength: number, cause: 'load' | 'impact' | 'lightning' | 'fire'): void {
     if (this.craft.parts.length <= 1) return; // never detach the last piece
     const part = this.craft.parts.find((p) => p.id === partId);
     const body = this.craft.detachPart(partId);
@@ -415,6 +569,7 @@ export class Simulation {
       });
       this.filteredLoads.delete(partId);
       this.damage.remove(partId);
+      this.fire.parts.delete(partId);
       this.version++;
     }
   }
@@ -435,7 +590,9 @@ export class Simulation {
 
   /** Wind at the craft right now (m/s, world). */
   windAtCraft(out = new THREE.Vector3()): THREE.Vector3 {
-    return this.atmosphere.windAt(this.com, 0, out);
+    this.atmosphere.windAt(this.com, 0, out);
+    if (!('windContributors' in this.atmosphere)) this.smokeWind(this.com, this.time, out);
+    return out;
   }
 
   telemetry(): Telemetry {
@@ -507,6 +664,7 @@ export class Simulation {
       oat: r(air.temperature - 273.15, 1),
       densityAltitude: Math.round(densityAltitude(air.density)),
       vortexRing: r(rotors.reduce((a, x) => Math.max(a, x.vortexRing), 0)),
+      electrical: craft.electrical?.telemetry() ?? null,
       weather: {
         precipitation: r(precip.rate, 1),
         precipitationKind: precip.kind,

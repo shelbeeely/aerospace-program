@@ -1,8 +1,9 @@
 import * as THREE from 'three/webgpu';
 import type { Debris } from '../sim/Simulation.ts';
 import { geometryFor } from './CraftView.ts';
+import { neonFillMaterial, neonize, neonTint } from './neon.ts';
 
-/** Draws parts that broke off, following their own rigid bodies. */
+/** Draws parts that broke off, following their own rigid bodies: neon edges on a dark fill. */
 export class DebrisView {
   private readonly items = new Map<Debris, THREE.Mesh>();
 
@@ -15,6 +16,7 @@ export class DebrisView {
       if (!live.has(d)) {
         this.scene.remove(mesh);
         mesh.geometry.dispose();
+        for (const c of mesh.children) if (c instanceof THREE.LineSegments) c.geometry.dispose();
         (mesh.material as THREE.Material).dispose();
         this.items.delete(d);
       }
@@ -22,10 +24,9 @@ export class DebrisView {
     for (const d of debris) {
       let mesh = this.items.get(d);
       if (!mesh) {
-        mesh = new THREE.Mesh(
-          geometryFor(d.part.shape),
-          new THREE.MeshStandardMaterial({ color: d.part.color, roughness: 0.7, flatShading: true }),
-        );
+        const geo = geometryFor(d.part.shape);
+        mesh = new THREE.Mesh(geo, neonFillMaterial(neonTint(d.part.color).multiplyScalar(0.035)));
+        mesh.add(neonize(geo, neonTint(d.part.color)));
         mesh.castShadow = true;
         this.scene.add(mesh);
         this.items.set(d, mesh);

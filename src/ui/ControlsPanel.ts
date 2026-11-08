@@ -13,7 +13,7 @@ const KEYBOARD: Array<[string, string]> = [
   ['R', 'reset'],
   ['C', 'chase / orbit camera'],
   ['[ / ]', 'previous / next craft'],
-  ['N', 'Studio'],
+  ['N', 'Hangar / flight'],
   ['F3', 'debug & weather'],
   ['H', 'this panel'],
 ];
@@ -23,7 +23,9 @@ const TOUCH: Array<[string, string]> = [
   ['Left thumb ↔', 'yaw'],
   ['Right thumb', 'stick: drag down = nose up, sideways = roll'],
   ['BRAKE', 'hold to brake'],
-  ['↺ ◎ ‹ › ✦ ⚙', 'reset, camera, craft, Studio, debug'],
+  ['Hangar', 'choose a craft or open Create / Studio'],
+  ['Camera', 'switch chase / orbit view'],
+  ['More', 'reset, craft selection, weather, flaps, sound and photos'],
 ];
 
 const PROFILE_TIPS: Record<string, string> = {
@@ -101,12 +103,18 @@ export class ControlsPanel {
     settings.append(touchSel, expoLabel);
 
     const gp = p.profile === 'rotorcraft' ? GAMEPAD_HELP.rotorcraft : GAMEPAD_HELP.airplane;
+    const close = document.createElement('button');
+    close.type = 'button'; close.className = 'panel-close'; close.textContent = 'Close controls ✕';
+    close.addEventListener('click', () => this.root.classList.add('hidden'));
+    const extraControls = document.createElement('details');
+    extraControls.append(h('summary', 'Gamepad controls'), table([...gp, ...GAMEPAD_COMMON]));
     this.root.replaceChildren(
+      close,
       h('h3', `Controls · ${profileLabel}`),
       h('p', PROFILE_TIPS[p.profile] ?? ''),
       ...(touchUi ? [h('h4', 'Touch'), table(TOUCH)] : []),
-      h('h4', pads.length ? `Gamepad · ${(pads[0]!.id.split('(')[0] || 'connected').trim()}` : 'Gamepad (connect one and press a button)'),
-      table([...gp, ...GAMEPAD_COMMON]),
+      ...(touchUi ? [extraControls] : [h('h4', pads.length ? `Gamepad · ${(pads[0]!.id.split('(')[0] || 'connected').trim()}` : 'Gamepad (connect one and press a button)'),
+      table([...gp, ...GAMEPAD_COMMON])]),
       ...(touchUi ? [] : [h('h4', 'Keyboard'), table(KEYBOARD)]),
       h('h4', 'Settings'),
       settings,
