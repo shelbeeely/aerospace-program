@@ -26,7 +26,8 @@ Part = {
   "collider"?: boolean (default true; set false for thin landing-gear legs),
   "color": CSS hex colour,
   "modules"?: Module[],
-  "strength"?: N (load before the part breaks off; omit for a sensible default; 0 = unbreakable)
+  "strength"?: N (load before the part breaks off; omit for a sensible default; 0 = unbreakable),
+  "hp"?: J (impact energy the part absorbs before breaking off in a collision; omit for a default from mass and size; 0 = indestructible)
 }
 Mass and inertia come ONLY from part masses and shapes. Modules are massless and attach to their part. Each module "offset" is relative to the part origin, in the part's rotated frame.
 

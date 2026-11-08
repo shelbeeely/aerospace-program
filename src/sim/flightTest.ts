@@ -9,6 +9,12 @@ import type { Telemetry } from './telemetry.ts';
 import { lighterThanAirCard, rotorcraftCard, vehicleKind, type VehicleKind } from './vehicleTests.ts';
 
 /** Numbers computed from the design itself, before flying. */
+/** Human-readable failure line (structural overload or impact damage). */
+export function describeFailure(f: { partId: string; load: number; strength: number; cause?: string }, advice: string): string {
+  if (f.cause === 'impact') return `Impact damage: "${f.partId}" broke off in a collision (${(f.load / 1000).toFixed(1)} kN). Avoid hitting the ground or obstacles, or give the part more "hp".`;
+  return `Structural failure: "${f.partId}" broke off at ${(f.load / 1000).toFixed(1)} kN (strength ${(f.strength / 1000).toFixed(1)} kN). ${advice}`;
+}
+
 export interface DesignMetrics {
   mass: number;
   /** Positive = CoM ahead of CoL (pitch-stable), as a fraction of mean wing chord. */
@@ -41,7 +47,7 @@ export interface FlightReport {
   handsOffStable: boolean;
   crashed: boolean;
   /** Parts that broke off during the test. */
-  failures: Array<{ partId: string; load: number; strength: number }>;
+  failures: Array<{ partId: string; load: number; strength: number; cause?: string }>;
   /** Actionable problems, phrased so a designer (human or model) can fix them. */
   issues: string[];
   /** Short timeline of what happened. */
@@ -169,8 +175,8 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
     const card = kind === 'rotorcraft' ? await rotorcraftCard(sim, step, state) : await lighterThanAirCard(sim, step, state);
     issues.push(...card.issues);
     log.push(...card.log);
-    const failures = sim.failures.map(({ partId, load, strength }) => ({ partId, load, strength }));
-    for (const f of failures) issues.push(`Structural failure: "${f.partId}" broke off at ${(f.load / 1000).toFixed(1)} kN (strength ${(f.strength / 1000).toFixed(1)} kN). Strengthen it or reduce the load on it.`);
+    const failures = sim.failures.map(({ partId, load, strength, cause }) => ({ partId, load, strength, cause }));
+    for (const f of failures) issues.push(describeFailure(f, 'Strengthen it or reduce the load on it.'));
     if (sim.craft.fuelCapacity > 0 && sim.craft.fuel <= 0) issues.push('Ran out of fuel during the test: add tank capacity.');
     if (crashed) {
       log.push(`CRASH: ${crashNote}`);
@@ -301,8 +307,8 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
     issues.push(`Crashed: ${crashNote}.`);
   }
 
-  const failures = sim.failures.map(({ partId, load, strength }) => ({ partId, load, strength }));
-  for (const f of failures) issues.push(`Structural failure: "${f.partId}" broke off at ${(f.load / 1000).toFixed(1)} kN (strength ${(f.strength / 1000).toFixed(1)} kN). Strengthen it (part "strength") or reduce the load (e.g. limit control throws).`);
+  const failures = sim.failures.map(({ partId, load, strength, cause }) => ({ partId, load, strength, cause }));
+  for (const f of failures) issues.push(describeFailure(f, 'Strengthen it (part "strength") or reduce the load (e.g. limit control throws).'));
   if (sim.craft.fuelCapacity > 0 && sim.craft.fuel <= 0) issues.push('Ran out of fuel during the test: add tank capacity.');
 
   let score = 0;
