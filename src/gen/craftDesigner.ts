@@ -1,7 +1,10 @@
 import { BLIMP, HELICOPTER, QUADCOPTER } from '../craft/builtins.ts';
+import { JET } from '../craft/jet.ts';
 import { TEST_PLANE } from '../craft/testPlane.ts';
+import { TWIN_PLANE } from '../craft/twinPlane.ts';
 import type { CraftDef } from '../craft/types.ts';
 import { validateCraft } from '../craft/validate.ts';
+import { TUNING } from '../tuning.ts';
 import { flightTest, formatReport, type FlightReport } from '../sim/flightTest.ts';
 import { extractJson, type ChatMessage, type OpenRouter } from './openrouter.ts';
 
@@ -39,9 +42,13 @@ Mass and inertia come ONLY from part masses and shapes. Modules are massless and
    - Ailerons: LEFT wing (x<0) gain +1, RIGHT wing (x>0) gain -1.
    - Flaps: channel "flaps", gain 1, maxDeflectionDeg 30, on the INBOARD wing panels (trailing edge, chordFraction 0.25). The pilot lowers them in 3 notches.
    - Vertical fin: give the part "rotationDeg":[0,0,90] (span then points up, normal points left, -X). Rudder: channel "yaw", gain +1 when the fin is behind the CoM.
-2. Engine: {"type":"engine","offset"?:[x,y,z],"maxThrust":N,"propMaxSpeed"?:m/s,"propRadius"?:m,"propDirection"?:1|-1|0,"fuelFlow"?:kg/s,"spoolTime"?:s}
-   Thrust acts along the part's -Z (forward) through the module point. For a propeller, propMaxSpeed is the airspeed where thrust fades to zero (80-120 typical). Omit it for jets. Keep propeller tips at least 0.2 m above the ground.
-   Propellers make reaction torque and P-factor (a single prop rolls/yaws the craft). Twin engines with opposite propDirection cancel it.
+2. Engine: {"type":"engine","offset"?:[x,y,z],"maxThrust":N,"kind"?:"prop"|"turbofan","propMaxSpeed"?:m/s,"propRadius"?:m,"propDirection"?:1|-1|0,"bypassRatio"?:number,"afterburner"?:{"thrustRatio":number,"fuelRatio":number},"fuelFlow"?:kg/s,"spoolTime"?:s}
+   Thrust acts along the part's -Z (forward) through the module point. maxThrust is the static sea-level thrust.
+   - Propeller ("kind":"prop" or just set propMaxSpeed): propMaxSpeed is the airspeed where thrust fades to zero (80-130 typical). Keep propeller tips at least 0.2 m above the ground. Thrust scales with air density.
+     Propellers make reaction torque and P-factor (a single prop rolls/yaws the craft). Twin engines with opposite propDirection (counter-rotating: left 1, right -1) cancel it.
+   - Turbofan ("kind":"turbofan", NO propMaxSpeed/propDirection/propRadius): thrust = maxThrust × σ^${TUNING.turbofanDensityExponent} × (1 - ${TUNING.turbofanMachLapse}·M·(1+BPR)/(1+0.1·BPR)), σ = density ratio, M = Mach, BPR = bypassRatio (default 1; 0-1 trainers/fighters, 3-5 business jets: more static thrust per fuel but faster lapse with speed). Fuel per newton rises with Mach. Expect ~30% of static thrust at Mach 0.8 and 10 km. spoolTime 1-3 s for jets.
+     afterburner (optional, turbofan only): above ${Math.round(TUNING.afterburnerThrottle * 100)}% throttle once spooled up, thrust × thrustRatio (1.3-1.7) and fuel flow × fuelRatio (3-5). Great for takeoff and climb, very thirsty.
+   - Omitting both kind and propMaxSpeed gives a simple jet with flat thrust (density scaling only).
    If the craft has fuel tanks, engines burn fuel and stop when it runs out. Without tanks they run forever.
 3. Wheel (raycast suspension): {"type":"wheel","offset"?:[x,y,z],"radius":m,"restLength":m,"stiffness":N/m,"damping":N·s/m,"maxSteerDeg"?:deg,"brakes"?:boolean}
    The offset is the suspension mount. A ray goes straight down (the part's -Y) for restLength+radius, so the lowest wheel point is mount.y - restLength - radius.
@@ -64,7 +71,9 @@ Mass and inertia come ONLY from part masses and shapes. Modules are massless and
 ## Design rules that matter in this sim
 Airplanes:
 - Pitch stability: the CoM must be AHEAD (more negative z) of the centre of lift, by 10-40% of the mean wing chord. The game computes the centre of lift as the lift-slope × area weighted average of all roughly horizontal surfaces, tail included.
-- Thrust/weight 0.4-0.6 for propeller planes, more for jets. Wing loading 30-70 kg/m² (lower = slower takeoff).
+- Thrust/weight (static maxThrust, without afterburner) 0.4-0.6 for propeller planes, 0.5-0.8 for jets. Wing loading 30-70 kg/m² for light props (lower = slower takeoff), ~70-90 for light twins, 150-300 for jets (they need the long runway).
+- Twins: put the engines in wing nacelles close to the fuselage, props ahead of the leading edge, counter-rotating, with the main gear under the nacelles.
+- Jets: engine in the rear fuselage, fuel near the CoM (wings, fuselage over the wing). Make the fuselage, each wing, each tail surface and the engine separate parts so damage is local.
 - The runway has about 1300 m of ground roll available. The test autopilot rotates at about 1.15 × the stall speed.
 - Split each main wing into an inboard and an outboard panel (two aero modules on one wing part, offset along span). Give the outboard panel 2-3° LESS incidence (washout) and put the aileron on it, so the tips stall last.
 - Give the wings 2-5° dihedral via the wing part's rotationDeg z (right wing +z, left wing -z) for roll stability.
@@ -90,6 +99,10 @@ General:
 
 ## Reference designs (each flies well and scores 100/100 on its test card)
 Airplane: ${JSON.stringify(TEST_PLANE)}
+
+Light twin: ${JSON.stringify(TWIN_PLANE)}
+
+Jet trainer: ${JSON.stringify(JET)}
 
 Quadcopter: ${JSON.stringify(QUADCOPTER)}
 

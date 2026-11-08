@@ -89,6 +89,19 @@ export interface EngineDef {
   propDirection?: 1 | -1 | 0;
   /** Fuel burn at full thrust (kg/s). Default scales with maxThrust (see tuning). */
   fuelFlow?: number;
+  /**
+   * Engine model. 'prop' (needs propMaxSpeed) or 'turbofan': thrust lapses with density
+   * (σ^0.7) and with Mach (more for higher bypass ratios), and fuel per newton (TSFC) rises
+   * with Mach. Omit for the legacy models: prop if propMaxSpeed is set, else flat jet thrust.
+   */
+  kind?: 'prop' | 'turbofan';
+  /** Turbofan bypass ratio (0 = turbojet, ~0.3-1 fighters/trainers, 3-5 business jets). Default 1. */
+  bypassRatio?: number;
+  /**
+   * Turbofan reheat: above 95% throttle, thrust × thrustRatio (~1.3-1.7) and fuel flow ×
+   * fuelRatio (~3-5: afterburning is very thirsty).
+   */
+  afterburner?: { thrustRatio: number; fuelRatio: number };
 }
 
 /** Fuel carried in the part. Its mass moves the CoM as it burns. */

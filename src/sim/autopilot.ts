@@ -76,7 +76,7 @@ export class Autopilot implements ControlSource {
     // Keep the ball centred; on the ground, steer with the rudder/nosewheel toward heading.
     const yaw = t.onGround
       ? clamp(wrap180(this.targets.heading - t.heading) * 0.1, -1, 1)
-      : clamp(-t.sideslip * 0.1, -1, 1);
+      : clamp(t.sideslip * 0.1, -1, 1); // sideslip > 0: air from the right, so right rudder
 
     return { pitch, roll, yaw, throttle, brake: 0 };
   }

@@ -1,4 +1,6 @@
+import { JET } from './jet.ts';
 import { TEST_PLANE } from './testPlane.ts';
+import { TWIN_PLANE } from './twinPlane.ts';
 import type { CraftDef, RotorDef } from './types.ts';
 
 /**
@@ -248,9 +250,14 @@ export interface BuiltinCraft {
   hint: string;
 }
 
+/**
+ * The craft offered in the vehicle picker: single prop, twin prop, jet and quadcopter. Each
+ * scores 100/100 on its test card in calm air and in the "moderate" weather preset (see
+ * scripts/headless.ts). HELICOPTER and BLIMP stay exported as reference designs.
+ */
 export const BUILTINS: BuiltinCraft[] = [
-  { id: 'trainer', label: 'Trainer T-1', craft: TEST_PLANE, hint: 'Z for full throttle, S to rotate at ~60 kt.' },
+  { id: 'trainer', label: 'Trainer T-1 (single prop)', craft: TEST_PLANE, hint: 'Z for full throttle, S to rotate at ~60 kt. "." lowers flaps a notch. Expect a left swing from prop torque.' },
+  { id: 'twin', label: 'Twinstar B-2 (twin prop)', craft: TWIN_PLANE, hint: 'Counter-rotating props: no swing. Z for full throttle, rotate with S at ~85 kt.' },
+  { id: 'jet', label: 'Hawkeye J-3 (jet trainer)', craft: JET, hint: 'Throttle above 95% lights the afterburner (thirsty). Rotate at ~145 kt; throttle back below 95% to cruise.' },
   { id: 'quad', label: 'Lifter Q-4 (quadcopter)', craft: QUADCOPTER, hint: 'Throttle 50% ≈ hover. W/S/A/D tilt, Q/E yaw.' },
-  { id: 'heli', label: 'Kestrel H-2 (helicopter)', craft: HELICOPTER, hint: 'Throttle = collective (~50% hover). W/S/A/D cyclic, Q/E tail rotor.' },
-  { id: 'blimp', label: 'Skyship B-1 (blimp)', craft: BLIMP, hint: 'Slightly heavy: throttle up and pitch up (S) to climb on the hull lift.' },
 ];

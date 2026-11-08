@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { CraftDef } from '../craft/types.ts';
 import { TUNING } from '../tuning.ts';
+import type { WeatherSettings } from './atmosphere.ts';
 import { Autopilot } from './autopilot.ts';
 import { LAYOUT } from './layout.ts';
 import { Simulation } from './Simulation.ts';
@@ -50,6 +51,8 @@ export interface FlightReport {
 export interface FlightTestOptions {
   /** Yield to the event loop every N steps so a browser UI stays responsive. */
   yieldEvery?: number;
+  /** Weather to fly the card in (default: calm). */
+  weather?: WeatherSettings;
 }
 
 const r1 = (x: number) => Math.round(x * 10) / 10;
@@ -99,7 +102,7 @@ export function analyzeDesign(sim: Simulation): DesignMetrics {
  * Runs headless, ~150 simulated seconds in well under a second.
  */
 export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): Promise<FlightReport> {
-  const sim = new Simulation(def);
+  const sim = new Simulation(def, opts.weather);
   const design = analyzeDesign(sim);
   const kind = vehicleKind(sim);
   const issues: string[] = [];

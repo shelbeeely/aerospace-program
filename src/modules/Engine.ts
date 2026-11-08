@@ -26,8 +26,13 @@ export class Engine implements ForceModule {
   readonly localRotation: THREE.Quaternion;
   readonly def: EngineDef;
   readonly isProp: boolean;
+  readonly isTurbofan: boolean;
   readonly propDirection: number;
   readonly fuelFlow: number;
+  /** Afterburner level 0..1 (lags the throttle crossing the light-up threshold). */
+  afterburner = 0;
+  /** Flight Mach number at the engine, last step. */
+  mach = 0;
 
   /** Current spool 0..1 (lags throttle). */
   spool = 0;
@@ -46,8 +51,10 @@ export class Engine implements ForceModule {
     this.def = def;
     this.localPosition = position;
     this.localRotation = rotation;
-    this.isProp = def.propMaxSpeed !== undefined;
-    this.propDirection = def.propDirection ?? (this.isProp ? 1 : 0);
+    this.isTurbofan = def.kind === 'turbofan';
+    this.isProp = !this.isTurbofan && def.propMaxSpeed !== undefined;
+    // Turbofans have no propeller: no reaction torque or P-factor.
+    this.propDirection = this.isTurbofan ? 0 : (def.propDirection ?? (this.isProp ? 1 : 0));
     this.fuelFlow = def.fuelFlow ?? def.maxThrust * TUNING.fuelPerNewtonSecond;
   }
 
@@ -55,6 +62,17 @@ export class Engine implements ForceModule {
     this.spool = 0;
     this.thrust = 0;
     this.starved = false;
+    this.afterburner = 0;
+    this.mach = 0;
+  }
+
+  /**
+   * Turbofan thrust as a fraction of static sea-level dry thrust at full spool, for a density
+   * ratio and Mach number: σ^0.7 × (1 − 0.25·M·(1+BPR)/(1+0.1·BPR)).
+   */
+  static turbofanLapse(sigma: number, mach: number, bypassRatio: number): number {
+    const ram = 1 - (TUNING.turbofanMachLapse * mach * (1 + bypassRatio)) / (1 + 0.1 * bypassRatio);
+    return Math.pow(Math.max(0, sigma), TUNING.turbofanDensityExponent) * Math.max(0, ram);
   }
 
   /** Craft-local thrust direction. */
@@ -71,10 +89,36 @@ export class Engine implements ForceModule {
 
     ctx.toWorldPoint(this.localPosition, _p);
     ctx.toWorldDir(this.localDirection(_dir), _dir);
+    ctx.airVelocity(_p, _v);
+    const air = this.isTurbofan ? ctx.air(_p.y) : undefined;
+    const sigma = (air ? air.density : ctx.airDensity(_p.y)) / TUNING.seaLevelDensity;
+
+    // Engine-specific thrust factor (fraction of maxThrust at full spool) and fuel factor
+    // (fraction of fuelFlow at full spool).
+    let thrustFactor: number;
+    let fuelFactor = 1;
+    if (this.isTurbofan) {
+      this.mach = _v.length() / air!.speedOfSound;
+      const dry = Engine.turbofanLapse(sigma, this.mach, def.bypassRatio ?? 1);
+      const ab = def.afterburner;
+      // Reheat lights only at full military power: throttle past the detent AND spooled up.
+      const lit = ab && !this.starved && command > TUNING.afterburnerThrottle && this.spool > TUNING.afterburnerThrottle ? 1 : 0;
+      this.afterburner += (lit - this.afterburner) * (1 - Math.exp(-ctx.dt / TUNING.afterburnerSpoolTime));
+      const abThrust = ab ? 1 + (ab.thrustRatio - 1) * this.afterburner : 1;
+      const abFuel = ab ? 1 + (ab.fuelRatio - 1) * this.afterburner : 1;
+      thrustFactor = dry * abThrust;
+      // Fuel follows dry thrust (gas-generator work) with TSFC rising with Mach; reheat on top.
+      fuelFactor = dry * (1 + TUNING.turbofanTsfcMach * this.mach) * abFuel;
+    } else {
+      // Air-breathing: thrust scales with density.
+      thrustFactor = sigma;
+      // Propellers lose thrust as airspeed approaches their pitch speed.
+      if (this.isProp) thrustFactor *= Math.max(0, 1 - Math.max(0, _v.dot(_dir)) / def.propMaxSpeed!);
+    }
 
     // Fuel: burn in proportion to spool. Engines on a craft without tanks run forever.
-    if (ctx.hasFuelSystem && this.spool > 0.001) {
-      const need = this.fuelFlow * this.spool * ctx.dt;
+    if (ctx.hasFuelSystem && this.spool > 0.001 && fuelFactor > 0) {
+      const need = this.fuelFlow * fuelFactor * this.spool * ctx.dt;
       const got = ctx.drawFuel(need);
       if (got < need * 0.999) {
         this.starved = true;
@@ -82,15 +126,7 @@ export class Engine implements ForceModule {
       }
     }
 
-    let thrust = def.maxThrust * this.spool;
-    // Air-breathing: thrust scales with density.
-    thrust *= ctx.airDensity(_p.y) / TUNING.seaLevelDensity;
-    ctx.airVelocity(_p, _v);
-    // Propellers lose thrust as airspeed approaches their pitch speed.
-    if (this.isProp) {
-      const axial = _v.dot(_dir);
-      thrust *= Math.max(0, 1 - Math.max(0, axial) / def.propMaxSpeed!);
-    }
+    const thrust = def.maxThrust * this.spool * thrustFactor;
     this.thrust = thrust;
     this.propAngle = (this.propAngle + this.spool * 150 * ctx.dt * (this.propDirection || 1)) % (Math.PI * 2);
     if (thrust <= 0) return;

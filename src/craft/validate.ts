@@ -71,6 +71,26 @@ export function validateCraft(input: unknown): string[] {
         break;
       case 'engine':
         if (!isNum(m.maxThrust, 0, 5e6)) e.push(`${at}: maxThrust invalid`);
+        if (m.propMaxSpeed !== undefined && !isNum(m.propMaxSpeed, 1, 400)) e.push(`${at}: propMaxSpeed 1..400 m/s`);
+        if (m.propRadius !== undefined && !isNum(m.propRadius, 0.01, 10)) e.push(`${at}: propRadius 0.01..10 m`);
+        if (m.propDirection !== undefined && ![1, -1, 0].includes(m.propDirection)) e.push(`${at}: propDirection must be 1, -1 or 0`);
+        if (m.fuelFlow !== undefined && !isNum(m.fuelFlow, 0, 1000)) e.push(`${at}: fuelFlow 0..1000 kg/s`);
+        if (m.spoolTime !== undefined && !isNum(m.spoolTime, 0, 30)) e.push(`${at}: spoolTime 0..30 s`);
+        if (m.kind !== undefined && m.kind !== 'prop' && m.kind !== 'turbofan') e.push(`${at}: kind must be "prop" or "turbofan"`);
+        if (m.kind === 'turbofan' && m.propMaxSpeed !== undefined) e.push(`${at}: a turbofan has no propeller: remove propMaxSpeed (or use kind "prop")`);
+        if (m.kind === 'turbofan' && (m.propDirection || m.propRadius !== undefined))
+          e.push(`${at}: a turbofan has no propeller: remove propDirection/propRadius`);
+        if (m.kind === 'prop' && m.propMaxSpeed === undefined) e.push(`${at}: kind "prop" needs propMaxSpeed`);
+        if (m.kind !== 'turbofan' && (m.bypassRatio !== undefined || m.afterburner !== undefined))
+          e.push(`${at}: bypassRatio/afterburner only apply to kind "turbofan"`);
+        if (m.bypassRatio !== undefined && !isNum(m.bypassRatio, 0, 15)) e.push(`${at}: bypassRatio 0..15`);
+        if (m.afterburner !== undefined) {
+          if (typeof m.afterburner !== 'object' || m.afterburner === null) e.push(`${at}: afterburner must be {thrustRatio, fuelRatio}`);
+          else {
+            if (!isNum(m.afterburner.thrustRatio, 1, 3)) e.push(`${at}: afterburner.thrustRatio 1..3`);
+            if (!isNum(m.afterburner.fuelRatio, 1, 10)) e.push(`${at}: afterburner.fuelRatio 1..10`);
+          }
+        }
         break;
       case 'wheel':
         if (!isNum(m.radius, 0.01, 10) || !isNum(m.restLength, 0, 10)) e.push(`${at}: wheel dims invalid`);
