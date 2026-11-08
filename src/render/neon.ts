@@ -164,13 +164,13 @@ export function synthSkyNode(horizon: TslNode, zenith: TslNode, opts: { sunDir: 
   const disc = smoothstep(Math.cos(r * 1.01), Math.cos(r * 0.99), cosA);
   // Vertical position within the disc: 0 at the bottom edge, 1 at the top.
   const v = clamp(d.y.sub(sd.y - r).div(2 * r), 0, 1);
-  const sunGrad = mix(color(NEON.magenta), color(NEON.yellow), v).mul(2.2);
-  // Stripes in the lower 55%: bands that get thicker toward the bottom.
-  const stripeCoord = fract(v.mul(13));
-  const gap = clamp(float(0.55).sub(v), 0, 0.55).mul(1.3);
+  const sunGrad = mix(color(NEON.magenta), color(NEON.yellow), v).mul(1.15);
+  // Stripes in the lower 60%: bands that get thicker toward the bottom.
+  const stripeCoord = fract(v.mul(10));
+  const gap = clamp(float(0.6).sub(v), 0, 0.6).mul(1.2);
   const cut = step(gap, stripeCoord);
   const sunMask = disc.mul(cut).mul(step(-0.02, d.y)); // nothing below the horizon
-  const halo = smoothstep(Math.cos(r * 2.2), Math.cos(r), cosA).mul(0.25).mul(step(-0.02, d.y));
+  const halo = smoothstep(Math.cos(r * 2.2), Math.cos(r), cosA).mul(0.12).mul(step(-0.02, d.y));
   const sunCol = (opts.sun ?? float(1)) as TslNode;
   return sky.add(bandCol).add(color(NEON.pink).mul(halo).mul(sunCol)).mul(float(1).sub(sunMask.mul(sunCol))).add(sunGrad.mul(sunMask).mul(sunCol));
 }

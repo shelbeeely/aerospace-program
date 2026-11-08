@@ -188,6 +188,7 @@ export class WeatherView {
     const p = this.precip;
     const n = p.kind === 'none' ? 0 : Math.min(MAX_DROPS, Math.round((p.kind === 'snow' ? 600 : 150) * p.rate ** (p.kind === 'snow' ? 0.6 : 0.85)));
     this.drops.geometry.setDrawRange(0, n * 2);
+    this.drops.visible = n > 0; // no empty draw call
     if (n === 0) return;
     const snow = p.kind === 'snow';
     this.dropMat.color.copy(snow ? SNOWFLAKE : RAIN);

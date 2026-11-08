@@ -7,7 +7,7 @@ const HORIZON = new THREE.Color(NEON.horizon);
 const ZENITH = new THREE.Color(NEON.zenith);
 const SUN_DIR = new THREE.Vector3(-0.45, 0.8, 0.35).normalize();
 /** The striped synthwave sun sits on the horizon straight down the runway (spawn faces -Z). */
-const SKY_SUN_DIR = new THREE.Vector3(0, 0.07, -1).normalize();
+const SKY_SUN_DIR = new THREE.Vector3(0, 0.17, -1).normalize();
 
 /** Deterministic PRNG so scenery is identical every load (and for every racer). */
 function mulberry32(seed: number) {
@@ -45,8 +45,8 @@ export class WorldView {
   readonly gridColor = glow(NEON.cyan, 2.2);
   /** Runway surface and marking colours (HDR; uniforms). */
   readonly runwayBase = new THREE.Color('#0a0716');
-  readonly runwayEdge = glow(NEON.cyan, 3.4);
-  readonly runwayCentre = glow(NEON.magenta, 3.4);
+  readonly runwayEdge = glow(NEON.cyan, 2.4);
+  readonly runwayCentre = glow(NEON.magenta, 2.6);
   groundMat!: THREE.MeshBasicNodeMaterial;
   runwayMat!: THREE.MeshBasicNodeMaterial;
 
@@ -116,7 +116,7 @@ export class WorldView {
     const nearEnd = band(z, 21, 15).add(band(z, length - 21, 15));
     const aim = band(x, width / 2 - 7, 2).add(band(x, width / 2 + 7, 2)).mul(band(z, 322.5, 22.5).add(band(z, length - 322.5, 22.5)));
     const ends = band(z, 1.2, 0.6).add(band(z, length - 1.2, 0.6)); // cross bars at the very ends
-    const marks: TslNode = edges.add(keys.mul(nearEnd).mul(0.7)).add(aim.mul(0.6)).add(ends).min(1);
+    const marks: TslNode = edges.add(keys.mul(nearEnd).mul(0.1)).add(aim.mul(0.14)).add(ends).min(1);
     const surface: TslNode = uniform(this.runwayBase);
     this.runwayMat.colorNode = surface.add(uniform(this.runwayEdge).mul(marks)).add(uniform(this.runwayCentre).mul(centre));
     const runway = new THREE.Mesh(new THREE.PlaneGeometry(width, length), this.runwayMat);

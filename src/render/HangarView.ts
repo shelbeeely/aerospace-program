@@ -135,7 +135,7 @@ export class HangarView {
     s.add(apron);
     const skyMat = new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide, depthWrite: false, fog: false });
     skyMat.colorNode = synthSkyNode(uniform(new THREE.Color(NEON.horizon)), uniform(new THREE.Color(NEON.zenith)), {
-      sunDir: new THREE.Vector3(0, 0.09, -1),
+      sunDir: new THREE.Vector3(0, 0.2, -1),
       sunRadius: 0.22,
     });
     const sky = new THREE.Mesh(new THREE.SphereGeometry(200, 48, 24), skyMat);
