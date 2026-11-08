@@ -26,6 +26,14 @@ export const NEON = {
   zenith: '#04010c',
 } as const;
 
+/** Inside the Grid: a dark blue digital sky with a faint blue horizon glow, electric-blue grid. */
+export const GRID_SKY = {
+  horizon: '#0a1c5c',
+  zenith: '#000209',
+  grid: '#1f6bff',
+  band: '#2a7bff',
+} as const;
+
 /** Default HDR multiplier for edge lines (> bloom threshold after the line colour's own luminance). */
 export const GLOW = 3.2;
 
@@ -155,7 +163,7 @@ export function synthSkyNode(horizon: TslNode, zenith: TslNode, opts: { sunDir: 
   const sky = mix(horizon, zenith, pow(clamp(up.mul(2.2), 0, 1), 0.6));
   // Glow band right at the horizon (magenta haze line).
   const band = float(1).sub(smoothstep(0, 0.05, abs(d.y))).mul(0.6);
-  const bandCol = color(NEON.magenta).mul(band);
+  const bandCol = color(GRID_SKY.band).mul(band);
   // Sun: angle from its centre on the horizon.
   const sd = opts.sunDir.clone().normalize();
   const sunDir = vec3(sd.x, sd.y, sd.z);

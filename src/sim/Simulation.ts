@@ -299,6 +299,7 @@ export class Simulation {
     this.debrisSpawn.clear();
     this.staticWorld.reset();
     this.town.reset();
+    this.staticWorld.stream(this.position.x, this.position.z, true);
     if (this.craft.detached.size) this.rebuildCraft(this.craft.def);
     this.failures.length = 0;
     this.filteredLoads.clear();
@@ -363,6 +364,7 @@ export class Simulation {
     this.readBodyState();
     this.loadsThisStep.clear();
     this.craft.stepElectrical(this.dt, this.atmosphere.air(this.com.y).temperature - 273.15);
+    this.staticWorld.stream(this.position.x, this.position.z);
     for (const m of this.craft.modules) m.step(this.ctx);
     this.ocean.apply(this.craft, this.time, this.dt, ({ partId, force }) => {
       for (let i = 0; i < body.numColliders(); i++) {

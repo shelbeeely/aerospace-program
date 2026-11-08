@@ -1,4 +1,5 @@
-import { CITY } from '../sim/layout.ts';
+import { CITY, heightCap } from '../sim/layout.ts';
+import { KIT, kitBlockFactor } from './kit.ts';
 
 /**
  * Seeded city plan shared by the simulation (static colliders) and the renderer. Pure data, no
@@ -52,9 +53,21 @@ export interface CityRing {
   color: number;
 }
 
+export interface CityKitTower {
+  /** Index into KIT. */
+  type: number;
+  x: number;
+  z: number;
+  scale: number;
+  /** Quarter turns about +Y. */
+  rot: number;
+}
+
 export interface CityRoad {
   /** 'x' roads run along X (constant z), 'z' along Z (constant x). */
   axis: 'x' | 'z';
+  /** Data highway (dense glowing traffic). */
+  major?: boolean;
   /** Constant coordinate of the road centreline. */
   at: number;
   from: number;
@@ -72,6 +85,8 @@ export interface CityPlan {
   beacons: Array<[number, number, number]>;
   /** Drivable lanes for traffic (streets and highway decks). */
   roads: CityRoad[];
+  /** Imported kit towers placed on city blocks. */
+  kit: CityKitTower[];
   /** City rectangle. */
   x0: number;
   x1: number;
@@ -100,41 +115,132 @@ export function cityPlan(): CityPlan {
 function buildCity(def = CITY): CityPlan {
   const rnd = mulberry32(def.seed);
   const pitch = def.block + def.street;
-  const nx = Math.floor(def.sizeX / pitch);
-  const nz = Math.floor(def.sizeZ / pitch);
-  const x0 = def.centerX - (nx * pitch) / 2;
-  const z0 = def.centerZ - (nz * pitch) / 2;
+  const nx = Math.floor((def.x1 - def.x0) / pitch);
+  const nz = Math.floor((def.z1 - def.z0) / pitch);
+  const x0 = def.x0;
+  const z0 = def.z0;
   const plan: CityPlan = {
-    pieces: [], buildings: [], spires: [], rings: [], beacons: [], roads: [],
+    pieces: [], buildings: [], spires: [], rings: [], beacons: [], roads: [], kit: [],
     x0, x1: x0 + nx * pitch, z0, z1: z0 + nz * pitch, pitch,
   };
   const pickColor = () => Math.floor(rnd() * def.colors.length);
+  const bx = (i: number) => x0 + i * pitch + def.street / 2;
+  const bz = (j: number) => z0 + j * pitch + def.street / 2;
+  const blockOf = (x: number, z: number): [number, number] => [Math.floor((x - x0) / pitch), Math.floor((z - z0) / pitch)];
+  /** Zoning cap over a whole block (its corners and centre). */
+  const blockCap = (i: number, j: number) => {
+    const xa = bx(i), za = bz(j), xb = xa + def.block, zb = za + def.block;
+    return Math.min(heightCap(xa, za), heightCap(xb, za), heightCap(xa, zb), heightCap(xb, zb), heightCap((xa + xb) / 2, (za + zb) / 2));
+  };
+  /** Skyline: the tallest hub influence plus a low-rise base. */
+  const skyline = (x: number, z: number) => {
+    let h = def.baseHeight * (0.6 + rnd() * 0.8);
+    let core = 0;
+    for (const hub of def.hubs) {
+      const k = Math.exp(-((Math.hypot(x - hub.x, z - hub.z) / hub.r) ** 2));
+      h = Math.max(h, hub.h * k ** 1.3);
+      core = Math.max(core, k);
+    }
+    return { h, core };
+  };
 
-  // Landmark sites (block indices) are kept free of ordinary towers.
-  const ci = Math.floor(nx / 2);
-  const cj = Math.floor(nz / 2);
+  // Landmark sites are kept free of ordinary towers.
   const reserved = new Set<string>();
   const reserve = (i: number, j: number, w = 1, h = 1) => {
     for (let a = 0; a < w; a++) for (let b = 0; b < h; b++) reserved.add(`${i + a},${j + b}`);
   };
-  reserve(ci, cj); // the Grid Spire
-  const arena = { i: Math.min(nx - 3, ci + 4), j: Math.min(nz - 3, cj + 6) };
+  const [ci, cj] = blockOf(def.hubs[0].x, def.hubs[0].z);
+  reserve(ci, cj);
+  const arena = { i: ci + 4, j: cj + 6 };
   reserve(arena.i, arena.j, 2, 2);
-  const stadium = { i: Math.max(1, ci - 6), j: Math.max(1, cj - 8) };
+  const [si, sj] = blockOf(def.hubs[1].x, def.hubs[1].z);
+  const stadium = { i: si - 3, j: sj - 3 };
   reserve(stadium.i, stadium.j, 2, 2);
-  // Highways run above the streets on these grid lines.
-  const hwX = [Math.floor(nz * 0.3), Math.floor(nz * 0.7)]; // along X at these row lines
-  const hwZ = [Math.floor(nx * 0.35), Math.floor(nx * 0.75)]; // along Z at these column lines
 
-  // Block corner (min x, min z) of block (i, j).
-  const bx = (i: number) => x0 + i * pitch + def.street / 2;
-  const bz = (j: number) => z0 + j * pitch + def.street / 2;
+  const addTower = makeTowerBuilder(plan, rnd, pickColor);
 
-  /**
-   * One tower in the 1980s computer-world style: flared frustum bases, stacked octagonal or
-   * round shafts with band rings, hammerhead top blocks, or boxy setback slabs.
-   */
-  const addTower = (cx: number, cz: number, foot: number, height: number) => {
+  for (let i = 0; i < nx; i++) {
+    for (let j = 0; j < nz; j++) {
+      if (reserved.has(`${i},${j}`)) continue;
+      const cap = blockCap(i, j);
+      if (cap < def.minHeight) continue;
+      const cx = bx(i) + def.block / 2;
+      const cz = bz(j) + def.block / 2;
+      const { h: sky, core } = skyline(cx, cz);
+      // Open data plains and plazas, more of them away from the hubs.
+      if (rnd() < 0.05 + 0.1 * (1 - core)) continue;
+      // Kit towers (imported models), anywhere tall enough to fit one.
+      if (rnd() < def.kitFraction && cap > 70) {
+        const type = Math.floor(rnd() * KIT.length);
+        const t = KIT[type];
+        const rot = Math.floor(rnd() * 4);
+        const want = Math.min(cap, Math.max(70, sky * (0.8 + rnd() * 0.5)));
+        const scale = Math.min(want / t.size[1], 96 / Math.max(t.size[0], t.size[2]));
+        void kitBlockFactor;
+        plan.kit.push({ type, x: cx, z: cz, scale, rot });
+        continue;
+      }
+      const tall = Math.min(cap, sky);
+      if (core > 0.75 || rnd() < 0.45) {
+        addTower(cx, cz, 34 + rnd() * 30, Math.max(def.minHeight, Math.min(cap, tall * (0.6 + rnd() * 0.6))));
+      } else {
+        for (const [ox, oz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+          if (rnd() < 0.2) continue;
+          addTower(cx + ox * 27, cz + oz * 27, 18 + rnd() * 16, Math.max(def.minHeight, Math.min(cap, tall * (0.3 + rnd() * 0.5))));
+        }
+      }
+    }
+  }
+
+  // --- Landmarks
+  addLandmarks(plan, def, bx, bz, pitch, ci, cj, arena, stadium, pickColor, rnd);
+
+  // --- Streets (traffic lanes) and data highways on the grid lines
+  for (let j = 0; j <= nz; j++) plan.roads.push({ axis: 'x', at: z0 + j * pitch, from: plan.x0, to: plan.x1, y: 0, major: j % def.highwayEvery === 0 });
+  for (let i = 0; i <= nx; i++) plan.roads.push({ axis: 'z', at: x0 + i * pitch, from: plan.z0, to: plan.z1, y: 0, major: i % def.highwayEvery === 0 });
+
+  // --- Raised freeways across the world, broken wherever the zoning forbids a 40 m structure.
+  const H = def.highwayHeight;
+  const freewaysX = [Math.floor(nz * 0.22), Math.floor(nz * 0.5), Math.floor(nz * 0.8)];
+  const freewaysZ = [Math.floor(nx * 0.18), Math.floor(nx * 0.42)];
+  for (const j of freewaysX) {
+    const z = z0 + j * pitch;
+    let run: number | null = null;
+    for (let i = 0; i <= nx; i++) {
+      const xa = x0 + i * pitch;
+      const ok = i < nx && heightCap(xa, z) > H + 10 && heightCap(xa + pitch, z) > H + 10;
+      if (ok && run === null) run = i;
+      if ((!ok || i === nx) && run !== null && i - run >= 2) {
+        const xs = x0 + run * pitch, xe = x0 + i * pitch;
+        plan.pieces.push({ shape: 'box', x: (xs + xe) / 2, y: H, z, sx: xe - xs, sy: 1.6, sz: 16, color: 1, building: -1, windows: false });
+        for (let x = xs + pitch / 2; x < xe; x += pitch) plan.pieces.push({ shape: 'box', x, y: H / 2, z, sx: 3, sy: H, sz: 3, color: 1, building: -1, windows: false });
+        plan.roads.push({ axis: 'x', at: z, from: xs, to: xe, y: H + 0.9, major: true });
+      }
+      if (!ok) run = null;
+    }
+  }
+  for (const i of freewaysZ) {
+    const x = x0 + i * pitch;
+    let run: number | null = null;
+    for (let j = 0; j <= nz; j++) {
+      const za = z0 + j * pitch;
+      const ok = j < nz && heightCap(x, za) > H + 16 && heightCap(x, za + pitch) > H + 16;
+      if (ok && run === null) run = j;
+      if ((!ok || j === nz) && run !== null && j - run >= 2) {
+        const zs = z0 + run * pitch, ze = z0 + j * pitch;
+        plan.pieces.push({ shape: 'box', x, y: H + 6, z: (zs + ze) / 2, sx: 16, sy: 1.6, sz: ze - zs, color: 4, building: -1, windows: false });
+        for (let zz = zs + pitch / 2; zz < ze; zz += pitch) plan.pieces.push({ shape: 'box', x, y: (H + 6) / 2, z: zz, sx: 3, sy: H + 6, sz: 3, color: 4, building: -1, windows: false });
+        plan.roads.push({ axis: 'z', at: x, from: zs, to: ze, y: H + 6.9, major: true });
+      }
+      if (!ok) run = null;
+    }
+  }
+  return plan;
+}
+
+/** Tower builder in the 1980s computer-world style (see the styles below). */
+function makeTowerBuilder(plan: CityPlan, rnd: () => number, pickColor: () => number) {
+  return (cx: number, cz: number, foot: number, height: number) => {
     const id = plan.buildings.length;
     const color = pickColor();
     let y = 0;
@@ -188,33 +294,16 @@ function buildCity(def = CITY): CityPlan {
       plan.beacons.push([cx, height + 1, cz]);
     }
   };
+}
 
-  for (let i = 0; i < nx; i++) {
-    for (let j = 0; j < nz; j++) {
-      if (reserved.has(`${i},${j}`)) continue;
-      const cx = bx(i) + def.block / 2;
-      const cz = bz(j) + def.block / 2;
-      const d = Math.hypot(cx - def.centerX, cz - def.centerZ);
-      const core = Math.exp(-((d / def.downtownRadius) ** 2));
-      // Sparse parks/plazas on the outskirts.
-      if (rnd() < 0.06 + 0.12 * (1 - core)) continue;
-      const tall = def.minHeight + (def.maxHeight - def.minHeight) * core ** 1.4;
-      const layout = rnd();
-      if (layout < 0.45 || core > 0.75) {
-        // One big tower per block.
-        const foot = 36 + rnd() * 30;
-        addTower(cx, cz, foot, Math.max(def.minHeight, tall * (0.55 + rnd() * 0.6)));
-      } else {
-        // Four smaller towers on a 2×2 lot grid.
-        for (const [ox, oz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
-          if (rnd() < 0.15) continue;
-          const foot = 18 + rnd() * 16;
-          addTower(cx + ox * 27, cz + oz * 27, foot, Math.max(def.minHeight, tall * (0.25 + rnd() * 0.5)));
-        }
-      }
-    }
-  }
-
+/** The Grid Spire, the stepped arena, the stadium and floating slabs. */
+function addLandmarks(
+  plan: CityPlan, def: typeof CITY, bx: (i: number) => number, bz: (j: number) => number, pitch: number,
+  ci: number, cj: number, arena: { i: number; j: number }, stadium: { i: number; j: number },
+  pickColor: () => number, rnd: () => number,
+): void {
+  const centerX = def.hubs[0].x;
+  const centerZ = def.hubs[0].z;
   // --- Landmarks
   // The Grid Spire: tallest structure in the world, haloed by rings, at the centre of downtown.
   {
@@ -273,25 +362,8 @@ function buildCity(def = CITY): CityPlan {
     const id = plan.buildings.length;
     const y = 280 + rnd() * 260;
     const w = 60 + rnd() * 90;
-    plan.pieces.push({ shape: 'box', x: def.centerX + Math.cos(a) * r, y, z: def.centerZ + Math.sin(a) * r, sx: w, sy: 6, sz: w * (0.4 + rnd() * 0.4), color: pickColor(), building: id, windows: false });
-    plan.buildings.push({ id, x: def.centerX + Math.cos(a) * r, z: def.centerZ + Math.sin(a) * r, top: y + 3, color: 0 });
+    plan.pieces.push({ shape: 'box', x: centerX + Math.cos(a) * r, y, z: centerZ + Math.sin(a) * r, sx: w, sy: 6, sz: w * (0.4 + rnd() * 0.4), color: pickColor(), building: id, windows: false });
+    plan.buildings.push({ id, x: centerX + Math.cos(a) * r, z: centerZ + Math.sin(a) * r, top: y + 3, color: 0 });
   }
 
-  // --- Streets (traffic lanes) and raised highways on the grid lines
-  for (let j = 0; j <= nz; j++) plan.roads.push({ axis: 'x', at: z0 + j * pitch, from: plan.x0, to: plan.x1, y: 0 });
-  for (let i = 0; i <= nx; i++) plan.roads.push({ axis: 'z', at: x0 + i * pitch, from: plan.z0, to: plan.z1, y: 0 });
-  const H = def.highwayHeight;
-  for (const j of hwX) {
-    const z = z0 + j * pitch;
-    plan.pieces.push({ shape: 'box', x: (plan.x0 + plan.x1) / 2, y: H, z, sx: plan.x1 - plan.x0, sy: 1.6, sz: 16, color: 1, building: -1, windows: false });
-    for (let x = plan.x0 + pitch / 2; x < plan.x1; x += pitch) plan.pieces.push({ shape: 'box', x, y: H / 2, z, sx: 3, sy: H, sz: 3, color: 1, building: -1, windows: false });
-    plan.roads.push({ axis: 'x', at: z, from: plan.x0, to: plan.x1, y: H + 0.9 });
-  }
-  for (const i of hwZ) {
-    const x = x0 + i * pitch;
-    plan.pieces.push({ shape: 'box', x, y: H + 6, z: (plan.z0 + plan.z1) / 2, sx: 16, sy: 1.6, sz: plan.z1 - plan.z0, color: 3, building: -1, windows: false });
-    for (let z = plan.z0 + pitch / 2; z < plan.z1; z += pitch) plan.pieces.push({ shape: 'box', x, y: (H + 6) / 2, z, sx: 3, sy: H + 6, sz: 3, color: 3, building: -1, windows: false });
-    plan.roads.push({ axis: 'z', at: x, from: plan.z0, to: plan.z1, y: H + 6.9 });
-  }
-  return plan;
 }

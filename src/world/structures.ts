@@ -2,6 +2,7 @@ import { CITY } from '../sim/layout.ts';
 import { TUNING } from '../tuning.ts';
 import { airportPlan } from './Airport.ts';
 import { cityPlan } from './City.ts';
+import { KIT, kitBlockFactor, kitSolid, rotate, rotatedGrid, unrotate } from './kit.ts';
 
 /**
  * Every solid, destructible structure in the world (city towers, raised highways, airport
@@ -20,6 +21,8 @@ export interface Structure {
   color: string;
   windows: boolean;
   group: number;
+  /** Drawn by StructuresView (false: a kit tower's collider box; the real model is drawn instead). */
+  render?: boolean;
 }
 
 export interface StructureGroup {
@@ -37,6 +40,8 @@ export interface StructureGroup {
   x0: number;
   z0: number;
   size: [number, number, number];
+  /** Imported kit tower: its voxel grid is the block grid (merged k×k×k). */
+  kit?: { index: number; type: number; rot: number; scale: number; k: number };
 }
 
 let cached: { list: Structure[]; groups: StructureGroup[] } | null = null;
@@ -68,7 +73,32 @@ export function worldStructures(): { list: Structure[]; groups: StructureGroup[]
     g.pieces.push(list.length);
     list.push({ shape: p.shape, x: p.x, y: p.y, z: p.z, sx: p.sx, sy: p.sy, sz: p.sz, color: p.color, windows: p.windows, group: g.id });
   }
-  for (const g of groups) gridFor(g, list);
+  // Imported kit towers: collider boxes from their voxel grids, rotated and scaled.
+  city.kit.forEach((inst, index) => {
+    const t = KIT[inst.type];
+    const g = groupFor(`kit:${index}`, '#00eaff');
+    const k = kitBlockFactor(t, TUNING.maxFractureBlocks);
+    const [Wr, Hr, Dr] = rotatedGrid(t, inst.rot);
+    const c = t.cell * inst.scale;
+    const x0 = inst.x - (Wr * c) / 2;
+    const z0 = inst.z - (Dr * c) / 2;
+    g.kit = { index, type: inst.type, rot: inst.rot, scale: inst.scale, k };
+    g.blockSize = c * k;
+    g.x0 = x0;
+    g.z0 = z0;
+    g.size = [Math.ceil(Wr / k), Math.ceil(Hr / k), Math.ceil(Dr / k)];
+    for (const [bx0, by0, bz0, bx1, by1, bz1] of t.boxes) {
+      const [ax, az] = rotate(t, inst.rot, bx0, bz0);
+      const [cx2, cz2] = rotate(t, inst.rot, bx1 - 1, bz1 - 1);
+      const rx0 = Math.min(ax, cx2), rx1 = Math.max(ax, cx2) + 1, rz0 = Math.min(az, cz2), rz1 = Math.max(az, cz2) + 1;
+      g.pieces.push(list.length);
+      list.push({
+        shape: 'box', x: x0 + ((rx0 + rx1) / 2) * c, y: ((by0 + by1) / 2) * c, z: z0 + ((rz0 + rz1) / 2) * c,
+        sx: (rx1 - rx0) * c, sy: (by1 - by0) * c, sz: (rz1 - rz0) * c, color: '#00eaff', windows: false, group: g.id, render: false,
+      });
+    }
+  });
+  for (const g of groups) if (!g.kit) gridFor(g, list);
   return (cached = { list, groups });
 }
 
@@ -103,6 +133,17 @@ export function insidePiece(p: Structure, cx: number, cy: number, cz: number, s:
 
 /** The structure's block grid as a cell mask (x, y, z → exists). */
 export function structureMask(g: StructureGroup, list: readonly Structure[]): (x: number, y: number, z: number) => boolean {
+  if (g.kit) {
+    const { type, rot, k } = g.kit;
+    const t = KIT[type];
+    return (x, y, z) => {
+      for (let b = 0; b < k; b++) for (let c = 0; c < k; c++) for (let a = 0; a < k; a++) {
+        const [ox, oz] = unrotate(t, rot, x * k + a, z * k + c);
+        if (kitSolid(t, ox, y * k + b, oz)) return true;
+      }
+      return false;
+    };
+  }
   const s = g.blockSize;
   const pieces = g.pieces.map((i) => list[i]);
   return (x, y, z) => {

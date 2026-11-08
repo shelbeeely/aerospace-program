@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { float, positionWorld, texture, uniform, uv } from 'three/tsl';
 import type { Atmosphere, Precipitation } from '../sim/atmosphere.ts';
-import { NEON, glow, gridLines, type TslNode } from './neon.ts';
+import { GRID_SKY, NEON, glow, gridLines, type TslNode } from './neon.ts';
 import type { WorldView } from './WorldView.ts';
 
 const MAX_DROPS = 9000;
@@ -9,9 +9,9 @@ const BOX = 44; // metres, cube of falling drops around the camera
 const CLOUD_RES = 128;
 const CLOUD_SPAN = 16000; // metres covered by the cloud texture
 // Neon palette: night purple when clear, murkier violet under overcast, near-black in storms.
-const SKY_CLEAR = { horizon: new THREE.Color(NEON.horizon), zenith: new THREE.Color(NEON.zenith) };
-const SKY_OVERCAST = { horizon: new THREE.Color('#1d1030'), zenith: new THREE.Color('#0b0614') };
-const SKY_STORM = { horizon: new THREE.Color('#120a1e'), zenith: new THREE.Color('#050309') };
+const SKY_CLEAR = { horizon: new THREE.Color(GRID_SKY.horizon), zenith: new THREE.Color(GRID_SKY.zenith) };
+const SKY_OVERCAST = { horizon: new THREE.Color('#0b1430'), zenith: new THREE.Color('#02040c') };
+const SKY_STORM = { horizon: new THREE.Color('#070b1c'), zenith: new THREE.Color('#010206') };
 const IN_CLOUD_FOG = new THREE.Color('#2a1840');
 const RAIN = glow('#9ff6ff', 2.4);
 const SNOWFLAKE = glow('#ffffff', 2.2);
@@ -163,7 +163,7 @@ export class WeatherView {
     this.world.sun.intensity = 0.9 * (1 - 0.85 * overcast) * (1 - 0.5 * storm * below);
     this.world.hemi.intensity = 0.5 * (1 - 0.35 * overcast);
     // The striped sun sinks behind an overcast deck.
-    this.world.skySun.setScalar(Math.max(0, 1 - 1.2 * overcast));
+    this.world.skySun.setScalar(0); // no sun inside the Grid
 
     // --- Fog from visibility (Koschmieder: contrast falls to 2% at the visibility distance)
     const fog = this.scene.fog as THREE.FogExp2;

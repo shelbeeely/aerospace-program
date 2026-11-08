@@ -6,7 +6,7 @@
  */
 import { JET } from '../src/craft/jet.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
-import { LAYOUT } from '../src/sim/layout.ts';
+import { heightCap } from '../src/sim/layout.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 import { worldStructures } from '../src/world/structures.ts';
 
@@ -22,16 +22,33 @@ const city = w.groups.filter((g) => g.name.startsWith('city:') || g.name.startsW
 const airport = w.groups.filter((g) => g.name.startsWith('airport:'));
 console.log(`${w.groups.length} structures (${city.length} city, ${airport.length} airport), ${w.list.length} pieces`);
 
-// --- Placement
-const east = Math.max(...city.map((g) => g.x0 + g.size[0] * g.blockSize));
-check(east < -1500, 'whole city lies west of x = -1500 (clear of runway, town and test paths)', `east edge ${east.toFixed(0)} m`);
-const runwayClear = w.list.every((p) => p.x + Math.max(p.sx, p.sz) / 2 < -LAYOUT.runway.width / 2 - 40);
-check(runwayClear, 'every structure stands at least 40 m west of the runway edge');
+// --- Placement: the Grid covers the land, but respects the airport's obstacle-limitation zoning
+// (airfield clear, approach/departure funnels, climb-out corridor), which keeps test paths clear.
+const zoned = w.list.filter((p) => !w.groups[p.group].name.startsWith('airport:'));
+const breach = zoned.filter((p) => {
+  const top = p.y + p.sy / 2;
+  const hx = p.sx / 2, hz = p.sz / 2;
+  const cap = Math.min(heightCap(p.x - hx, p.z - hz), heightCap(p.x + hx, p.z - hz), heightCap(p.x - hx, p.z + hz), heightCap(p.x + hx, p.z + hz), heightCap(p.x, p.z));
+  return top > cap + 0.5;
+});
+check(breach.length === 0, 'every city structure respects the airport height zoning', breach.length ? `${breach.length} breaches, e.g. ${breach[0].x.toFixed(0)},${breach[0].z.toFixed(0)}` : `${zoned.length} pieces`);
+const span = { x0: Math.min(...zoned.map((p) => p.x)), x1: Math.max(...zoned.map((p) => p.x)), z0: Math.min(...zoned.map((p) => p.z)), z1: Math.max(...zoned.map((p) => p.z)) };
+check(span.x1 - span.x0 > 6000 && span.z1 - span.z0 > 9000, 'the city covers the whole land', `${(span.x1 - span.x0).toFixed(0)} × ${(span.z1 - span.z0).toFixed(0)} m`);
+const kits = w.groups.filter((g) => g.kit).length;
+check(kits > 50, 'imported kit towers are placed across the grid', `${kits} towers`);
 const tallest = city.reduce((a, b) => (b.size[1] * b.blockSize > a.size[1] * a.blockSize ? b : a));
 check(tallest.size[1] * tallest.blockSize > 450, 'the landmark spire tops 450 m', `${(tallest.size[1] * tallest.blockSize).toFixed(0)} m`);
 
 const sim = new Simulation(JET);
-check(sim.staticWorld.colliderCount === w.list.length, 'one static collider per structure piece', `${sim.staticWorld.colliderCount}`);
+sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
+const streamed = sim.staticWorld.colliderCount;
+check(streamed > 0 && streamed < w.list.length / 4, 'only structures near the craft carry colliders (streaming)', `${streamed} of ${w.list.length}`);
+{
+  const t = performance.now();
+  for (let i = 0; i < 240; i++) sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
+  const ms = (performance.now() - t) / 240;
+  check(ms < 1.5, 'an idle step stays cheap with the whole world loaded', `${ms.toFixed(3)} ms/step`);
+}
 
 // --- Jet flown into a tower at 80 m/s
 const target = city.filter((g) => g.name.startsWith('city:') && g.size[1] * g.blockSize > 150 && g.size[1] * g.blockSize < 300)[0];
@@ -60,7 +77,8 @@ check(ms < 25, 'physics step stays affordable during the crash', `${ms.toFixed(2
 
 // --- Middle tier blown out: the top must lose support and fall
 sim.resetToRunway();
-check(sim.staticWorld.fractured.size === 0 && sim.staticWorld.colliderCount === w.list.length, 'reset restores every structure');
+sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
+check(sim.staticWorld.fractured.size === 0 && sim.town.buildings.length === 12, 'reset restores every structure', `${sim.staticWorld.colliderCount} colliders streamed near the spawn`);
 const tower = sim.staticWorld.fracture(target.id, { impulse: 1e4, x: cx, y: (target.size[1] * s) / 2, z: zFace }, sim.time);
 const level = Math.floor(target.size[1] / 2);
 let killed = 0;

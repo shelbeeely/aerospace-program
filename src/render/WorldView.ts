@@ -1,24 +1,15 @@
 import * as THREE from 'three/webgpu';
 import { abs, float, fwidth, max, smoothstep, step, uniform, uv, vec2 } from 'three/tsl';
-import { CITY, COAST, LAYOUT } from '../sim/layout.ts';
-import { NEON, glow, groundGridNode, mergeLines, neonFillMaterial, neonLineMaterial, synthSkyNode, type TslNode } from './neon.ts';
+import { COAST, LAYOUT } from '../sim/layout.ts';
+import { GRID_SKY, NEON, glow, groundGridNode, synthSkyNode, type TslNode } from './neon.ts';
 
-const HORIZON = new THREE.Color(NEON.horizon);
-const ZENITH = new THREE.Color(NEON.zenith);
+const HORIZON = new THREE.Color(GRID_SKY.horizon);
+const ZENITH = new THREE.Color(GRID_SKY.zenith);
 const SUN_DIR = new THREE.Vector3(-0.45, 0.8, 0.35).normalize();
 /** The striped synthwave sun sits on the horizon straight down the runway (spawn faces -Z). */
 const SKY_SUN_DIR = new THREE.Vector3(0, 0.17, -1).normalize();
 
 /** Deterministic PRNG so scenery is identical every load (and for every racer). */
-function mulberry32(seed: number) {
-  return () => {
-    seed |= 0;
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 /** Anti-aliased band mask (0..1) for |x - centre| < halfWidth, in the units of `x`. */
 function band(x: TslNode, centre: number, halfWidth: number): TslNode {
@@ -39,10 +30,11 @@ export class WorldView {
   readonly horizon = HORIZON.clone();
   readonly zenith = ZENITH.clone();
   /** Brightness of the sky sun (r = g = b; 0 hides it, e.g. under an overcast deck). */
-  readonly skySun = new THREE.Color(1, 1, 1);
+  /** No sun inside the Grid: the sky is a dark digital dome. */
+  readonly skySun = new THREE.Color(0, 0, 0);
   /** Ground fill and grid line colours (HDR; uniforms). */
   readonly groundBase = new THREE.Color('#05020c');
-  readonly gridColor = glow(NEON.cyan, 2.2);
+  readonly gridColor = glow(GRID_SKY.grid, 2.4);
   /** Runway surface and marking colours (HDR; uniforms). */
   readonly runwayBase = new THREE.Color('#0a0716');
   readonly runwayEdge = glow(NEON.cyan, 2.4);
@@ -129,46 +121,8 @@ export class WorldView {
     this.addScenery(scene);
   }
 
-  private addScenery(scene: THREE.Scene): void {
-    const rnd = mulberry32(42);
-    const { centerZ, length } = LAYOUT.runway;
-    const fill = neonFillMaterial();
-
-    // Hangars, tower and terminal are destructible structures now (CityView / AirportView).
-
-    // Trees: instanced dark cones (they occlude) plus one merged violet wireframe for all of them.
-    const count = 1500;
-    const treeGeo = new THREE.ConeGeometry(2.2, 9, 6);
-    treeGeo.translate(0, 4.5, 0);
-    const trees = new THREE.InstancedMesh(treeGeo, fill, count);
-    const treeEdges = new THREE.EdgesGeometry(treeGeo, 1);
-    const lineParts: { geo: THREE.BufferGeometry; matrix: THREE.Matrix4 }[] = [];
-    const q = new THREE.Quaternion();
-    const sc = new THREE.Vector3();
-    const p = new THREE.Vector3();
-    let n = 0;
-    while (n < count) {
-      // Clustered: pick a cluster centre, scatter around it.
-      const cx = (rnd() - 0.5) * 6000;
-      const cz = (rnd() - 0.5) * 6000;
-      const clusterSize = 5 + Math.floor(rnd() * 25);
-      for (let k = 0; k < clusterSize && n < count; k++) {
-        p.set(cx + (rnd() - 0.5) * 120, 0, cz + (rnd() - 0.5) * 120);
-        const nearRunway = Math.abs(p.x) < 150 && Math.abs(p.z - centerZ) < length / 2 + 400;
-        const inCity = p.x > CITY.centerX - CITY.sizeX / 2 - 60 && p.x < CITY.centerX + CITY.sizeX / 2 + 60 && Math.abs(p.z - CITY.centerZ) < CITY.sizeZ / 2 + 60;
-        const inAirport = p.x > -460 && p.x < 0 && p.z > centerZ - length / 2 - 120 && p.z < centerZ + length / 2 + 120;
-        if (nearRunway || inCity || inAirport || p.x > COAST.x - 4) continue;
-        const s = 0.6 + rnd() * 0.9;
-        sc.set(s, s * (0.8 + rnd() * 0.6), s);
-        const m = new THREE.Matrix4().compose(p, q, sc);
-        trees.setMatrixAt(n++, m);
-        lineParts.push({ geo: treeEdges, matrix: m });
-      }
-    }
-    scene.add(trees);
-    const treeLines = new THREE.LineSegments(mergeLines(lineParts), neonLineMaterial(NEON.purple, 1.8));
-    treeEdges.dispose();
-    scene.add(treeLines);
+  private addScenery(_scene: THREE.Scene): void {
+    // The Grid covers the land: buildings (CityView) replace the old scattered trees.
   }
 
   /** Keep the sky centred on the camera and the light around the focus point. */

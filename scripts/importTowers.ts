@@ -1,3 +1,4 @@
+// @ts-nocheck -- build-time Node script (no @types/node in this project); run via npm run import-towers.
 /**
  * One-off importer for the "Tron Buildings 1" tower kit (assets/towerKit/scene.gltf, by
  * SpringSociety, CC-BY-4.0: credited in the README and in game). Run with `npm run import-towers`.
@@ -12,12 +13,14 @@
  * intact, a block grid that fractures (crater, BFS anchor check, falling top) when hit.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare const Buffer: any;
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 // three's FileLoader reports progress with ProgressEvent, which Node lacks.
 (globalThis as { ProgressEvent?: unknown }).ProgressEvent ??= class extends Event {
-  constructor(type: string, init: Record<string, unknown> = {}) { super(type); Object.assign(this, init); }
+  constructor(type: string, init?: Record<string, unknown>) { super(type); Object.assign(this, init ?? {}); }
 };
 
 const SRC = 'assets/towerKit/scene.gltf';
@@ -27,7 +30,8 @@ const json = JSON.parse(readFileSync(SRC, 'utf8'));
 const bin = readFileSync('assets/towerKit/scene.bin');
 json.buffers[0].uri = `data:application/octet-stream;base64,${bin.toString('base64')}`;
 
-const gltf: { scene: THREE.Group } = await new Promise((resolve, reject) => new GLTFLoader().parse(JSON.stringify(json), '', resolve as never, reject));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const gltf: { scene: THREE.Group } = await new Promise((resolve, reject) => (new GLTFLoader() as any).parse(JSON.stringify(json), '', resolve, reject));
 const scene = gltf.scene;
 scene.updateMatrixWorld(true);
 

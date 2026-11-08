@@ -18,6 +18,8 @@ export interface StructurePiece {
   taper?: number;
   /** Group it hides with when its building fractures (-1: never). */
   group: number;
+  /** false: not drawn (collider-only piece). */
+  render?: boolean;
 }
 
 const TAPERS = [0.35, 0.55, 0.62, 1] as const;
@@ -27,9 +29,9 @@ const nearestTaper = (t = 1) => TAPERS.reduce((a, b) => (Math.abs(b - t) < Math.
 function unitGeometry(key: string): THREE.BufferGeometry {
   if (key === 'box') return new THREE.BoxGeometry(1, 1, 1);
   if (key === 'oct') return new THREE.CylinderGeometry(0.5, 0.5, 1, 8);
-  if (key === 'cyl') return new THREE.CylinderGeometry(0.5, 0.5, 1, 28);
+  if (key === 'cyl') return new THREE.CylinderGeometry(0.5, 0.5, 1, 16);
   const taper = Number(key.slice(4));
-  return new THREE.CylinderGeometry(0.5 * taper, 0.5, 1, 28);
+  return new THREE.CylinderGeometry(0.5 * taper, 0.5, 1, 16);
 }
 const shapeKey = (p: StructurePiece) => (p.shape === 'cone' ? `cone${nearestTaper(p.taper)}` : p.shape);
 
@@ -86,8 +88,9 @@ export class StructuresView {
   private readonly hidden = new Set<number>();
   private static readonly zero = new THREE.Matrix4().makeScale(0, 0, 0);
 
-  constructor(pieces: readonly StructurePiece[], opts: { lineIntensity?: number; name?: string } = {}) {
+  constructor(all: readonly StructurePiece[], opts: { lineIntensity?: number; name?: string } = {}) {
     this.root.name = opts.name ?? 'structures';
+    const pieces = all.filter((p) => p.render !== false);
     // --- Instanced fills
     const buckets = new Map<string, StructurePiece[]>();
     for (const p of pieces) {

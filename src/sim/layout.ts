@@ -38,29 +38,67 @@ export const TOWN = {
 export const COAST = { x: 2500, seaLevel: -1.8, depth: 80 } as const;
 
 /**
- * The neon city: a seeded grid of skyscrapers well west of the airport and the town, clear of
- * every test-card path (those climb out along the runway and turn east). Downtown is at the
- * centre; heights fall off with distance from it.
+ * The Grid: one city covering all the land (west edge to the coast), seeded. Several downtown
+ * hubs (clusters of information) rise out of low-rise districts; major avenues every few
+ * blocks are glowing data highways. The airport keeps real obstacle-limitation zoning (see
+ * `heightCap`), which also keeps every test-card flight path clear.
  */
 export const CITY = {
   seed: 2049,
-  centerX: -3000,
-  centerZ: -1200,
-  /** Extent (m) along X and Z. */
-  sizeX: 2800,
-  sizeZ: 4400,
+  /** Land the city covers (m). The coast is at COAST.x. */
+  x0: -4950,
+  x1: 2380,
+  z0: -4950,
+  z1: 4950,
   /** City block (buildable square, m) and street width (m): pitch = block + street. */
   block: 110,
   street: 26,
-  /** Downtown radius (m): heights fall off as a Gaussian of this size. */
-  downtownRadius: 1100,
-  /** Tallest ordinary tower (m) at the very centre; the landmark spire is taller. */
-  maxHeight: 380,
-  minHeight: 16,
-  /** Raised highways: deck height (m) above the street. */
+  /** Every Nth street is a data highway (wider glow, dense traffic). */
+  highwayEvery: 6,
+  /** Downtown hubs: centre (m), radius (m) and peak height (m). */
+  hubs: [
+    { x: -3000, z: -1200, r: 1100, h: 380 },
+    { x: -2600, z: 3000, r: 900, h: 300 },
+    { x: 900, z: 3400, r: 800, h: 260 },
+    { x: -3800, z: -3900, r: 700, h: 240 },
+    { x: 1500, z: -4200, r: 600, h: 120 },
+  ],
+  /** Height of the low-rise districts between hubs (m). */
+  baseHeight: 22,
+  minHeight: 10,
+  /** Raised freeways: deck height (m) above the street. */
   highwayHeight: 30,
-  colors: ['#00eaff', '#00eaff', '#ff2bd6', '#9d4dff', '#ff8a1f', '#3dffb0'],
+  /** Kit towers (imported models) placed on this fraction of eligible blocks. */
+  kitFraction: 0.07,
+  colors: ['#1f8bff', '#00eaff', '#00eaff', '#ff8a1f', '#9d4dff', '#3dffb0'],
 } as const;
+
+/**
+ * Airport obstacle-limitation zoning: the tallest a building may be at (x, z), in metres.
+ * - the airfield itself (runway strip, taxiway, apron, terminal): nothing;
+ * - approach/departure funnels beyond each runway end, widening 15% and rising 2% with distance;
+ * - the climb-out corridor east of the runway (where aircraft turn out): 40 m;
+ * - the town (breakable blocks) keeps its own lots;
+ * Elsewhere the sky is the limit.
+ */
+export function heightCap(x: number, z: number): number {
+  const { length, centerZ } = LAYOUT.runway;
+  const zN = centerZ - length / 2;
+  const zS = centerZ + length / 2;
+  // Airfield.
+  if (x > -560 && x < 260 && z > zN - 200 && z < zS + 200) return 0;
+  // Approach / departure funnels (both ends).
+  const beyond = z < zN ? zN - z : z > zS ? z - zS : -1;
+  if (beyond >= 0) {
+    const halfWidth = 300 + 0.15 * beyond;
+    if (Math.abs(x) < halfWidth) return beyond < 400 ? 0 : 0.02 * beyond;
+  }
+  // Climb-out / turn corridor east of the field.
+  if (x > -560 && z < zS + 1200) return 40;
+  // The breakable-block town.
+  if (Math.abs(x - TOWN.centerX) < 160 && Math.abs(z - TOWN.centerZ) < 130) return 0;
+  return Infinity;
+}
 
 /** The airport around the runway: taxiway, apron, terminal and tower, all west of the runway. */
 export const AIRPORT = {

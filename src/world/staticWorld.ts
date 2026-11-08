@@ -31,6 +31,12 @@ export class StaticWorld {
   version = 0;
 
   private readonly pieceColliders: Array<RAPIER.Collider | null>;
+  /** Streaming: pieces bucketed by 250 m cells; only cells near the craft (and near fractured
+   *  structures) carry colliders. Rapier walks every collider each step, so 23,000 static ones
+   *  would cost ~3 ms a step; a 1 km bubble costs a few hundred µs. */
+  private readonly cells = new Map<string, number[]>();
+  private readonly loaded = new Set<string>();
+  private centreCell = '';
   private readonly owner = new Map<number, number>();
   private readonly pending = new Map<number, { impulse: number; x: number; y: number; z: number }>();
   private readonly structures = worldStructures();
@@ -41,7 +47,12 @@ export class StaticWorld {
   ) {
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     this.pieceColliders = this.structures.list.map(() => null);
-    for (let i = 0; i < this.structures.list.length; i++) this.addCollider(i);
+    this.structures.list.forEach((p, i) => {
+      const key = cellKey(Math.floor(p.x / CELL), Math.floor(p.z / CELL));
+      let list = this.cells.get(key);
+      if (!list) this.cells.set(key, (list = []));
+      list.push(i);
+    });
 
     const city = cityPlan();
     for (const b of city.buildings) this.conductors.push({ id: `city:${b.id}`, x: b.x, y: b.top, z: b.z });
@@ -50,11 +61,61 @@ export class StaticWorld {
     this.conductors.push({ id: 'airport:tower', x: airport.beacon.x, y: airport.beacon.y, z: airport.beacon.z });
   }
 
+  /**
+   * Keep colliders only within STREAM_RADIUS of `x, z` (the craft) and of every fractured
+   * structure. Cheap when the craft stays in its cell; otherwise only changed cells are touched.
+   */
+  stream(x: number, z: number, force = false): void {
+    const cx = Math.floor(x / CELL);
+    const cz = Math.floor(z / CELL);
+    const key = cellKey(cx, cz);
+    if (!force && key === this.centreCell) return;
+    this.centreCell = key;
+    const want = new Set<string>();
+    const r = Math.ceil(STREAM_RADIUS / CELL);
+    const around = (ax: number, az: number, rr: number) => {
+      for (let i = -rr; i <= rr; i++) for (let j = -rr; j <= rr; j++) {
+        if ((i * i + j * j) * CELL * CELL > (STREAM_RADIUS + CELL) ** 2 && rr === r) continue;
+        const k = cellKey(ax + i, az + j);
+        if (this.cells.has(k)) want.add(k);
+      }
+    };
+    around(cx, cz, r);
+    for (const g of this.fractured.keys()) {
+      const grp = this.structures.groups[g];
+      around(Math.floor((grp.x0 + (grp.size[0] * grp.blockSize) / 2) / CELL), Math.floor((grp.z0 + (grp.size[2] * grp.blockSize) / 2) / CELL), 1);
+    }
+    for (const k of [...this.loaded]) {
+      if (want.has(k)) continue;
+      for (const i of this.cells.get(k)!) this.removeCollider(i);
+      this.loaded.delete(k);
+    }
+    for (const k of want) {
+      if (this.loaded.has(k)) continue;
+      for (const i of this.cells.get(k)!) if (!this.fractured.has(this.structures.list[i].group)) this.addCollider(i);
+      this.loaded.add(k);
+    }
+  }
+
+  private removeCollider(i: number): void {
+    const c = this.pieceColliders[i];
+    if (!c) return;
+    this.owner.delete(c.handle);
+    this.world.removeCollider(c, false);
+    this.pieceColliders[i] = null;
+  }
+
+  private isLoaded(i: number): boolean {
+    const p = this.structures.list[i];
+    return this.loaded.has(cellKey(Math.floor(p.x / CELL), Math.floor(p.z / CELL)));
+  }
+
   get colliderCount(): number {
     return this.pieceColliders.reduce((n, c) => n + (c ? 1 : 0), 0);
   }
 
   private addCollider(i: number): void {
+    if (this.pieceColliders[i]) return;
     const p = this.structures.list[i];
     // Round shapes are cylinders; a frustum uses its mean radius.
     const desc = p.shape === 'box'
@@ -104,18 +165,13 @@ export class StaticWorld {
     const s = g.blockSize;
     // Static colliders out, blocks in. The grid sits on the ground (y = 0), so the anchor
     // check knows what reaches the street; pieces in the air (floating slabs) have no anchor.
-    for (const i of g.pieces) {
-      const c = this.pieceColliders[i];
-      if (!c) continue;
-      this.owner.delete(c.handle);
-      this.world.removeCollider(c, false);
-      this.pieceColliders[i] = null;
-    }
+    for (const i of g.pieces) this.removeCollider(i);
     const building = this.town.addBuilding({
       id: g.name, origin: [g.x0, 0, g.z0], size: g.size, color: g.color, blockSize: s,
       mask: structureMask(g, this.structures.list),
     });
     this.fractured.set(group, building);
+    this.centreCell = ''; // re-stream so the cells around the collapse stay loaded
     // Crater at the point of impact (nearest point of the structure to the striking body).
     const x1 = g.x0 + g.size[0] * s, y1 = g.size[1] * s, z1 = g.z0 + g.size[2] * s;
     const ix = Math.min(x1, Math.max(g.x0, hit.x));
@@ -131,12 +187,18 @@ export class StaticWorld {
   reset(): void {
     for (const [group, building] of this.fractured) {
       this.town.removeBuilding(building);
-      for (const i of this.structures.groups[group].pieces) if (!this.pieceColliders[i]) this.addCollider(i);
+      for (const i of this.structures.groups[group].pieces) if (this.isLoaded(i)) this.addCollider(i);
     }
     const changed = this.fractured.size > 0;
     this.fractured.clear();
+    this.centreCell = '';
     this.pending.clear();
     if (changed) this.version++;
   }
 }
 
+
+/** Streaming cell size and radius (m). */
+const CELL = 250;
+const STREAM_RADIUS = 1000;
+const cellKey = (x: number, z: number) => `${x},${z}`;
