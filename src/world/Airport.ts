@@ -14,9 +14,11 @@ export interface AirportPiece {
   sy: number;
   sz: number;
   color: string;
-  /** Solid (gets a collider). Parked airliners and markings are visual only. */
+  /** Solid (gets a collider and can be destroyed). */
   solid: boolean;
   windows: boolean;
+  /** Pieces with the same group fracture together (one building, one airliner). */
+  group: string;
 }
 
 export interface AirportLight {
@@ -59,36 +61,36 @@ function buildAirport(): AirportPlan {
 
   // --- Terminal: long low hall with a raised central concourse.
   const t = AIRPORT.terminal;
-  pieces.push({ shape: 'box', x: t.x, y: t.height / 2, z: t.z, sx: t.depth, sy: t.height, sz: t.length, color: '#00eaff', solid: true, windows: true });
-  pieces.push({ shape: 'box', x: t.x - 6, y: t.height + 6, z: t.z, sx: t.depth * 0.6, sy: 12, sz: t.length * 0.35, color: '#ff2bd6', solid: true, windows: true });
+  pieces.push({ shape: 'box', x: t.x, y: t.height / 2, z: t.z, sx: t.depth, sy: t.height, sz: t.length, color: '#00eaff', solid: true, windows: true, group: 'terminal' });
+  pieces.push({ shape: 'box', x: t.x - 6, y: t.height + 6, z: t.z, sx: t.depth * 0.6, sy: 12, sz: t.length * 0.35, color: '#ff2bd6', solid: true, windows: true, group: 'terminal' });
   // Jet bridges and parked airliners at six gates along the apron side.
   for (let g = 0; g < 6; g++) {
     const gz = t.z - t.length / 2 + 40 + g * ((t.length - 80) / 5);
     const bridgeLen = 34;
-    pieces.push({ shape: 'box', x: t.x + t.depth / 2 + bridgeLen / 2, y: 5, z: gz, sx: bridgeLen, sy: 3.5, sz: 4, color: '#9d4dff', solid: true, windows: false });
+    pieces.push({ shape: 'box', x: t.x + t.depth / 2 + bridgeLen / 2, y: 5, z: gz, sx: bridgeLen, sy: 3.5, sz: 4, color: '#9d4dff', solid: true, windows: false, group: `bridge${g}` });
     // Airliner (nose toward the terminal): fuselage, wings, tailplane, fin, engines.
     const ax = t.x + t.depth / 2 + bridgeLen + 26;
     const fus = 44;
-    pieces.push({ shape: 'box', x: ax, y: 4.5, z: gz, sx: fus, sy: 5, sz: 5, color: '#e8f6ff', solid: false, windows: false });
-    pieces.push({ shape: 'box', x: ax + 2, y: 3.6, z: gz, sx: 9, sy: 0.8, sz: 40, color: '#e8f6ff', solid: false, windows: false });
-    pieces.push({ shape: 'box', x: ax + fus / 2 - 3, y: 6.2, z: gz, sx: 5, sy: 0.6, sz: 15, color: '#e8f6ff', solid: false, windows: false });
-    pieces.push({ shape: 'box', x: ax + fus / 2 - 3, y: 10, z: gz, sx: 6, sy: 8, sz: 0.6, color: '#ff2bd6', solid: false, windows: false });
-    for (const s of [-1, 1]) pieces.push({ shape: 'oct', x: ax + 4, y: 2.2, z: gz + s * 8, sx: 3, sy: 3, sz: 3, color: '#ff8a1f', solid: false, windows: false });
+    pieces.push({ shape: 'box', x: ax, y: 4.5, z: gz, sx: fus, sy: 5, sz: 5, color: '#e8f6ff', solid: true, windows: false, group: `airliner${g}` });
+    pieces.push({ shape: 'box', x: ax + 2, y: 3.6, z: gz, sx: 9, sy: 0.8, sz: 40, color: '#e8f6ff', solid: true, windows: false, group: `airliner${g}` });
+    pieces.push({ shape: 'box', x: ax + fus / 2 - 3, y: 6.2, z: gz, sx: 5, sy: 0.6, sz: 15, color: '#e8f6ff', solid: true, windows: false, group: `airliner${g}` });
+    pieces.push({ shape: 'box', x: ax + fus / 2 - 3, y: 10, z: gz, sx: 6, sy: 8, sz: 0.6, color: '#ff2bd6', solid: true, windows: false, group: `airliner${g}` });
+    for (const s of [-1, 1]) pieces.push({ shape: 'oct', x: ax + 4, y: 2.2, z: gz + s * 8, sx: 3, sy: 3, sz: 3, color: '#ff8a1f', solid: true, windows: false, group: `airliner${g}` });
   }
 
   // --- Control tower: tall octagonal shaft, wide glass cab, roof and mast.
   const tw = AIRPORT.tower;
-  pieces.push({ shape: 'oct', x: tw.x, y: tw.height / 2, z: tw.z, sx: 9, sy: tw.height, sz: 9, color: '#00eaff', solid: true, windows: false });
-  pieces.push({ shape: 'oct', x: tw.x, y: tw.height + 4, z: tw.z, sx: 18, sy: 8, sz: 18, color: '#3dffb0', solid: true, windows: true });
-  pieces.push({ shape: 'oct', x: tw.x, y: tw.height + 9, z: tw.z, sx: 21, sy: 2, sz: 21, color: '#00eaff', solid: true, windows: false });
-  pieces.push({ shape: 'box', x: tw.x, y: tw.height + 16, z: tw.z, sx: 0.8, sy: 12, sz: 0.8, color: '#ff2bd6', solid: true, windows: false });
+  pieces.push({ shape: 'oct', x: tw.x, y: tw.height / 2, z: tw.z, sx: 9, sy: tw.height, sz: 9, color: '#00eaff', solid: true, windows: false, group: 'tower' });
+  pieces.push({ shape: 'oct', x: tw.x, y: tw.height + 4, z: tw.z, sx: 18, sy: 8, sz: 18, color: '#3dffb0', solid: true, windows: true, group: 'tower' });
+  pieces.push({ shape: 'oct', x: tw.x, y: tw.height + 9, z: tw.z, sx: 21, sy: 2, sz: 21, color: '#00eaff', solid: true, windows: false, group: 'tower' });
+  pieces.push({ shape: 'box', x: tw.x, y: tw.height + 16, z: tw.z, sx: 0.8, sy: 12, sz: 0.8, color: '#ff2bd6', solid: true, windows: false, group: 'tower' });
 
   // --- Hangars along the taxiway (magenta), near the spawn end.
   for (let i = 0; i < 4; i++) {
-    pieces.push({ shape: 'box', x: -width / 2 - 70, y: 4.5, z: LAYOUT.spawnZ - 60 - i * 34, sx: 24, sy: 9, sz: 20, color: '#ff2bd6', solid: true, windows: false });
+    pieces.push({ shape: 'box', x: -width / 2 - 70, y: 4.5, z: LAYOUT.spawnZ - 60 - i * 34, sx: 24, sy: 9, sz: 20, color: '#ff2bd6', solid: true, windows: false, group: `hangar${i}` });
   }
   // Fuel farm: two tanks.
-  for (const dz of [0, 22]) pieces.push({ shape: 'oct', x: -260, y: 6, z: 300 + dz, sx: 16, sy: 12, sz: 16, color: '#ff8a1f', solid: true, windows: false });
+  for (const dz of [0, 22]) pieces.push({ shape: 'oct', x: -260, y: 6, z: 300 + dz, sx: 16, sy: 12, sz: 16, color: '#ff8a1f', solid: true, windows: false, group: `tank${dz}` });
 
   // --- Runway lights: edges every 60 m, green threshold bars, red end bars.
   for (let z = zN; z <= zS + 0.1; z += 60) {

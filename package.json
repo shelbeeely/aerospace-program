@@ -12,6 +12,7 @@
     "destruction": "node --experimental-transform-types --no-warnings scripts/destruction.ts",
     "electric": "node --experimental-transform-types --no-warnings scripts/electric.ts",
     "buildings": "node --experimental-transform-types --no-warnings scripts/buildings.ts",
+    "city": "node --experimental-transform-types --no-warnings scripts/city.ts",
     "design": "node --experimental-transform-types --no-warnings scripts/design.ts",
     "raytrace": "node --experimental-transform-types --no-warnings scripts/raytrace.ts",
     "events": "node --experimental-transform-types --no-warnings scripts/events.ts",

@@ -13,7 +13,7 @@ import { COAST, LAYOUT } from './layout.ts';
 import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
-import { buildStaticWorld, type StaticWorld } from '../world/staticWorld.ts';
+import { StaticWorld } from '../world/staticWorld.ts';
 import type { Telemetry } from './telemetry.ts';
 
 function assertValidCraft(def: CraftDef): void {
@@ -141,7 +141,7 @@ export class Simulation {
     const seabed = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation((COAST.x + half) / 2, -COAST.depth - 5, 0));
     this.world.createCollider(RAPIER.ColliderDesc.cuboid((half - COAST.x) / 2, 5, half), seabed);
     this.town = new Town(this.world);
-    this.staticWorld = buildStaticWorld(this.world);
+    this.staticWorld = new StaticWorld(this.world, this.town);
 
     const { position, rotation } = this.spawnPose(null);
     this.craft = new Craft(this.world, craftDef, position, rotation);
@@ -153,6 +153,7 @@ export class Simulation {
       this.damage.onContact(e);
     });
     this.onContactForce((e) => this.town.onContact(e));
+    this.onContactForce((e) => this.staticWorld.onContact(e));
 
     const self = this;
     this.ctx = {
@@ -296,6 +297,7 @@ export class Simulation {
     for (const d of this.debris) this.world.removeRigidBody(d.body);
     this.debris = [];
     this.debrisSpawn.clear();
+    this.staticWorld.reset();
     this.town.reset();
     if (this.craft.detached.size) this.rebuildCraft(this.craft.def);
     this.failures.length = 0;
@@ -380,6 +382,7 @@ export class Simulation {
     // After an explosion reset the step's contacts belong to a craft that's gone: drop them.
     this.dispatchContactForces(resets === this.explosionResets);
     if (this.groundMoving) this.town.shake(this.atmosphere.events.groundAcceleration(_tmp));
+    this.staticWorld.update(this.time);
     this.town.update(this.time);
     this.stepHazards();
     this.checkStructure();
@@ -444,7 +447,7 @@ export class Simulation {
         const p = block.collider.translation();
         if (!top || p.y > top.y) top = new THREE.Vector3(p.x, p.y, p.z);
       }
-      if (top) top.y += TUNING.blockSize / 2;
+      if (top) top.y += building.blockSize / 2;
       if (top) targets.push({ id: `building:${building.def.id}`, position: top });
     }
     for (const c of this.staticWorld.conductors) targets.push({ id: c.id, position: new THREE.Vector3(c.x, c.y, c.z) });

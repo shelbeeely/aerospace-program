@@ -69,8 +69,13 @@ export class DebrisPool {
    */
   spawn(building: BlockBuilding, blocks: readonly Block[], time: number, velocity = { x: 0, y: 0, z: 0 }): Chunk | null {
     const n = blocks.length;
-    if (n === 0 || n > TUNING.maxDynamicChunkColliders) return null;
-    this.makeRoom(n);
+    if (n === 0) return null;
+    // Big groups (a whole tower top) get one collider per floor layer instead of one per block,
+    // so they still fall as one rigid body under the collider cap.
+    const coarse = n > TUNING.fineChunkBlocks;
+    const layerCount = coarse ? new Set(blocks.map((b) => b.y)).size : n;
+    if (layerCount > TUNING.maxDynamicChunkColliders) return null;
+    this.makeRoom(layerCount);
 
     // Body at the group's centroid (world), blocks as offsets from it.
     const p = { x: 0, y: 0, z: 0 };
@@ -110,14 +115,14 @@ export class DebrisPool {
     );
     // Slightly undersized so the chunk doesn't start in contact with what it broke away from.
     const half = (s / 2) * 0.97;
-    const density = TUNING.blockMass / (2 * half) ** 3;
+    const density = building.blockMass / (2 * half) ** 3;
     const chunk: Chunk = {
       id: this.nextId++,
       building,
       blocks: [...blocks],
       offsets,
       radius,
-      mass: n * TUNING.blockMass,
+      mass: n * building.blockMass,
       body,
       colliders: [],
       spawnTime: time,
@@ -125,20 +130,50 @@ export class DebrisPool {
       slowSince: -1,
     };
     // Report every contact worth more than a 1 m/s knock on one block; resting weight stays quiet.
-    const threshold = TUNING.blockMass * 1 * TUNING.physicsHz;
+    const threshold = building.blockMass * 1 * TUNING.physicsHz;
+    if (coarse) {
+      // One cuboid per layer around that layer's blocks; density set so the mass is right.
+      const layers = new Map<number, { x0: number; x1: number; z0: number; z1: number; y: number; n: number }>();
+      for (let i = 0; i < n; i++) {
+        const key = Math.round(offsets[i * 3 + 1] / s);
+        const l = layers.get(key) ?? { x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity, y: offsets[i * 3 + 1], n: 0 };
+        l.x0 = Math.min(l.x0, offsets[i * 3]); l.x1 = Math.max(l.x1, offsets[i * 3]);
+        l.z0 = Math.min(l.z0, offsets[i * 3 + 2]); l.z1 = Math.max(l.z1, offsets[i * 3 + 2]);
+        l.n++;
+        layers.set(key, l);
+      }
+      for (const l of layers.values()) {
+        const hx = (l.x1 - l.x0) / 2 + half;
+        const hz = (l.z1 - l.z0) / 2 + half;
+        const layerDensity = (l.n * building.blockMass) / (8 * hx * half * hz);
+        const col = this.world.createCollider(
+          RAPIER.ColliderDesc.cuboid(hx, half, hz)
+            .setTranslation((l.x0 + l.x1) / 2, l.y, (l.z0 + l.z1) / 2)
+            .setDensity(layerDensity)
+            .setFriction(0.7)
+            .setRestitution(0.05)
+            .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+            .setContactForceEventThreshold(threshold),
+          body,
+        );
+        chunk.colliders.push(col);
+        this.registry.addChunkCollider(col, chunk);
+      }
+    } else {
     for (let i = 0; i < n; i++) {
-      const col = this.world.createCollider(
-        RAPIER.ColliderDesc.cuboid(half, half, half)
-          .setTranslation(offsets[i * 3], offsets[i * 3 + 1], offsets[i * 3 + 2])
-          .setDensity(density)
-          .setFriction(0.7)
-          .setRestitution(0.05)
-          .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
-          .setContactForceEventThreshold(threshold),
-        body,
-      );
-      chunk.colliders.push(col);
-      this.registry.addChunkCollider(col, chunk);
+        const col = this.world.createCollider(
+          RAPIER.ColliderDesc.cuboid(half, half, half)
+            .setTranslation(offsets[i * 3], offsets[i * 3 + 1], offsets[i * 3 + 2])
+            .setDensity(density)
+            .setFriction(0.7)
+            .setRestitution(0.05)
+            .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+            .setContactForceEventThreshold(threshold),
+          body,
+        );
+        chunk.colliders.push(col);
+        this.registry.addChunkCollider(col, chunk);
+      }
     }
     this.chunks.push(chunk);
     this.version++;

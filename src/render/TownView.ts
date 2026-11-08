@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { attribute, positionLocal, uniform, vec3 } from 'three/tsl';
 import type { Chunk } from '../world/DebrisPool.ts';
+import type { BlockBuilding } from '../world/BlockBuilding.ts';
 import type { Town } from '../world/Town.ts';
 
 /** Edge glow (HDR multiplier: > 1 so bloom picks the outlines up). */
@@ -101,7 +102,7 @@ const MAX_SPARKS = 768;
  */
 export class TownView {
   readonly root = new THREE.Group();
-  private readonly buildings: Array<{ meshes: BlockMeshes; version: number }> = [];
+  private readonly buildings = new Map<BlockBuilding, { meshes: BlockMeshes; version: number }>();
   private readonly chunks = new Map<Chunk, BlockMeshes>();
   private readonly materials = new Map<string, { fill: THREE.Material; line: THREE.Material }>();
   private poolVersion = -1;
@@ -128,25 +129,7 @@ export class TownView {
     private readonly town: Town,
   ) {
     this.root.name = 'town';
-    const c = { x: 0, y: 0, z: 0 };
-    for (const b of town.buildings) {
-      const n = b.list.length;
-      const centres = new Float32Array(n * 3);
-      for (let i = 0; i < n; i++) {
-        b.localCentre(b.list[i], c);
-        centres[i * 3] = c.x;
-        centres[i * 3 + 1] = c.y;
-        centres[i * 3 + 2] = c.z;
-      }
-      const s = b.blockSize;
-      const [w, h, d] = b.def.size;
-      const half = new THREE.Vector3(w * s, h * s, d * s).multiplyScalar(0.5);
-      const mats = this.materialsFor(b.def.color);
-      const meshes = new BlockMeshes(centres, n, s, mats.fill, mats.line, new THREE.Sphere(half.clone(), half.length()));
-      meshes.group.position.set(...b.def.origin);
-      this.root.add(meshes.group);
-      this.buildings.push({ meshes, version: -1 });
-    }
+    for (const b of town.buildings) this.addView(b);
 
     this.sparkGeo.setAttribute('position', new THREE.BufferAttribute(this.sparkPos, 3).setUsage(THREE.DynamicDrawUsage));
     this.sparkGeo.setAttribute('color', new THREE.BufferAttribute(this.sparkCol, 3).setUsage(THREE.DynamicDrawUsage));
@@ -159,6 +142,26 @@ export class TownView {
     this.update(0);
   }
 
+  private addView(b: BlockBuilding): void {
+    const c = { x: 0, y: 0, z: 0 };
+    const n = b.list.length;
+    const centres = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      b.localCentre(b.list[i], c);
+      centres[i * 3] = c.x;
+      centres[i * 3 + 1] = c.y;
+      centres[i * 3 + 2] = c.z;
+    }
+    const s = b.blockSize;
+    const [w, h, d] = b.def.size;
+    const half = new THREE.Vector3(w * s, h * s, d * s).multiplyScalar(0.5);
+    const mats = this.materialsFor(b.def.color);
+    const meshes = new BlockMeshes(centres, n, s, mats.fill, mats.line, new THREE.Sphere(half.clone(), half.length()));
+    meshes.group.position.set(b.def.origin[0], b.def.origin[1], b.def.origin[2]);
+    this.root.add(meshes.group);
+    this.buildings.set(b, { meshes, version: -1 });
+  }
+
   private materialsFor(color: string) {
     let m = this.materials.get(color);
     if (!m) this.materials.set(color, (m = blockMaterials(color)));
@@ -168,9 +171,18 @@ export class TownView {
   /** Sync with the simulation (dt: frame time, for the shards). */
   update(dt: number): void {
     const town = this.town;
-    for (let i = 0; i < this.buildings.length; i++) {
-      const view = this.buildings[i];
-      const b = town.buildings[i];
+    // Buildings come and go at runtime (fractured city towers).
+    if (this.buildings.size !== town.buildings.length || town.buildings.some((b) => !this.buildings.has(b))) {
+      const live = new Set(town.buildings);
+      for (const [b, view] of this.buildings) {
+        if (live.has(b)) continue;
+        view.meshes.group.removeFromParent();
+        view.meshes.dispose();
+        this.buildings.delete(b);
+      }
+      for (const b of town.buildings) if (!this.buildings.has(b)) this.addView(b);
+    }
+    for (const [b, view] of this.buildings) {
       if (view.version === b.version) continue;
       view.version = b.version;
       for (const block of b.list) view.meshes.setVisible(block.index, block.alive);

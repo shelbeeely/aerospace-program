@@ -215,13 +215,20 @@ console.log('\n--- rubble capacity');
   }
   check(capsHeld && pool.chunks.length === TUNING.maxDynamicChunks && !pool.chunks.some((c) => c.frozen), 'chunk cap evicts oldest rubble without overflowing', `${pool.chunks.length} chunks, ${sim.town.destroyed} evicted blocks recorded`);
   pool.clear();
-  // Three large groups force eviction on the collider limit before the chunk limit.
-  const group = b.list.slice(0, 180);
+  // Fine groups (one collider per block) force eviction on the collider limit before the chunk limit.
+  const group = b.list.slice(0, TUNING.fineChunkBlocks);
   for (const block of group) b.remove(block);
-  for (let i = 0; i < 3; i++) pool.spawn(b, group, sim.time);
-  check(pool.dynamicChunks === 2 && pool.dynamicColliders === group.length * 2 && pool.chunks.length === 2, 'collider cap evicts oldest compound rubble');
-  const before = pool.chunks.length;
-  check(pool.spawn(b, Array.from({ length: TUNING.maxDynamicChunkColliders + 1 }, () => block), sim.time) === null && pool.chunks.length === before, 'oversized groups cannot bypass collider cap');
+  const fits = Math.floor(TUNING.maxDynamicChunkColliders / group.length);
+  for (let i = 0; i < fits + 1; i++) pool.spawn(b, group, sim.time);
+  check(pool.dynamicChunks === fits && pool.dynamicColliders === group.length * fits && pool.dynamicColliders <= TUNING.maxDynamicChunkColliders, 'collider cap evicts oldest compound rubble', `${pool.dynamicChunks} chunks, ${pool.dynamicColliders} colliders`);
+  pool.clear();
+  // A group too big for one collider per block (a whole tower top) still falls as ONE body, with
+  // one collider per floor layer, under the cap.
+  const top = b.list.slice(0, Math.min(b.list.length, TUNING.maxDynamicChunkColliders + 50));
+  for (const block of top) b.remove(block);
+  const big = pool.spawn(b, top, sim.time);
+  const layers = new Set(top.map((t) => t.y)).size;
+  check(big !== null && big.colliders.length === layers && pool.dynamicColliders <= TUNING.maxDynamicChunkColliders && Math.abs(big.mass - top.length * b.blockMass) < 1, 'oversized groups fall whole on layer colliders, under the collider cap', `${top.length} blocks -> ${big?.colliders.length} colliders, mass ${big?.mass.toFixed(0)} kg`);
   sim.resetToRunway();
   check(pool.chunks.length === 0 && b.aliveCount === b.list.length, 'reset removes frozen and dynamic rubble and restores blocks');
 }

@@ -4,7 +4,8 @@ import { CITY } from '../sim/layout.ts';
  * Seeded city plan shared by the simulation (static colliders) and the renderer. Pure data, no
  * three.js or DOM: every piece is an axis-aligned box or an upright octagonal prism.
  */
-export type CityShape = 'box' | 'oct';
+/** box; oct = octagonal prism; cyl = round drum; cone = flared frustum (top radius × `taper`). */
+export type CityShape = 'box' | 'oct' | 'cyl' | 'cone';
 
 export interface CityPiece {
   shape: CityShape;
@@ -22,6 +23,8 @@ export interface CityPiece {
   building: number;
   /** Façade windows (towers yes, highway decks no). */
   windows: boolean;
+  /** 'cone' only: top diameter / bottom diameter (< 1 flares out at the base). */
+  taper?: number;
 }
 
 export interface CityBuilding {
@@ -127,29 +130,54 @@ function buildCity(def = CITY): CityPlan {
   const bx = (i: number) => x0 + i * pitch + def.street / 2;
   const bz = (j: number) => z0 + j * pitch + def.street / 2;
 
+  /**
+   * One tower in the 1980s computer-world style: flared frustum bases, stacked octagonal or
+   * round shafts with band rings, hammerhead top blocks, or boxy setback slabs.
+   */
   const addTower = (cx: number, cz: number, foot: number, height: number) => {
     const id = plan.buildings.length;
     const color = pickColor();
-    const oct = rnd() < 0.28;
-    const shape: CityShape = oct ? 'oct' : 'box';
-    const depth = oct ? foot : foot * (0.7 + rnd() * 0.5);
     let y = 0;
-    const push = (sx: number, sy: number, sz: number) => {
-      plan.pieces.push({ shape, x: cx, y: y + sy / 2, z: cz, sx, sy, sz, color, building: id, windows: true });
+    const piece = (shape: CityShape, sx: number, sy: number, sz: number, extra: Partial<CityPiece> = {}) => {
+      plan.pieces.push({ shape, x: cx, y: y + sy / 2, z: cz, sx, sy, sz, color, building: id, windows: shape !== 'cone', ...extra });
       y += sy;
     };
-    if (height > 70) {
-      // Podium, shaft, one or two setbacks, crown.
-      const podium = 10 + rnd() * 14;
-      plan.pieces.push({ shape: 'box', x: cx, y: podium / 2, z: cz, sx: foot + 10, sy: podium, sz: depth + 10, color, building: id, windows: true });
-      y = podium;
-      const s1 = (height - podium) * (0.55 + rnd() * 0.2);
-      push(foot, s1, depth);
-      const s2 = (height - y) * (0.6 + rnd() * 0.25);
-      push(foot * 0.74, s2, depth * 0.74);
-      push(foot * 0.5, height - y, depth * 0.5);
+    const style = rnd();
+    if (height < 40) {
+      // Low blocks: a box or drum with a thin band on top.
+      if (rnd() < 0.5) piece('box', foot, height, foot * (0.7 + rnd() * 0.5));
+      else piece('cyl', foot, height, foot);
+    } else if (style < 0.4) {
+      // Stacked octagons on a flared base, a band ring, a narrower upper shaft, a top block.
+      const base = Math.min(height * 0.18, 10 + rnd() * 18);
+      piece('cone', foot * 1.7, base, foot * 1.7, { taper: 0.62 });
+      const s1 = (height - base) * (0.45 + rnd() * 0.15);
+      piece('oct', foot, s1, foot);
+      piece('cyl', foot * 1.18, 3 + rnd() * 3, foot * 1.18);
+      const s2 = (height - y) * (0.6 + rnd() * 0.15);
+      piece('oct', foot * 0.72, s2, foot * 0.72);
+      const head = height - y;
+      if (rnd() < 0.5) piece('box', foot * 1.05, head, foot * 0.8); // hammerhead
+      else { piece('cone', foot * 0.72, head * 0.4, foot * 0.72, { taper: 0.55 }); piece('oct', foot * 0.4, height - y, foot * 0.4); }
+    } else if (style < 0.65) {
+      // Drum tower: wide round podium, round shaft with rings, flared crown.
+      const base = 8 + rnd() * 10;
+      piece('cyl', foot * 1.6, base, foot * 1.6);
+      const rings = 1 + Math.floor(rnd() * 3);
+      const seg = (height * 0.9 - base) / rings;
+      for (let r = 0; r < rings; r++) {
+        piece('cyl', foot * (1 - r * 0.12), seg - 3, foot * (1 - r * 0.12));
+        piece('cyl', foot * (1.12 - r * 0.12), 3, foot * (1.12 - r * 0.12));
+      }
+      piece('cone', foot * 0.9, Math.max(2, height - y), foot * 0.9, { taper: 0.35 });
     } else {
-      push(foot, height, depth);
+      // Boxy slab with setbacks (podium, shaft, setback, crown).
+      const depth = foot * (0.7 + rnd() * 0.5);
+      const podium = 10 + rnd() * 14;
+      piece('box', foot + 10, podium, depth + 10);
+      piece('box', foot, (height - podium) * (0.55 + rnd() * 0.2), depth);
+      piece('box', foot * 0.74, (height - y) * (0.6 + rnd() * 0.25), depth * 0.74);
+      piece('box', foot * 0.5, height - y, depth * 0.5);
     }
     plan.buildings.push({ id, x: cx, z: cz, top: height, color });
     if (height > 140) {
@@ -236,6 +264,17 @@ function buildCity(def = CITY): CityPlan {
     }
     plan.buildings.push({ id, x: cx, z: cz, top: 24, color: 4 });
     plan.rings.push({ x: cx, y: 26, z: cz, radius: r + 10, color: 4 }, { x: cx, y: 0.5, z: cz, radius: 60, color: 5 });
+  }
+
+  // Floating slabs: thin platforms hovering over downtown (solid: you can land on one).
+  for (let k = 0; k < 9; k++) {
+    const a = rnd() * Math.PI * 2;
+    const r = 250 + rnd() * 900;
+    const id = plan.buildings.length;
+    const y = 280 + rnd() * 260;
+    const w = 60 + rnd() * 90;
+    plan.pieces.push({ shape: 'box', x: def.centerX + Math.cos(a) * r, y, z: def.centerZ + Math.sin(a) * r, sx: w, sy: 6, sz: w * (0.4 + rnd() * 0.4), color: pickColor(), building: id, windows: false });
+    plan.buildings.push({ id, x: def.centerX + Math.cos(a) * r, z: def.centerZ + Math.sin(a) * r, top: y + 3, color: 0 });
   }
 
   // --- Streets (traffic lanes) and raised highways on the grid lines
