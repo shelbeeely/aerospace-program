@@ -38,6 +38,14 @@ h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.12em; color: #9fd0ff; }
   text-shadow: 0 0 8px rgba(0,0,0,0.6); animation: blink 0.5s steps(2) infinite;
 }
 @keyframes blink { 50% { opacity: 0.25; } }
+#destroyed {
+  position: absolute; top: 24%; left: 50%; transform: translateX(-50%); text-align: center;
+  color: #ff8a1f; text-shadow: 0 0 12px #ff3d00, 0 0 2px #000; pointer-events: none;
+}
+#destroyed b { display: block; font-size: 40px; letter-spacing: 0.35em; }
+#destroyed small { display: block; margin-top: 6px; font-size: 13px; letter-spacing: 0.12em; color: #ffd9b0; }
+body.touch-ui #destroyed small { display: none; }
+body.touch-ui #destroyed b { font-size: 26px; }
 
 #help { right: 376px; top: 16px; max-width: 380px; max-height: calc(100dvh - 32px); overflow-y: auto; user-select: text; }
 #help td { padding: 1px 10px 1px 0; vertical-align: top; }
@@ -260,7 +268,7 @@ body.touch-ui #hud .row:has(#h-oat), body.touch-ui #hud .row:has(#h-trim) { disp
 
 /* ---------------------------------------------------------------- hangar / flight modes */
 /* Hangar: Studio, craft card and FLY. Flight: HUD, touch controls, F3 panel, help. */
-body.mode-hangar #hud, body.mode-hangar #stall, body.mode-hangar #help, body.mode-hangar #debug,
+body.mode-hangar #hud, body.mode-hangar #stall, body.mode-hangar #destroyed, body.mode-hangar #help, body.mode-hangar #debug,
 body.mode-hangar .touch, body.mode-hangar #to-hangar { display: none !important; }
 body.mode-flight #studio, body.mode-flight #hangar-bar { display: none !important; }
 

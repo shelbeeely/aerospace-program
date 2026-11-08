@@ -77,6 +77,10 @@ export class Simulation {
   exploded = false;
   /** Sum of craft contact impulses this step (N·s): decides explosions. */
   private stepImpact = 0;
+  /** Craft velocity over the last ~0.15 s (ring buffer) and steps left since the last hard contact. */
+  private readonly velHistory = Array.from({ length: 18 }, () => new THREE.Vector3());
+  private velHead = 0;
+  private contactWindow = 0;
   /** Solid neon city and airport structures (static colliders). */
   readonly staticWorld: StaticWorld;
   readonly fire = new FireSystem();
@@ -277,7 +281,7 @@ export class Simulation {
     assertValidCraft(def);
     this.rebuildCraft(def);
     this.explosionResets = 0;
-    this.resetToRunway();
+    this.respawn(); // a different craft; the world stays as it is
   }
 
   private rebuildCraft(def: CraftDef): void {
@@ -303,34 +307,61 @@ export class Simulation {
     return touching;
   }
 
+  /** Reset the WHOLE world: every structure rebuilt, weather and events restarted, a fresh craft on the runway. */
   resetToRunway(): void {
-    // Broken craft are rebuilt from their definition; debris is cleared away.
-    for (const d of this.debris) this.world.removeRigidBody(d.body);
-    this.debris = [];
-    this.debrisSpawn.clear();
     this.staticWorld.reset();
     this.town.reset();
-    this.staticWorld.stream(this.position.x, this.position.z, true);
-    if (this.craft.detached.size) this.rebuildCraft(this.craft.def);
-    this.failures.length = 0;
-    this.filteredLoads.clear();
-    this.damage.reset(this.craft);
+    this.chips.reset();
+    this.explosions.length = 0;
     this.lightning.reset(this.atmosphere.settings.seed);
-    const { position, rotation } = this.spawnPose(this.craft);
-    this.craft.reset(position, rotation);
-    this.fire.reset(this.craft.parts, this.tankFuel());
     this.atmosphere.restart();
     this.groundMotion.set(0, 0, 0);
     this.groundBody.setBodyType(RAPIER.RigidBodyType.Fixed, true);
     this.groundBody.setTranslation(this.groundOrigin, true);
     this.groundMoving = false;
     this.settleGroundWater();
+    this.respawnCraft();
+    this.staticWorld.stream(this.position.x, this.position.z, true);
+  }
+
+  /**
+   * A fresh craft on the runway, keeping the world as it is: wrecked buildings stay wrecked,
+   * rubble stays where it fell and the weather carries on. Only the craft's own debris is cleared.
+   */
+  respawn(): void {
+    if (this.groundMoving) {
+      // Mid-earthquake: settle the runway back to its origin so the craft spawns on it.
+      this.groundMotion.set(0, 0, 0);
+      this.groundBody.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+      this.groundBody.setTranslation(this.groundOrigin, true);
+      this.groundMoving = false;
+    }
+    this.respawnCraft();
+    this.staticWorld.stream(this.position.x, this.position.z, true);
+  }
+
+  private respawnCraft(): void {
+    // Broken craft are rebuilt from their definition; debris is cleared away.
+    for (const d of this.debris) this.world.removeRigidBody(d.body);
+    this.debris = [];
+    this.debrisSpawn.clear();
+    if (this.craft.detached.size || this.exploded) this.rebuildCraft(this.craft.def);
+    this.exploded = false;
+    this.stepImpact = 0;
+    this.contactWindow = 0;
+    this.failures.length = 0;
+    this.filteredLoads.clear();
+    this.damage.reset(this.craft);
+    const { position, rotation } = this.spawnPose(this.craft);
+    this.craft.reset(position, rotation);
+    this.fire.reset(this.craft.parts, this.tankFuel());
     this.controls = neutralControls();
     this.prevVelocity.set(0, 0, 0);
     this.gForceFiltered = 1;
     this.readBodyState();
     this.prevPosition.copy(this.position);
     this.prevRotation.copy(this.rotation);
+    for (const v of this.velHistory) v.copy(this.linvel);
   }
 
   private readBodyState(): void {
@@ -358,7 +389,8 @@ export class Simulation {
   /** Advance one fixed physics step with the given controls. */
   step(controls: ControlInputs): void {
     const t0 = performance.now();
-    this.controls = sanitizeControls(controls);
+    // A wreck flies no more: engines out, surfaces slack (brakes stay on so it settles).
+    this.controls = this.exploded ? { ...neutralControls(), brake: 1 } : sanitizeControls(controls);
     (this.ctx as { controls: ControlInputs }).controls = this.controls;
 
     this.prevPosition.copy(this.position);
@@ -396,7 +428,15 @@ export class Simulation {
     // After an explosion reset the step's contacts belong to a craft that's gone: drop them.
     this.dispatchContactForces(resets === this.explosionResets);
     if (this.groundMoving) this.town.shake(this.atmosphere.events.groundAcceleration(_tmp));
-    if (!this.exploded && this.stepImpact > this.explodeImpulse()) this.explode();
+    // Explode when a hard contact stops (or flings) the craft by more than explodeSpeed within
+    // ~0.15 s: velocity change is robust where single-step contact impulses spike.
+    if (this.stepImpact > 0) this.contactWindow = this.velHistory.length;
+    else if (this.contactWindow > 0) this.contactWindow--;
+    const oldest = this.velHistory[this.velHead];
+    const dv = Math.hypot(this.linvel.x - oldest.x, this.linvel.y - oldest.y, this.linvel.z - oldest.z);
+    oldest.copy(this.linvel);
+    this.velHead = (this.velHead + 1) % this.velHistory.length;
+    if (!this.exploded && this.contactWindow > 0 && dv > this.explodeSpeed()) this.explode();
     this.staticWorld.update(this.time);
     this.town.update(this.time);
     this.stepHazards();
@@ -577,11 +617,11 @@ export class Simulation {
   }
 
   /** Break a part off: debris body, failure record, structure version bump. */
-  /** Impulse in one step that blows the craft up: its mass arriving at ~30 m/s, more if reinforced. */
-  private explodeImpulse(): number {
+  /** Speed lost in a crash that blows the craft up (m/s): ~30, more if reinforced. */
+  private explodeSpeed(): number {
     const parts = this.craft.parts;
     const avg = parts.length ? parts.reduce((a, p) => a + Math.min(3, Math.max(0, p.reinforce ?? 0)), 0) / parts.length : 0;
-    return this.craft.massProps.mass * TUNING.explodeSpeed * (1 + 0.3 * avg);
+    return TUNING.explodeSpeed * (1 + 0.3 * avg);
   }
 
   /**
@@ -650,6 +690,7 @@ export class Simulation {
     const parts = [...this.craft.parts].sort((a, b) => b.mass - a.mass);
     const before = this.debris.length;
     for (const p of parts.slice(1)) this.breakPart(p.id, Infinity, this.craft.strength.get(p.id) ?? Infinity, 'impact');
+    if (parts[0]) this.fire.ignite(parts[0].id); // the wreck burns
     // Throw the pieces outward and burst their voxels.
     for (const d of this.debris.slice(before)) {
       const t = d.body.translation();

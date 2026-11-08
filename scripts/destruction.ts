@@ -64,6 +64,7 @@ console.log('\n--- trainer dropped from 30 m');
   // Losing a wing takes its lift with it: no AeroSurface of a detached part remains.
   const orphan = sim.craft.aeroSurfaces.filter((s) => sim.craft.detached.has(s.partId));
   check(orphan.length === 0, 'detached parts leave no aero surfaces behind');
+  check(!sim.exploded, 'a 30 m drop (~24 m/s) breaks parts but does not explode the craft');
   // A reset rebuilds the craft at full health.
   sim.resetToRunway();
   check(!sim.damage.damaged && sim.craft.detached.size === 0 && minHp(sim) === 1, 'reset restores full HP');
@@ -123,6 +124,62 @@ console.log('\n--- jet into a 0.3 m wall at 300 m/s');
   const debrisThrough = sim.debris.filter((d) => d.body.translation().z < back).length;
   check(debrisThrough === 0, 'no debris tunnels through the wall', `debris ${sim.debris.length}, failures [${sim.failures.map((f) => `${f.partId}:${f.cause}`).join(', ')}]`);
   check(sim.explosionResets === 0, 'no explosion resets');
+}
+
+// ---------------------------------------------------------------- 4. voxel bites and the explosion threshold
+console.log('\n--- voxel bites and crash speed');
+const crash = (def: CraftDef, v: number) => {
+  const sim = new Simulation(def);
+  run(sim, 2);
+  const b = sim.craft.body;
+  const t = b.translation();
+  b.setTranslation({ x: t.x, y: t.y + 8, z: t.z }, true);
+  b.setRotation({ x: 0.2, y: 0, z: 0.1, w: 0.97 }, true);
+  b.setLinvel({ x: 0, y: -v, z: 0 }, true);
+  run(sim, 2.5);
+  return sim;
+};
+{
+  const sim = crash(TEST_PLANE, 15);
+  const bitten = [...sim.craft.voxels.entries()].filter(([, v]) => v.aliveCount < v.total);
+  check((bitten.length > 0 || sim.failures.length > 0) && sim.chips.total > 0, 'a 15 m/s belly hit bites voxels out and throws chips',
+    `bitten [${bitten.map(([k, v]) => `${k} ${(v.integrity * 100).toFixed(0)}%`).join(', ')}], broken off [${sim.failures.map((f) => f.partId).join(', ')}]; ${sim.chips.total} chips`);
+  check(!sim.exploded, '15 m/s: no explosion');
+  for (const b of BUILTINS) {
+    const slow = crash(b.craft, 20);
+    const fast = crash(b.craft, 34);
+    check(!slow.exploded && fast.exploded, `${b.label}: survives 20 m/s, explodes at 34 m/s`, `20: ${slow.exploded}, 34: ${fast.exploded}`);
+  }
+}
+
+// ---------------------------------------------------------------- 5. explosion and the two resets
+console.log('\n--- hard crash: explosion, new plane, world reset');
+{
+  const sim = new Simulation(TEST_PLANE);
+  run(sim, 2);
+  // Wreck a structure first, so we can tell the two resets apart.
+  const group = 0;
+  sim.staticWorld.fracture(group, { impulse: 1e6, x: 0, y: 0, z: 0 }, sim.time);
+  const b = sim.craft.body;
+  const t = b.translation();
+  b.setTranslation({ x: t.x, y: t.y + 30, z: t.z }, true);
+  b.setLinvel({ x: 0, y: -90, z: -40 }, true);
+  run(sim, 1.5);
+  check(sim.exploded && sim.explosions.length === 1, 'a 90 m/s nose-in explodes the craft', `exploded ${sim.exploded}, explosions ${sim.explosions.length}, debris ${sim.debris.length}`);
+  check(sim.debris.length >= sim.craft.def.parts.length - 2, 'the explosion throws the parts off', `debris ${sim.debris.length} of ${sim.craft.def.parts.length} parts`);
+  check(sim.chips.total > 100, 'the explosion bursts into chips', `${sim.chips.total} chips`);
+  const tel = sim.telemetry();
+  check(sim.controls.throttle === 0, 'a wreck ignores the controls', `throttle ${sim.controls.throttle}, speed ${tel.airspeed.toFixed(1)}`);
+
+  sim.respawn();
+  check(!sim.exploded && sim.debris.length === 0 && sim.craft.detached.size === 0, 'new plane: a whole craft, no debris');
+  check([...sim.craft.voxels.values()].every((v) => v.aliveCount === v.total), 'new plane: every voxel back');
+  check(sim.staticWorld.fractured.size >= 1, 'new plane: the wrecked structure stays wrecked', `${sim.staticWorld.fractured.size} fractured`);
+  run(sim, 2);
+  check(!sim.exploded && sim.failures.length === 0, 'new plane: sits on the runway unharmed');
+
+  sim.resetToRunway();
+  check(sim.staticWorld.fractured.size === 0 && sim.explosions.length === 0 && sim.chips.bursts.length === 0, 'world reset: every structure whole again');
 }
 
 if (failed) {

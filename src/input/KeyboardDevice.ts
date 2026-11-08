@@ -1,6 +1,7 @@
 import type { Action, InputDevice, RawInput } from './types.ts';
 
 const GAME_CODES = new Set([
+  'Backspace',
   'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyB', 'KeyR', 'KeyC', 'KeyZ', 'KeyX',
   'KeyT', 'KeyG', 'KeyH', 'KeyY', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'F3',
   'Space', 'KeyN', 'BracketLeft', 'BracketRight', 'KeyM', 'KeyP', 'KeyK', 'KeyF', 'Period', 'Comma', 'F6', 'F7', 'KeyU',
@@ -22,6 +23,7 @@ export class KeyboardDevice implements InputDevice {
       this.down.add(e.code);
       switch (e.code) {
         case 'KeyR': this.actions.push('reset'); break;
+        case 'Backspace': this.actions.push('resetWorld'); break;
         case 'KeyC': this.actions.push('camera'); break;
         case 'F3': this.actions.push('debug'); break;
         case 'KeyH': this.actions.push('help'); break;

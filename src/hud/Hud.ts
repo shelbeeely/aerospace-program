@@ -30,6 +30,7 @@ export class Hud {
     oat: $('h-oat'),
     wx: $('h-wx'),
     stall: $('stall'),
+    destroyed: $('destroyed'),
     help: $('help'),
     debug: $('debug'),
     stats: $('d-stats'),
@@ -102,6 +103,12 @@ export class Hud {
       .join('  ');
     this.set(this.el.flags, flags);
     this.el.stall.classList.toggle('hidden', !(t.stall > 0.35 && !t.onGround && t.airspeed > 5));
+  }
+
+  /** The craft blew up: show the banner (and hide the stall warning). */
+  setDestroyed(on: boolean): void {
+    this.el.destroyed.classList.toggle('hidden', !on);
+    if (on) this.el.stall.classList.add('hidden');
   }
 
   toggleHelp(): void {

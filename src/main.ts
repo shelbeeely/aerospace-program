@@ -25,6 +25,7 @@ import { WeatherView } from './render/WeatherView.ts';
 import { CityView } from './render/CityView.ts';
 import { AirportView } from './render/AirportView.ts';
 import { KitTowersView } from './render/KitTowersView.ts';
+import { ExplosionView } from './render/ExplosionView.ts';
 import { ChipsView } from './render/ChipsView.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
@@ -142,6 +143,8 @@ async function start() {
   const airportView = new AirportView(scene);
   const kitView = new KitTowersView(scene, sim.staticWorld, import.meta.env.BASE_URL);
   const chipsView = new ChipsView(scene, sim.chips);
+  const explosionView = new ExplosionView(scene);
+  let explosionHeardAt = -Infinity;
   const _wind10 = new THREE.Vector3();
   const _tmpWindPoint = new THREE.Vector3();
   const oceanView = new OceanView(scene, sim.ocean, sim.atmosphere.events);
@@ -263,9 +266,11 @@ async function start() {
   }
 
   const flightLog = new FlightLog();
-  const reset = () => {
+  /** world: true rebuilds every structure and restarts the weather; false only respawns the craft. */
+  const reset = (world = true) => {
     autopilot.disengage();
-    sim.resetToRunway();
+    if (world) sim.resetToRunway();
+    else sim.respawn();
     player.reset();
     rig.snap();
     flightLog.reset();
@@ -298,7 +303,7 @@ async function start() {
     player.profile = vehicleKind(sim);
     controlsPanel.render();
     rig.fitCraft(sim.craft.boundingRadius());
-    reset();
+    reset(false);
     if (mode === 'hangar') showOnTurntable();
     studio.renderHangar();
   };
@@ -362,7 +367,7 @@ async function start() {
     debug.setVisible(!hangar && debugOn); // the CoM/CoL markers ride on the craft view
     if (hangar) {
       // Physics is paused in the hangar: put the craft back at its spawn pose on the turntable.
-      sim.resetToRunway();
+      sim.respawn(); // the world (and its wreckage) stays as it is
       if (sim.version !== viewVersion) {
         if (sim.craft !== craftView.craft) replaceCraftView();
         viewVersion = sim.version;
@@ -376,7 +381,7 @@ async function start() {
         document.getElementById('studio-open')?.setAttribute('aria-expanded', 'false');
       } else studio.show();
     } else {
-      reset();
+      reset(false);
     }
     flyBtn.blur();
     toHangarBtn.blur();
@@ -385,7 +390,7 @@ async function start() {
   const fly = (entry?: LibraryEntry | null) => {
     if (entry !== undefined) select(entry);
     if (mode !== 'flight') setMode('flight');
-    else reset();
+    else reset(false);
   };
   flyBtn.addEventListener('click', () => fly());
   toHangarBtn.addEventListener('click', () => setMode('hangar'));
@@ -536,7 +541,9 @@ async function start() {
       },
       setPilot: (p: ControlSource | null) => (pilot = p ?? autopilot),
       autopilot,
-      reset,
+      /** Reset the whole world (respawn() keeps the world and only replaces the craft). */
+      reset: () => reset(true),
+      respawn: () => reset(false),
     },
   });
 
@@ -592,7 +599,8 @@ async function start() {
       else if (a === 'nextVehicle') cycleCraft(1);
       else if (a === 'prevVehicle') cycleCraft(-1);
       else if (mode !== 'flight') continue; // the rest only means something in flight
-      else if (a === 'reset') reset();
+      else if (a === 'reset') { reset(false); toast('New plane — the world stays as it is'); }
+      else if (a === 'resetWorld') { reset(true); toast('World reset'); }
       else if (a === 'camera') rig.toggle(renderPos);
       else if (a === 'help') {
         controlsPanel.render(); // reflect the current profile / devices
@@ -642,6 +650,15 @@ async function start() {
     cityView.update(dt);
     kitView.update();
     chipsView.update(dt);
+    explosionView.update(sim.time, sim.explosions);
+    if (!sim.explosions.length) explosionHeardAt = -Infinity;
+    for (const e of sim.explosions) {
+      if (e.time <= explosionHeardAt) continue;
+      explosionHeardAt = e.time;
+      audio.explosion(Math.hypot(e.x - camera.position.x, e.y - camera.position.y, e.z - camera.position.z));
+      player.rumble(1, 900);
+    }
+    hud.setDestroyed(sim.exploded);
     oceanView.update(sim.time, camera);
     lightningView.update(sim.time, sim.lightning.strikes, sim.craft, Math.max(sim.lightning.staticCharge, (sim.atmosphere.settings.storm ?? 0) * 0.5));
     fireView.update(sim.time, sim.fire, sim.craft);

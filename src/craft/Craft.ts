@@ -260,7 +260,7 @@ export class Craft {
 
   /** Part mass after reinforcement (+15% per level) and voxel loss. */
   effectiveMass(p: PartDef): number {
-    return p.mass * (1 + 0.15 * reinforceLevel(p)) * (this.voxels.get(p.id)?.integrity ?? 1);
+    return p.mass * (1 + 0.15 * reinforceLevel(p)) * Math.max(0.1, this.voxels.get(p.id)?.integrity ?? 1);
   }
 
   /** Voxels were bitten off a part: update its modules and, if it matters, the mass. */

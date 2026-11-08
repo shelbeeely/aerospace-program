@@ -27,7 +27,8 @@ export const GAMEPAD_HELP: Record<'airplane' | 'rotorcraft', Array<[string, stri
   ],
 };
 export const GAMEPAD_COMMON: Array<[string, string]> = [
-  ['Y', 'reset'],
+  ['Y', 'new plane (world unchanged)'],
+  ['LB + Y', 'reset the whole world'],
   ['B', 'camera'],
   ['D-pad ←/→', 'previous / next craft'],
   ['Start', 'Studio'],
@@ -128,7 +129,7 @@ export class GamepadDevice implements InputDevice {
     const edge = (i: number, a: Action) => {
       if (pressed(i) && !this.prevButtons[i]) this.actions.push(a);
     };
-    edge(B.Y, 'reset');
+    if (pressed(B.Y) && !this.prevButtons[B.Y]) this.actions.push(pressed(B.LB) ? 'resetWorld' : 'reset');
     edge(B.B, 'camera');
     // X cycles flaps (airplanes); craft cycling stays on the D-pad.
     if (pressed(B.X) && !this.prevButtons[B.X]) raw.flapCycle = true;

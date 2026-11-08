@@ -178,6 +178,35 @@ export class FlightAudio {
     }
   }
 
+  /** A craft explosion `distance` m from the listener: a sharp crack, then a long low roll. */
+  explosion(distance: number): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running') return;
+    const t = ctx.currentTime + distance / 343;
+    const level = 1 / (1 + distance / 150);
+    const src = this.loopNoise();
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.setValueAtTime(5000, t);
+    f.frequency.exponentialRampToValueAtTime(90, t + 2.4);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, ctx.currentTime);
+    g.gain.setValueAtTime(1.2 * level, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 3);
+    src.connect(f).connect(g).connect(this.master);
+    src.stop(t + 3.1);
+    const o = ctx.createOscillator();
+    o.frequency.setValueAtTime(70, t);
+    o.frequency.exponentialRampToValueAtTime(22, t + 1.6);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.0001, ctx.currentTime);
+    og.gain.setValueAtTime(0.9 * level, t);
+    og.gain.exponentialRampToValueAtTime(0.001, t + 1.8);
+    o.connect(og).connect(this.master);
+    o.start(t);
+    o.stop(t + 1.9);
+  }
+
   /** Call every frame. */
   update(t: Telemetry, craft: Craft, failures: number, airframeHit: boolean, dt: number): void {
     const ctx = this.ctx;

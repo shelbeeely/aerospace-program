@@ -10,7 +10,8 @@ const KEYBOARD: Array<[string, string]> = [
   ['B or Space', 'brakes'],
   ['T / G, Y', 'trim down / up, reset'],
   [', / . (F6 / F7)', 'flaps up / down a notch'],
-  ['R', 'reset'],
+  ['R', 'new plane on the runway (wreckage stays)'],
+  ['Backspace', 'reset the whole world'],
   ['U', 'autopilot on / off (then W/S altitude, A/D heading, Shift/Ctrl speed)'],
   ['C', 'chase / orbit camera'],
   ['[ / ]', 'previous / next craft'],
@@ -26,7 +27,7 @@ const TOUCH: Array<[string, string]> = [
   ['BRAKE', 'hold to brake'],
   ['Hangar', 'choose a craft or open Create / Studio'],
   ['Camera', 'switch chase / orbit view'],
-  ['More', 'reset, craft selection, weather, flaps, sound and photos'],
+  ['More', 'new plane, reset world, craft selection, weather, flaps, sound and photos'],
 ];
 
 const PROFILE_TIPS: Record<string, string> = {

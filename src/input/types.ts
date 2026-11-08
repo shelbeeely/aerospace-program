@@ -19,6 +19,7 @@ export interface RawInput {
 
 export type Action =
   | 'reset'
+  | 'resetWorld'
   | 'camera'
   | 'debug'
   | 'help'

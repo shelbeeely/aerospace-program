@@ -129,7 +129,7 @@ export const TUNING = {
   impactSafeSpeed: 4,
   /** Wheels, gear legs and skids take no impact damage up to the impulse of the craft arriving at this sink rate (m/s). */
   gearSinkLimit: 5,
-  /** The craft explodes when one step's contact impulse exceeds its mass × this (m/s; ~110 km/h head-on). */
+  /** The craft explodes when a hard contact changes its velocity by more than this within 0.15 s (m/s; ~110 km/h). */
   explodeSpeed: 30,
   /** A part whose voxels drop below this fraction breaks off. */
   voxelBreakIntegrity: 0.35,
