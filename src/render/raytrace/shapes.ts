@@ -1,7 +1,7 @@
 import { Quaternion, Vector3 } from 'three';
 
 export type RayShapeKind = 'box' | 'sphere' | 'cylinder' | 'plane';
-/** Cylinder axis is local Y; box size is half-extents; sphere uses size.x. */
+/** Cylinder axis is local Y; box size is half-extents; sphere uses size.x. Plane X/Z half-extents bound it when positive (0 = infinite). */
 export interface RayShape {
   kind: RayShapeKind;
   position: Vector3;
@@ -31,7 +31,12 @@ export function intersectShape(origin: Vector3, direction: Vector3, shape: RaySh
     if (discriminant >= 0) for (const root of [-b - Math.sqrt(discriminant), -b + Math.sqrt(discriminant)])
       accept(root, o.clone().addScaledVector(d, root).normalize());
   } else if (shape.kind === 'plane') {
-    if (Math.abs(d.y) > EPS) accept(-o.y / d.y, new Vector3(0, d.y < 0 ? 1 : -1, 0));
+    if (Math.abs(d.y) > EPS) {
+      const distance = -o.y / d.y;
+      const p = o.clone().addScaledVector(d, distance);
+      if ((shape.size.x <= 0 || Math.abs(p.x) <= shape.size.x) && (shape.size.z <= 0 || Math.abs(p.z) <= shape.size.z))
+        accept(distance, new Vector3(0, d.y < 0 ? 1 : -1, 0));
+    }
   } else if (shape.kind === 'box') {
     let near = -Infinity, far = Infinity;
     let nearNormal = new Vector3(), farNormal = new Vector3();

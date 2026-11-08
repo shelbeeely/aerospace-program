@@ -16,7 +16,8 @@
     "raytrace": "node --experimental-transform-types --no-warnings scripts/raytrace.ts",
     "events": "node --experimental-transform-types --no-warnings scripts/events.ts",
     "ocean": "node --experimental-transform-types --no-warnings scripts/ocean.ts",
-    "hazards": "node --experimental-transform-types --no-warnings scripts/hazards.ts"
+    "hazards": "node --experimental-transform-types --no-warnings scripts/hazards.ts",
+    "raymode": "node --experimental-transform-types --no-warnings scripts/raymode.ts"
   },
   "repository": {
     "type": "git",

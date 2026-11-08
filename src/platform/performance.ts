@@ -27,6 +27,7 @@ export class PerformanceGovernor {
   private evalTimer = 0;
   private goodSeconds = 0;
   private renderBudget = 0;
+  private observedFrames = 0;
 
   constructor(
     private readonly renderer: THREE.WebGPURenderer,
@@ -84,6 +85,7 @@ export class PerformanceGovernor {
 
   /** Call once per animation frame with the real frame time. Returns whether to render it. */
   frame(dt: number): boolean {
+    this.observedFrames++;
     this.avgFrame += (dt - this.avgFrame) * 0.1;
     this.evalTimer += dt;
     if (this.evalTimer >= 1) {
@@ -109,6 +111,16 @@ export class PerformanceGovernor {
     if (this.renderBudget < 1 / 31) return false;
     this.renderBudget = 0;
     return true;
+  }
+
+  /** Flight RT is offered only after one second of measured healthy raster frames. */
+  get rayTraceHeadroom(): boolean {
+    return !this.paused && !this.powerSaver && this.observedFrames >= 60 && this.scale >= 0.75 && this.avgFrame <= 1 / 45;
+  }
+
+  /** A slower threshold prevents mode oscillation once tracing is enabled. */
+  get rayTraceOverloaded(): boolean {
+    return this.powerSaver || this.paused || (this.observedFrames >= 60 && (this.avgFrame > 1 / 25 || this.scale < 0.65));
   }
 
   describe(): string {

@@ -23,6 +23,10 @@ check(Math.abs(intersectShape(new Vector3(0,0,3),new Vector3(0,0,-1),box)!.dista
 const plane=shape('plane');
 check(intersectShape(new Vector3(0,2,0),new Vector3(0,-1,0),plane)!.distance===2,'plane hit');
 check(!intersectShape(new Vector3(0,2,0),new Vector3(1,0,0),plane),'plane parallel miss');
+check(!intersectShape(new Vector3(2,2,0),new Vector3(0,-1,0),plane),'finite plane outside miss');
+check(!!intersectShape(new Vector3(1,2,1),new Vector3(0,-1,0),plane),'finite plane boundary hit');
+plane.size.set(0,0,0);
+check(!!intersectShape(new Vector3(2000,2,2000),new Vector3(0,-1,0),plane),'zero extents preserve infinite plane');
 const candidates=Array.from({length:300},(_,i)=>{const s=shape('sphere');s.position.x=300-i;return s;});
 const packed=packShapes(candidates,new Vector3());
 check(packed.count===MAX_RAY_SHAPES && packed.shapes[0].position.x===1,'capacity and nearest selection');
