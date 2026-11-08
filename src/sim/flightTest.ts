@@ -54,6 +54,12 @@ export interface FlightTestOptions {
 
 const r1 = (x: number) => Math.round(x * 10) / 10;
 
+/** scheduler.yield() where available (Chrome: resumes ahead of other tasks), else setTimeout. */
+function yieldToEventLoop(): Promise<void> {
+  const s = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+  return s?.yield ? s.yield() : new Promise((r) => setTimeout(r, 0));
+}
+
 export function analyzeDesign(sim: Simulation): DesignMetrics {
   const craft = sim.craft;
   const mp = craft.massProps;
@@ -144,7 +150,7 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
       if (until?.(t) || crashed) return t;
       if (yieldEvery && ++stepsSinceYield >= yieldEvery) {
         stepsSinceYield = 0;
-        await new Promise((r) => setTimeout(r, 0));
+        await yieldToEventLoop();
       }
     }
     return t;

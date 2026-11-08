@@ -128,6 +128,8 @@ export interface DesignRequest {
   /** Total model calls allowed, including repairs (default 3). */
   maxIterations?: number;
   onEvent?: (e: DesignEvent) => void;
+  /** How to flight-test a candidate (the browser passes a Web Worker runner). */
+  tester?: (craft: CraftDef) => Promise<FlightReport>;
   signal?: AbortSignal;
 }
 
@@ -251,7 +253,7 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
     emit({ type: 'status', message: `Flight-testing "${craft.name}"…` });
     let report: FlightReport;
     try {
-      report = await flightTest(craft, { yieldEvery: 1500 });
+      report = await (req.tester ? req.tester(craft) : flightTest(craft, { yieldEvery: 1500 }));
     } catch (e) {
       attempt.error = `Simulation error: ${e instanceof Error ? e.message : e}`;
       emit({ type: 'attempt', attempt });

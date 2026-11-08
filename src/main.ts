@@ -11,6 +11,8 @@ import { CameraRig } from './render/CameraRig.ts';
 import { CraftView } from './render/CraftView.ts';
 import { DebrisView } from './render/DebrisView.ts';
 import { captureFrame } from './render/capture.ts';
+import { PerformanceGovernor } from './platform/performance.ts';
+import { runFlightTest } from './sim/flightTestClient.ts';
 import { DebugOverlay } from './render/DebugOverlay.ts';
 import { WorldView } from './render/WorldView.ts';
 import type { ControlSource } from './sim/controls.ts';
@@ -50,7 +52,9 @@ async function start() {
     }
   };
   const backendName = (renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend ? 'WebGPU' : 'WebGL2';
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobile ? 1.5 : 2));
+  const basePixelRatio = Math.min(window.devicePixelRatio, mobile ? 1.5 : 2);
+  renderer.setPixelRatio(basePixelRatio);
+  const perf = new PerformanceGovernor(renderer, basePixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -203,6 +207,9 @@ async function start() {
       telemetry: () => sim.telemetry(),
       renderer,
       backend: backendName,
+      perf,
+      /** Flight-test a craft in the worker (same path the Studio uses). */
+      flightTest: runFlightTest,
       /** PNG of the current 3D view (GPU readback; works on WebGPU and WebGL2). */
       capture: (width?: number) => captureFrame(renderer, scene, camera, width),
       client,
@@ -234,6 +241,13 @@ async function start() {
     requestAnimationFrame(frame);
     const dt = Math.min(0.25, (now - last) / 1000);
     last = now;
+    // Background tab: don't simulate or render (rAF is throttled anyway; this also stops audio
+    // and keeps the sim from leaping forward on return).
+    if (perf.paused) {
+      accumulator = 0;
+      return;
+    }
+    const renderThisFrame = perf.frame(dt);
 
     for (const a of player.poll()) {
       if (a === 'reset') reset();
@@ -307,7 +321,7 @@ async function start() {
     }
     // `?nopresent` (automated tests): simulate and update everything but skip presenting to the
     // canvas. Headless browsers can't composite a WebGPU canvas; game.capture() still renders.
-    if (presentToCanvas) renderer.render(scene, camera);
+    if (presentToCanvas && renderThisFrame) renderer.render(scene, camera);
 
     if (debugOn) {
       const mp = sim.craft.massProps;
@@ -322,7 +336,7 @@ async function start() {
           `margin     ${(col.z - mp.com.z).toFixed(2)} m ${col.z - mp.com.z < 0 ? '(UNSTABLE)' : ''}\n` +
           `fuel       ${sim.craft.fuelCapacity ? `${sim.craft.fuel.toFixed(1)} / ${sim.craft.fuelCapacity} kg` : 'none (infinite)'}\n` +
           `broken     ${sim.failures.map((f) => `${f.partId} (${(f.load / 1000).toFixed(1)}/${(f.strength / 1000).toFixed(1)} kN)`).join(', ') || 'none'}\n` +
-          `renderer   ${backendName}\n` +
+          `renderer   ${backendName}, ${perf.describe()}\n` +
           `draw calls ${renderer.info.render.drawCalls}`,
       );
     }

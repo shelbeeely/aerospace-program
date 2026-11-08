@@ -13,6 +13,7 @@ import {
   type ModelInfo,
 } from '../gen/openrouter.ts';
 import { formatReport } from '../sim/flightTest.ts';
+import { runFlightTest } from '../sim/flightTestClient.ts';
 
 export interface StudioHost {
   client: OpenRouter;
@@ -387,6 +388,7 @@ export class Studio {
         base: refine ? cur.craft : undefined,
         feedback: refine ? this.host.flightNotes() : undefined,
         maxIterations: Number(this.el.rounds.value),
+        tester: runFlightTest,
         signal,
         onEvent: (e) => {
           if (e.type === 'status') this.setStatus(e.message);
