@@ -1,7 +1,8 @@
 import * as THREE from 'three/webgpu';
 import {
-  abs, color, float, floor, fract, hash, instanceIndex, mix, normalWorld, positionWorld, smoothstep, step, uniform,
+  abs, color, float, floor, fract, hash, instanceIndex, mix, normalWorld, smoothstep, step, uniform,
 } from 'three/tsl';
+import { flatWorld } from './curvature.ts';
 import { neonLineMaterial, type TslNode } from './neon.ts';
 
 /** One solid piece to draw (city tower tier, airport building...). */
@@ -28,12 +29,17 @@ const nearestTaper = (t = 1) => TAPERS.reduce((a, b) => (Math.abs(b - t) < Math.
 /** Unit geometries (1 m bounding box, centred) per shape key. */
 function unitGeometry(key: string): THREE.BufferGeometry {
   if (key === 'box') return new THREE.BoxGeometry(1, 1, 1);
+  // Long pieces (freeway decks): subdivided so the planet curvature can bend them.
+  if (key === 'boxlong') return new THREE.BoxGeometry(1, 1, 1, 32, 1, 32);
   if (key === 'oct') return new THREE.CylinderGeometry(0.5, 0.5, 1, 8);
   if (key === 'cyl') return new THREE.CylinderGeometry(0.5, 0.5, 1, 16);
   const taper = Number(key.slice(4));
   return new THREE.CylinderGeometry(0.5 * taper, 0.5, 1, 16);
 }
-const shapeKey = (p: StructurePiece) => (p.shape === 'cone' ? `cone${nearestTaper(p.taper)}` : p.shape);
+const shapeKey = (p: StructurePiece) =>
+  p.shape === 'cone' ? `cone${nearestTaper(p.taper)}` : p.shape === 'box' && Math.max(p.sx, p.sz) > 200 ? 'boxlong' : p.shape;
+/** Edge key: a long box has the same edges as a box (the subdivision is only in the faces). */
+const edgeKey = (p: StructurePiece) => (shapeKey(p) === 'boxlong' ? 'box' : shapeKey(p));
 
 /**
  * Steel-blue façade: metallic, darker near the street, with sparse lit windows in the accent
@@ -47,7 +53,7 @@ export function facadeMaterial(accent: string, windows: boolean): THREE.MeshStan
     polygonOffsetFactor: 1,
     polygonOffsetUnits: 1,
   });
-  const p = positionWorld;
+  const p = flatWorld;
   const steel: TslNode = mix(color('#0c1236'), color('#22357a'), smoothstep(0, 220, p.y));
   m.colorNode = steel;
   if (!windows) {
@@ -129,7 +135,9 @@ export class StructuresView {
 
     // --- Merged neon edges, one LineSegments per colour, with per-group vertex ranges
     const edgeUnits = new Map<string, Float32Array>();
+    if (!geos.has('box')) geos.set('box', unitGeometry('box'));
     for (const shape of geos.keys()) {
+      if (shape === 'boxlong') continue;
       const e = new THREE.EdgesGeometry(geos.get(shape)!, 10);
       edgeUnits.set(shape, (e.getAttribute('position') as THREE.BufferAttribute).array as Float32Array);
       e.dispose();
@@ -141,25 +149,28 @@ export class StructuresView {
       list.push(p);
     }
     const v = new THREE.Vector3();
+    const w = new THREE.Vector3();
     for (const [col, list] of byColor) {
-      let total = 0;
-      for (const p of list) total += edgeUnits.get(shapeKey(p))!.length;
-      const arr = new Float32Array(total);
-      const attr = new THREE.BufferAttribute(arr, 3);
-      let o = 0;
+      const out: number[] = [];
       const ranges: Array<{ group: number; start: number; count: number }> = [];
       for (const p of list) {
-        const unit = edgeUnits.get(shapeKey(p))!;
+        const unit = edgeUnits.get(edgeKey(p))!;
         m.compose(pos.set(p.x, p.y, p.z), q, scl.set(p.sx, p.sy, p.sz));
-        for (let i = 0; i < unit.length; i += 3) {
+        const start = out.length;
+        for (let i = 0; i < unit.length; i += 6) {
           v.set(unit[i], unit[i + 1], unit[i + 2]).applyMatrix4(m);
-          arr[o + i] = v.x;
-          arr[o + i + 1] = v.y;
-          arr[o + i + 2] = v.z;
+          w.set(unit[i + 3], unit[i + 4], unit[i + 5]).applyMatrix4(m);
+          // Long edges are split so they bend with the planet (100 m pieces).
+          const n = Math.max(1, Math.ceil(v.distanceTo(w) / 100));
+          for (let k = 0; k < n; k++) {
+            const a = k / n, b = (k + 1) / n;
+            out.push(v.x + (w.x - v.x) * a, v.y + (w.y - v.y) * a, v.z + (w.z - v.z) * a, v.x + (w.x - v.x) * b, v.y + (w.y - v.y) * b, v.z + (w.z - v.z) * b);
+          }
         }
-        if (p.group >= 0) ranges.push({ group: p.group, start: o, count: unit.length });
-        o += unit.length;
+        if (p.group >= 0) ranges.push({ group: p.group, start, count: out.length - start });
       }
+      const arr = new Float32Array(out);
+      const attr = new THREE.BufferAttribute(arr, 3);
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', attr);
       geo.computeBoundingSphere();

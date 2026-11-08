@@ -1,5 +1,6 @@
 import type { CraftDef } from './craft/types.ts';
 import * as THREE from 'three/webgpu';
+import { PLANET } from './sim/layout.ts';
 import { TEST_PLANE } from './craft/testPlane.ts';
 import { Hud } from './hud/Hud.ts';
 import { GamepadDevice, KeyboardDevice, PlayerInput, TouchDevice } from './input/PlayerInput.ts';
@@ -28,6 +29,8 @@ import { AirportView } from './render/AirportView.ts';
 import { KitTowersView } from './render/KitTowersView.ts';
 import { LandingSitesView } from './render/LandingSitesView.ts';
 import { ExplosionView } from './render/ExplosionView.ts';
+import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
+import { updateSkyPlanet } from './render/neon.ts';
 import { ChipsView } from './render/ChipsView.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
@@ -153,6 +156,8 @@ async function start() {
   const _tmpWindPoint = new THREE.Vector3();
   const oceanView = new OceanView(scene, sim.ocean, sim.atmosphere.events);
   let viewVersion = sim.version;
+  let wrapsSeen = 0;
+  let curvatureTick = 0;
   let currentLivery: string | null = null;
   /** Rebuild the craft's visuals (new craft, or the sim rebuilt a broken one on reset). */
   const replaceCraftView = () => {
@@ -413,6 +418,7 @@ async function start() {
   };
   const setMode = (m: AppMode) => {
     if (captureBusy) return;
+    curveOn.value = m === 'flight' ? 1 : 0; // the hangar is flat
     autopilot.disengage();
     mode = m;
     syncRenderControls();
@@ -752,7 +758,24 @@ async function start() {
 
     const v = sim.craft.body.linvel();
     velocity.set(v.x, v.y, v.z);
+    // Crossed a wrap edge: the craft jumped one circumference; the camera jumps with it.
+    if (sim.wrapCount !== wrapsSeen) {
+      wrapsSeen = sim.wrapCount;
+      rig.snap();
+    }
     rig.update(dt, renderPos, renderRot, velocity);
+    // Planet curvature follows the camera; from high up the clip range opens to show the globe.
+    curveOrigin.value.copy(camera.position);
+    updateSkyPlanet(camera.position.y, PLANET.radius);
+    const alt = Math.max(0, camera.position.y);
+    const far = Math.max(20000, Math.min(PLANET.radius * 3, 6000 + Math.sqrt(2 * PLANET.radius * alt + alt * alt) * 1.6));
+    const near = Math.min(20, Math.max(0.3, alt / 4000));
+    if (Math.abs(camera.far - far) > far * 0.05 || camera.near !== near) {
+      camera.far = far;
+      camera.near = near;
+      camera.updateProjectionMatrix();
+    }
+    if (++curvatureTick % 60 === 1) applyCurvature(scene);
     worldView.update(camera, renderPos);
     airportView.update(camera, sim.atmosphere.windAt(_tmpWindPoint.set(renderPos.x, 10, renderPos.z), 0, _wind10));
     disasterView.update(sim.atmosphere.events);

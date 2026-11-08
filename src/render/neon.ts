@@ -1,7 +1,8 @@
 import * as THREE from 'three/webgpu';
+import { flatWorld } from './curvature.ts';
 import {
   abs, cameraPosition, clamp, color, distance, dot, float, fract, fwidth, max, min, mix, normalize, positionLocal,
-  positionWorld, pow, smoothstep, step, vec3,
+  pow, smoothstep, step, uniform, vec3,
 } from 'three/tsl';
 import type { Node } from 'three/webgpu';
 
@@ -144,10 +145,10 @@ export function groundGridNode(
   lineColor: TslNode,
   opts: { minor: number; major: number; fade: number; coord?: TslNode },
 ): TslNode {
-  const p = opts.coord ?? positionWorld.xz;
+  const p = opts.coord ?? flatWorld.xz;
   const minor = gridLines(p, opts.minor, 1).mul(0.35);
   const major = gridLines(p, opts.major, 1.6);
-  const d = distance(positionWorld.xz, cameraPosition.xz);
+  const d = distance(flatWorld.xz, cameraPosition.xz);
   const fade = float(1).sub(smoothstep(opts.fade * 0.25, opts.fade, d));
   return base.add(lineColor.mul(max(minor, major).mul(fade)));
 }
@@ -157,8 +158,24 @@ export function groundGridNode(
  * glowing horizon band, and a big sun sitting on the horizon with the classic horizontal cut
  * stripes in its lower half.
  */
+/**
+ * The sky seen from the planet: `dip` is sin of how far below eye level the horizon has sunk
+ * (acos(R/(R+h))), `space` fades the air to black as the craft leaves the atmosphere.
+ * Update `altitude` each frame (main.ts) and call `updateSkyPlanet`.
+ */
+export const SKY_PLANET = { dip: uniform(0), space: uniform(0), altitude: 0 };
+export function updateSkyPlanet(altitude: number, radius: number): void {
+  SKY_PLANET.altitude = altitude;
+  const h = Math.max(0, altitude);
+  SKY_PLANET.dip.value = Math.sin(Math.acos(radius / (radius + h)));
+  const t = Math.min(1, Math.max(0, (h - 5000) / 25000));
+  SKY_PLANET.space.value = t * t * (3 - 2 * t);
+}
+
 export function synthSkyNode(horizon: TslNode, zenith: TslNode, opts: { sunDir: THREE.Vector3; sunRadius?: number; sun?: TslNode } ): TslNode {
-  const d = normalize(positionLocal);
+  const d0 = normalize(positionLocal);
+  // Sky directions are measured from the (sunken) planet horizon.
+  const d = vec3(d0.x, d0.y.add(SKY_PLANET.dip), d0.z);
   const up = clamp(d.y, 0, 1);
   const sky = mix(horizon, zenith, pow(clamp(up.mul(2.2), 0, 1), 0.6));
   // Glow band right at the horizon (magenta haze line).
@@ -180,7 +197,11 @@ export function synthSkyNode(horizon: TslNode, zenith: TslNode, opts: { sunDir: 
   const sunMask = disc.mul(cut).mul(step(-0.02, d.y)); // nothing below the horizon
   const halo = smoothstep(Math.cos(r * 2.2), Math.cos(r), cosA).mul(0.12).mul(step(-0.02, d.y));
   const sunCol = (opts.sun ?? float(1)) as TslNode;
-  return sky.add(bandCol).add(color(NEON.pink).mul(halo).mul(sunCol)).mul(float(1).sub(sunMask.mul(sunCol))).add(sunGrad.mul(sunMask).mul(sunCol));
+  const air = sky.add(bandCol).add(color(NEON.pink).mul(halo).mul(sunCol)).mul(float(1).sub(sunMask.mul(sunCol))).add(sunGrad.mul(sunMask).mul(sunCol));
+  // Space: near-black, with the thin glowing air still hugging the horizon.
+  const limb = float(1).sub(smoothstep(0, 0.12, abs(d.y))).mul(0.8);
+  const space: TslNode = (color('#000208') as TslNode).add((color(GRID_SKY.band) as TslNode).mul(limb));
+  return mix(air as TslNode, space, SKY_PLANET.space as unknown as TslNode);
 }
 
 /** Merge several (already positioned) line geometries' positions into one LineSegments geometry. */

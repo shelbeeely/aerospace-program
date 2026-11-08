@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
-import { abs, color, float, floor, fract, hash, instanceIndex, max, min, mix, positionWorld, step, time, uniform } from 'three/tsl';
+import { abs, color, float, floor, fract, hash, instanceIndex, max, min, mix, step, time, uniform } from 'three/tsl';
+import { flatWorld } from './curvature.ts';
 import { CITY, LAYOUT } from '../sim/layout.ts';
 import { airportPlan } from '../world/Airport.ts';
 import { cityPlan, mulberry32 } from '../world/City.ts';
@@ -127,7 +128,7 @@ export class CityView {
   private roads(x0: number, x1: number, z0: number, z1: number, pitch: number, gx0: number, gz0: number): THREE.Mesh {
     const mat = new THREE.MeshBasicNodeMaterial({ polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
     const S = CITY.street;
-    const p = positionWorld;
+    const p = flatWorld;
     const lx: TslNode = fract(p.x.sub(gx0).div(pitch)).mul(pitch);
     const lz: TslNode = fract(p.z.sub(gz0).div(pitch)).mul(pitch);
     // Data highways: every Nth street glows brighter (circuits like freeways).
@@ -153,7 +154,8 @@ export class CityView {
     c = c.add(color('#00eaff').mul(max(laneX.mul(majorX.mul(1.5).add(1)), laneZ.mul(majorZ.mul(1.5).add(1))).mul(1.4)));
     c = c.add(uniform(new THREE.Color('#2a5cff')).mul(curb.mul(1.8)));
     mat.colorNode = c;
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0).rotateX(-Math.PI / 2), mat);
+    // Tessellated so the planet curvature bends it with the ground.
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0, Math.ceil((x1 - x0) / 60), Math.ceil((z1 - z0) / 60)).rotateX(-Math.PI / 2), mat);
     mesh.position.set((x0 + x1) / 2, 0.02, (z0 + z1) / 2);
     return mesh;
   }

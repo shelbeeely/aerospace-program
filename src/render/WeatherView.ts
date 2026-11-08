@@ -1,5 +1,7 @@
 import * as THREE from 'three/webgpu';
-import { float, positionWorld, texture, uniform, uv } from 'three/tsl';
+import { float, texture, uniform, uv } from 'three/tsl';
+import { flatWorld } from './curvature.ts';
+import { SKY_PLANET } from './neon.ts';
 import type { Atmosphere, Precipitation } from '../sim/atmosphere.ts';
 import { GRID_SKY, NEON, glow, gridLines, type TslNode } from './neon.ts';
 import type { WorldView } from './WorldView.ts';
@@ -71,14 +73,14 @@ export class WeatherView {
     this.cloudTex = new THREE.DataTexture(data, CLOUD_RES, CLOUD_RES, THREE.RGBAFormat);
     this.cloudTex.magFilter = THREE.LinearFilter;
     this.cloudTex.minFilter = THREE.LinearFilter;
-    const plane = new THREE.PlaneGeometry(CLOUD_SPAN, CLOUD_SPAN);
+    const plane = new THREE.PlaneGeometry(CLOUD_SPAN, CLOUD_SPAN, 96, 96);
     plane.rotateX(-Math.PI / 2);
     // Wireframe-grid cloud deck: the cell field's coverage is the alpha; dense cores glow more.
     const deck = (fill: THREE.Color, line: THREE.Color) => {
       const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide });
       const cell: TslNode = texture(this.cloudTex, uv());
       const core: TslNode = float(1).sub(cell.r); // painted shade: 1 = thin edge, darker = dense core
-      const grid: TslNode = gridLines(positionWorld.xz, 250, 1.2).max(gridLines(positionWorld.xz, 50, 0.8).mul(0.35));
+      const grid: TslNode = gridLines(flatWorld.xz, 250, 1.2).max(gridLines(flatWorld.xz, 50, 0.8).mul(0.35));
       const fillNode: TslNode = uniform(fill);
       m.colorNode = fillNode.add(uniform(line).mul(grid.mul(core.mul(1.5).add(0.5))));
       m.opacityNode = cell.a.mul(grid.mul(0.5).add(0.55)).min(1);
@@ -168,7 +170,9 @@ export class WeatherView {
     // --- Fog from visibility (Koschmieder: contrast falls to 2% at the visibility distance)
     const fog = this.scene.fog as THREE.FogExp2;
     const vis = inCloud ? 60 : Math.min(15000, s.visibility ?? 15000);
-    const density = 1.978 / vis; // see WorldView: 2% contrast at the visibility distance
+    // Haze lives in the low atmosphere: looking down from altitude it thins away.
+    const camAlt = Math.max(0, SKY_PLANET.altitude);
+    const density = (1.978 / vis) * Math.exp(-camAlt / 2500); // see WorldView: 2% contrast at the visibility distance
     // Ease in log space so entering cloud closes in quickly but smoothly.
     fog.density = Math.exp(Math.log(fog.density) + (Math.log(density) - Math.log(fog.density)) * Math.min(1, dt * 2));
     fog.color.copy(inCloud ? IN_CLOUD_FOG : this.world.horizon);

@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { abs, float, fwidth, max, smoothstep, step, uniform, uv, vec2 } from 'three/tsl';
-import { COAST, LAYOUT, RUNWAYS, type LandingSite } from '../sim/layout.ts';
+import { COAST, PLANET, RUNWAYS, type LandingSite } from '../sim/layout.ts';
+import { flatWorld } from './curvature.ts';
 import { GRID_SKY, NEON, glow, groundGridNode, synthSkyNode, type TslNode } from './neon.ts';
 
 const HORIZON = new THREE.Color(GRID_SKY.horizon);
@@ -41,6 +42,7 @@ export class WorldView {
   readonly runwayCentre = glow(NEON.magenta, 2.6);
   groundMat!: THREE.MeshBasicNodeMaterial;
   runwayMat!: THREE.MeshBasicNodeMaterial;
+  private readonly ground: THREE.Mesh;
 
   constructor(scene: THREE.Scene, renderer: THREE.WebGPURenderer) {
     void renderer;
@@ -58,6 +60,7 @@ export class WorldView {
     });
     this.sky = new THREE.Mesh(new THREE.SphereGeometry(9500, 48, 24), skyMat);
     this.sky.renderOrder = -1;
+    this.sky.userData.noCurve = true;
     this.sky.frustumCulled = false;
     scene.add(this.sky);
 
@@ -80,11 +83,15 @@ export class WorldView {
       major: 100,
       fade: 6000,
     });
-    const landWidth = COAST.x + LAYOUT.groundSize / 2;
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(landWidth, LAYOUT.groundSize), this.groundMat);
-    ground.position.x = (COAST.x - LAYOUT.groundSize / 2) / 2;
-    ground.rotation.x = -Math.PI / 2;
-    scene.add(ground);
+    // The planet's ground: a disc that follows the camera, its rings widening with distance out
+    // to just short of the antipode, so the curvature bend has vertices to bend. The ocean band
+    // is cut out (the sea surface sits below the land level).
+    const sea: TslNode = wrapX(flatWorld.x);
+    this.groundMat.opacityNode = float(1).sub(step(float(COAST.x), sea).mul(step(sea, float(COAST.x + COAST.width))));
+    this.groundMat.alphaTest = 0.5;
+    this.ground = new THREE.Mesh(groundDisc(PLANET.radius * Math.PI * 0.97), this.groundMat);
+    this.ground.frustumCulled = false;
+    scene.add(this.ground);
 
     // Runway (visual only; physically the ground is flat everywhere): dark strip, neon edge
     // lines, threshold bars and aiming points, dashed magenta centreline.
@@ -120,7 +127,7 @@ export class WorldView {
     const marks: TslNode = edges.add(keys.mul(nearEnd).mul(0.1)).add(aim.mul(0.14)).add(ends).min(1);
     const surface: TslNode = uniform(this.runwayBase);
     mat.colorNode = surface.add(uniform(this.runwayEdge).mul(marks)).add(uniform(this.runwayCentre).mul(centre));
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, length), mat);
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, length, 1, Math.ceil(length / 40)), mat);
     mesh.rotation.x = -Math.PI / 2;
     if (r.axis === 'x') mesh.rotation.z = Math.PI / 2;
     mesh.position.set(r.x, 0.03, r.z);
@@ -131,10 +138,48 @@ export class WorldView {
     // The Grid covers the land: buildings (CityView) replace the old scattered trees.
   }
 
-  /** Keep the sky centred on the camera and the light around the focus point. */
+  /** Keep the sky and the ground disc centred on the camera and the light around the focus point. */
   update(camera: THREE.Camera, focus: THREE.Vector3): void {
     this.sky.position.copy(camera.position);
+    this.ground.position.set(camera.position.x, 0, camera.position.z);
     this.sun.target.position.copy(focus);
     this.sun.position.copy(focus).addScaledVector(SUN_DIR, 300);
   }
+}
+
+/** x wrapped into [-C/2, C/2) in a shader (the ocean band repeats every circumference). */
+function wrapX(x: TslNode): TslNode {
+  const c = PLANET.circumference;
+  return x.sub(x.add(c / 2).div(c).floor().mul(c));
+}
+
+/** A flat disc (y = 0) of exponentially widening rings: dense near the centre, sparse far out. */
+function groundDisc(radius: number): THREE.BufferGeometry {
+  const rings = 120;
+  const segs = 160;
+  const r0 = 2;
+  const k = Math.pow(radius / r0, 1 / (rings - 1));
+  const pos: number[] = [0, 0, 0];
+  for (let i = 0; i < rings; i++) {
+    const r = r0 * Math.pow(k, i);
+    for (let j = 0; j < segs; j++) {
+      const a = (j / segs) * Math.PI * 2;
+      pos.push(Math.cos(a) * r, 0, Math.sin(a) * r);
+    }
+  }
+  const idx: number[] = [];
+  for (let j = 0; j < segs; j++) idx.push(0, 1 + ((j + 1) % segs), 1 + j);
+  for (let i = 0; i < rings - 1; i++) {
+    for (let j = 0; j < segs; j++) {
+      const a = 1 + i * segs + j;
+      const b = 1 + i * segs + ((j + 1) % segs);
+      const c = a + segs;
+      const d = b + segs;
+      idx.push(a, b, c, b, d, c);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  return g;
 }
