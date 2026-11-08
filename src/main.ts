@@ -22,6 +22,8 @@ import { TownView } from './render/TownView.ts';
 import { FireView } from './render/FireView.ts';
 import { LightningView } from './render/LightningView.ts';
 import { WeatherView } from './render/WeatherView.ts';
+import { CityView } from './render/CityView.ts';
+import { AirportView } from './render/AirportView.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
 import { initPhysics, Simulation } from './sim/Simulation.ts';
@@ -133,6 +135,10 @@ async function start() {
   const debug = new DebugOverlay(scene, craftView.root);
   const debrisView = new DebrisView(scene);
   const townView = new TownView(scene, sim.town);
+  const cityView = new CityView(scene, sim.staticWorld);
+  const airportView = new AirportView(scene);
+  const _wind10 = new THREE.Vector3();
+  const _tmpWindPoint = new THREE.Vector3();
   const oceanView = new OceanView(scene, sim.ocean, sim.atmosphere.events);
   let viewVersion = sim.version;
   let currentLivery: string | null = null;
@@ -609,6 +615,7 @@ async function start() {
     }
     debrisView.update(sim.debris);
     townView.update(dt);
+    cityView.update(dt);
     oceanView.update(sim.time, camera);
     lightningView.update(sim.time, sim.lightning.strikes, sim.craft, Math.max(sim.lightning.staticCharge, (sim.atmosphere.settings.storm ?? 0) * 0.5));
     fireView.update(sim.time, sim.fire, sim.craft);
@@ -632,6 +639,7 @@ async function start() {
     velocity.set(v.x, v.y, v.z);
     rig.update(dt, renderPos, renderRot, velocity);
     worldView.update(camera, renderPos);
+    airportView.update(camera, sim.atmosphere.windAt(_tmpWindPoint.set(renderPos.x, 10, renderPos.z), 0, _wind10));
     disasterView.update(sim.atmosphere.events);
     weatherView.update(dt, camera, velocity, sim.atmosphere, sim.groundWetness, sim.atmosphere.cloudAt(camera.position, 0).inCloud);
 

@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { abs, float, fwidth, max, smoothstep, step, uniform, uv, vec2 } from 'three/tsl';
-import { COAST, LAYOUT } from '../sim/layout.ts';
-import { NEON, glow, groundGridNode, mergeLines, neonFillMaterial, neonize, neonLineMaterial, synthSkyNode, type TslNode } from './neon.ts';
+import { CITY, COAST, LAYOUT } from '../sim/layout.ts';
+import { NEON, glow, groundGridNode, mergeLines, neonFillMaterial, neonLineMaterial, synthSkyNode, type TslNode } from './neon.ts';
 
 const HORIZON = new THREE.Color(NEON.horizon);
 const ZENITH = new THREE.Color(NEON.zenith);
@@ -131,23 +131,10 @@ export class WorldView {
 
   private addScenery(scene: THREE.Scene): void {
     const rnd = mulberry32(42);
-    const { width, centerZ, length } = LAYOUT.runway;
+    const { centerZ, length } = LAYOUT.runway;
     const fill = neonFillMaterial();
 
-    // Hangars next to the runway for scale: dark boxes with magenta outlines.
-    const hangarGeo = new THREE.BoxGeometry(24, 9, 20);
-    for (let i = 0; i < 4; i++) {
-      const h = new THREE.Mesh(hangarGeo, fill);
-      h.add(neonize(hangarGeo, NEON.magenta));
-      h.position.set(-width / 2 - 70, 4.5, LAYOUT.spawnZ - 60 - i * 34);
-      scene.add(h);
-    }
-    // Tower: cyan wireframe.
-    const towerGeo = new THREE.CylinderGeometry(2.5, 3, 18, 8);
-    const tower = new THREE.Mesh(towerGeo, fill);
-    tower.add(neonize(towerGeo, NEON.cyan));
-    tower.position.set(-width / 2 - 60, 9, LAYOUT.spawnZ - 220);
-    scene.add(tower);
+    // Hangars, tower and terminal are destructible structures now (CityView / AirportView).
 
     // Trees: instanced dark cones (they occlude) plus one merged violet wireframe for all of them.
     const count = 1500;
@@ -168,7 +155,9 @@ export class WorldView {
       for (let k = 0; k < clusterSize && n < count; k++) {
         p.set(cx + (rnd() - 0.5) * 120, 0, cz + (rnd() - 0.5) * 120);
         const nearRunway = Math.abs(p.x) < 150 && Math.abs(p.z - centerZ) < length / 2 + 400;
-        if (nearRunway || p.x > COAST.x - 4) continue;
+        const inCity = p.x > CITY.centerX - CITY.sizeX / 2 - 60 && p.x < CITY.centerX + CITY.sizeX / 2 + 60 && Math.abs(p.z - CITY.centerZ) < CITY.sizeZ / 2 + 60;
+        const inAirport = p.x > -460 && p.x < 0 && p.z > centerZ - length / 2 - 120 && p.z < centerZ + length / 2 + 120;
+        if (nearRunway || inCity || inAirport || p.x > COAST.x - 4) continue;
         const s = 0.6 + rnd() * 0.9;
         sc.set(s, s * (0.8 + rnd() * 0.6), s);
         const m = new THREE.Matrix4().compose(p, q, sc);
