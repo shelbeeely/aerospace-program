@@ -26,6 +26,7 @@ import { TUNING } from './tuning.ts';
 import { builtinEntry, CAP_STORAGE, KEY_STORAGE, Studio } from './ui/Studio.ts';
 import { HangarView } from './render/HangarView.ts';
 import { applyModeClass, modeFromQuery, parseMode, type AppMode } from './app/Mode.ts';
+import { PostFX, QUALITIES, type Quality } from './render/postfx.ts';
 
 async function start() {
   await initPhysics();
@@ -76,6 +77,13 @@ async function start() {
   const hangarView = new HangarView(renderer, canvas);
   hangarView.bakeEnvironment();
   let mode: AppMode = modeFromQuery(location.search);
+  // Neon post chain (bloom makes the lines glow) for each scene. `?quality=low|medium|high`.
+  const qParam = params.get('quality') as Quality | null;
+  const quality: Quality = qParam && QUALITIES.includes(qParam) ? qParam : mobile ? 'low' : 'medium';
+  const flightFX = new PostFX(renderer, scene, camera);
+  const hangarFX = new PostFX(renderer, hangarView.scene, hangarView.camera);
+  flightFX.setQuality(quality);
+  hangarFX.setQuality(quality);
   /** The scene the craft is drawn in right now (flight world or hangar turntable). */
   const craftScene = () => (mode === 'hangar' ? hangarView.scene : scene);
 
@@ -356,8 +364,14 @@ async function start() {
       /** PNG of the current 3D view (GPU readback; works on WebGPU and WebGL2). */
       capture: (width?: number) =>
         mode === 'hangar'
-          ? captureFrame(renderer, hangarView.scene, hangarView.camera, width)
-          : captureFrame(renderer, scene, camera, width),
+          ? captureFrame(renderer, hangarView.scene, hangarView.camera, width, hangarFX)
+          : captureFrame(renderer, scene, camera, width, flightFX),
+      /** Post-processing quality for both scenes: 'low' | 'medium' | 'high'. */
+      setQuality: (q: Quality) => {
+        if (!QUALITIES.includes(q)) throw new Error(`Unknown quality "${q}"`);
+        flightFX.setQuality(q);
+        hangarFX.setQuality(q);
+      },
       client,
       library,
       studio,
@@ -434,7 +448,7 @@ async function start() {
       // Physics paused; the craft sits on the turntable under the orbit camera.
       accumulator = 0;
       hangarView.update(dt);
-      if (presentToCanvas && renderThisFrame) renderer.render(hangarView.scene, hangarView.camera);
+      if (presentToCanvas && renderThisFrame) hangarFX.render();
       return;
     }
 
@@ -495,7 +509,7 @@ async function start() {
     }
     // `?nopresent` (automated tests): simulate and update everything but skip presenting to the
     // canvas. Headless browsers can't composite a WebGPU canvas; game.capture() still renders.
-    if (presentToCanvas && renderThisFrame) renderer.render(scene, camera);
+    if (presentToCanvas && renderThisFrame) flightFX.render();
 
     if (debugOn) {
       const mp = sim.craft.massProps;

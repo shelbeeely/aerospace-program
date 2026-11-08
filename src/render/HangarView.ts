@@ -1,8 +1,7 @@
 import * as THREE from 'three/webgpu';
-import {
-  abs, color, float, fract, min, mix, mx_fractal_noise_float, mx_noise_float, positionWorld, sin, smoothstep, vec2,
-} from 'three/tsl';
+import { color, float, positionWorld, smoothstep, uniform, vec2 } from 'three/tsl';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { NEON, glow, gridLines, groundGridNode, neonFillMaterial, neonize, synthSkyNode, type TslNode } from './neon.ts';
 
 const W = 46; // hangar width (x)
 const H = 15; // height
@@ -12,9 +11,10 @@ const DOOR_H = 11.5;
 
 /**
  * The hangar: where craft are designed, inspected and picked. A separate scene from the flight
- * world, lit like a real hangar: a sunlit apron through the open door, rows of overhead light
- * strips, polished concrete that reflects them, corrugated steel walls. Image-based lighting
- * comes from a probe of the hangar itself, so reflections on the craft show the real room.
+ * world, in the neon / synthwave style: a dark room drawn in glowing lines (grid floor, gridded
+ * walls, outlined trusses), light strips overhead, a neon turntable, and the synthwave sky with
+ * its striped sun through the open door. Image-based lighting is a probe of the hangar itself,
+ * so the craft's dark metallic fills reflect the neon.
  */
 export class HangarView {
   readonly scene = new THREE.Scene();
@@ -22,7 +22,6 @@ export class HangarView {
   readonly controls: OrbitControls;
   /** Height of the turntable's top surface (m): craft rest on it. */
   readonly turntableTop = 0.1;
-  private readonly sun: THREE.DirectionalLight;
   private readonly turntable = new THREE.Group();
   private idle = 0;
   private envReady = false;
@@ -48,45 +47,42 @@ export class HangarView {
     this.controls.enabled = false;
 
     const s = this.scene;
-    s.background = new THREE.Color('#0d0f12');
+    s.background = new THREE.Color('#05020c');
+    const fill = neonFillMaterial();
+    const glowMat = (c: string, k: number) => {
+      const m = new THREE.MeshBasicNodeMaterial();
+      m.colorNode = color(c).mul(k);
+      return m;
+    };
 
-    // --- Polished concrete floor: large-scale tone variation, fine aggregate, saw-cut joints
-    //     every 6 m, glossy where it's worn smooth.
-    const p = positionWorld.xz;
-    const macro = mx_fractal_noise_float(p.mul(0.12), 4, 2, 0.5).mul(0.5).add(0.5);
-    const fine = mx_noise_float(p.mul(6)).mul(0.5).add(0.5);
-    const g = fract(p.div(6));
-    const edge = min(min(g.x, float(1).sub(g.x)), min(g.y, float(1).sub(g.y)));
-    const joint = smoothstep(0.0, 0.004, edge);
-    const floorMat = new THREE.MeshStandardNodeMaterial();
-    floorMat.colorNode = mix(color('#5d5c58'), color('#8b8a85'), macro).mul(mix(0.88, 1.06, fine)).mul(mix(0.45, 1, joint));
-    floorMat.roughnessNode = mix(0.12, 0.5, mx_fractal_noise_float(p.mul(0.35), 3, 2, 0.5).mul(0.5).add(0.5)).add(float(1).sub(joint).mul(0.4));
-    floorMat.metalnessNode = float(0);
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D).rotateX(-Math.PI / 2), floorMat);
-    floor.receiveShadow = true;
-    s.add(floor);
+    // --- Floor: dark with a cyan grid (1 m minor, 6 m major), fading toward the walls.
+    const floorMat = new THREE.MeshBasicNodeMaterial();
+    floorMat.colorNode = groundGridNode(color('#06030f'), color(NEON.cyan).mul(1.8), { minor: 1, major: 6, fade: 70 });
+    s.add(new THREE.Mesh(new THREE.PlaneGeometry(W, D).rotateX(-Math.PI / 2), floorMat));
 
-    // Painted safety lines: a ring around the turntable and a taxi line out of the door.
-    const paint = new THREE.MeshStandardMaterial({ color: '#d9a51c', roughness: 0.6 });
-    const ring = new THREE.Mesh(new THREE.RingGeometry(9.2, 9.45, 96).rotateX(-Math.PI / 2), paint);
+    // Magenta safety ring around the turntable and a taxi line out of the door.
+    const paint = glowMat(NEON.magenta, 3);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(9.2, 9.35, 128).rotateX(-Math.PI / 2), paint);
     ring.position.y = 0.004;
-    ring.receiveShadow = true;
     s.add(ring);
-    const taxi = new THREE.Mesh(new THREE.PlaneGeometry(0.25, D / 2 - 9.5).rotateX(-Math.PI / 2), paint);
-    taxi.position.set(0, 0.004, -(9.45 + (D / 2 - 9.5) / 2));
-    taxi.receiveShadow = true;
+    const taxi = new THREE.Mesh(new THREE.PlaneGeometry(0.15, D / 2 - 9.35).rotateX(-Math.PI / 2), paint);
+    taxi.position.set(0, 0.004, -(9.35 + (D / 2 - 9.35) / 2));
     s.add(taxi);
 
-    // --- Corrugated steel walls and roof.
-    const wallMat = new THREE.MeshStandardNodeMaterial({ metalness: 0.65, roughness: 0.42 });
-    const corr = sin(positionWorld.x.add(positionWorld.z).mul(14)).mul(0.5).add(0.5);
-    const grime = mx_fractal_noise_float(positionWorld.mul(0.3), 3, 2, 0.5).mul(0.5).add(0.5);
-    wallMat.colorNode = mix(color('#59626b'), color('#7b858e'), corr).mul(mix(0.7, 1, grime)).mul(mix(0.6, 1, smoothstep(0, 2.5, positionWorld.y)));
+    // --- Walls: near-black with a faint violet grid and two glowing bands (pink low, cyan high).
+    const wallMat = new THREE.MeshBasicNodeMaterial();
+    const wc: TslNode = vec2(positionWorld.x.add(positionWorld.z), positionWorld.y);
+    const wy: TslNode = positionWorld.y;
+    const bandAt = (y: number, half: number): TslNode => float(1).sub(smoothstep(half, half + 0.04, wy.sub(y).abs()));
+    const wallBase: TslNode = color('#07040f');
+    wallMat.colorNode = wallBase
+      .add(color(NEON.violet).mul(gridLines(wc, 3, 1).mul(0.9)))
+      .add(color(NEON.pink).mul(2.6).mul(bandAt(1.2, 0.05)))
+      .add(color(NEON.cyan).mul(2.2).mul(bandAt(H - 2.2, 0.04)));
     const wall = (w: number, h: number, x: number, y: number, z: number, ry: number) => {
       const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), wallMat);
       m.position.set(x, y, z);
       m.rotation.y = ry;
-      m.receiveShadow = true;
       s.add(m);
     };
     wall(D, H, -W / 2, H / 2, 0, Math.PI / 2);
@@ -97,110 +93,106 @@ export class HangarView {
     wall(side, H, -W / 2 + side / 2, H / 2, -D / 2, 0);
     wall(side, H, W / 2 - side / 2, H / 2, -D / 2, 0);
     wall(DOOR_W, H - DOOR_H, 0, DOOR_H + (H - DOOR_H) / 2, -D / 2, 0);
-    for (const m of s.children.slice(-3)) m.rotation.y = 0;
-    const roofMat = new THREE.MeshStandardMaterial({ color: '#2a2e33', roughness: 0.8, metalness: 0.4 });
-    const roof = new THREE.Mesh(new THREE.PlaneGeometry(W, D).rotateX(Math.PI / 2), roofMat);
+    const roof = new THREE.Mesh(new THREE.PlaneGeometry(W, D).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#030108' }));
     roof.position.y = H;
     s.add(roof);
+    // Glowing outline of the room's corners, and the door frame in magenta.
+    const shell = neonize(new THREE.BoxGeometry(W - 0.05, H - 0.05, D - 0.05), NEON.cyan, { intensity: 2.6 });
+    shell.position.y = H / 2;
+    s.add(shell);
+    const doorFrame = new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-DOOR_W / 2, 0, 0), new THREE.Vector3(-DOOR_W / 2, DOOR_H, 0),
+        new THREE.Vector3(-DOOR_W / 2, DOOR_H, 0), new THREE.Vector3(DOOR_W / 2, DOOR_H, 0),
+        new THREE.Vector3(DOOR_W / 2, DOOR_H, 0), new THREE.Vector3(DOOR_W / 2, 0, 0),
+      ]),
+      new THREE.LineBasicMaterial({ color: glow(NEON.magenta, 3.5) }),
+    );
+    doorFrame.position.z = -D / 2 + 0.02;
+    s.add(doorFrame);
 
-    // Roof trusses (steel I-beams) every 6 m.
-    const steel = new THREE.MeshStandardMaterial({ color: '#3b4148', roughness: 0.5, metalness: 0.8 });
+    // Roof trusses every 6 m: dark beams with magenta edges.
+    const beamGeo = new THREE.BoxGeometry(W, 0.7, 0.3);
     for (let z = -D / 2 + 3; z < D / 2; z += 6) {
-      const beam = new THREE.Mesh(new THREE.BoxGeometry(W, 0.7, 0.3), steel);
+      const beam = new THREE.Mesh(beamGeo, fill);
+      beam.add(neonize(beamGeo, NEON.magenta, { intensity: 2.4 }));
       beam.position.set(0, H - 0.6, z);
-      beam.castShadow = true;
       s.add(beam);
     }
     // Light strips: HDR emissive (they bloom) between the trusses.
-    const lamp = new THREE.MeshBasicNodeMaterial();
-    lamp.colorNode = color('#fff6e8').mul(9);
+    const lamp = glowMat(NEON.cyan, 5);
     for (let x = -15; x <= 15; x += 7.5) {
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.08, D - 6), lamp);
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.06, D - 6), lamp);
       strip.position.set(x, H - 1.05, 0);
       s.add(strip);
     }
 
-    // --- Outside: sunlit apron and a bright, slightly hazy sky seen through the door.
-    const apronMat = new THREE.MeshStandardNodeMaterial({ roughness: 0.9 });
-    apronMat.colorNode = mix(color('#77746d'), color('#8e8b83'), mx_fractal_noise_float(p.mul(0.08), 3, 2, 0.5).mul(0.5).add(0.5));
-    const apron = new THREE.Mesh(new THREE.PlaneGeometry(260, 160).rotateX(-Math.PI / 2), apronMat);
-    apron.position.set(0, -0.01, -D / 2 - 80);
-    apron.receiveShadow = true;
+    // --- Outside: grid apron, wireframe tree line, the synthwave sky and sun through the door.
+    const apronMat = new THREE.MeshBasicNodeMaterial();
+    apronMat.colorNode = groundGridNode(color('#05020c'), color(NEON.cyan).mul(2), { minor: 5, major: 25, fade: 180 });
+    const apron = new THREE.Mesh(new THREE.PlaneGeometry(320, 200).rotateX(-Math.PI / 2), apronMat);
+    apron.position.set(0, -0.01, -D / 2 - 100);
     s.add(apron);
-    const skyMat = new THREE.MeshBasicNodeMaterial({ side: THREE.DoubleSide, fog: false });
-    const t = smoothstep(-2, 60, positionWorld.y);
-    skyMat.colorNode = mix(color('#e9eef2'), color('#7ea6cf'), t).mul(2.4);
-    const sky = new THREE.Mesh(new THREE.CylinderGeometry(170, 170, 140, 48, 1, true, Math.PI * 0.5, Math.PI), skyMat);
-    sky.position.set(0, 60, -D / 2);
+    const skyMat = new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide, depthWrite: false, fog: false });
+    skyMat.colorNode = synthSkyNode(uniform(new THREE.Color(NEON.horizon)), uniform(new THREE.Color(NEON.zenith)), {
+      sunDir: new THREE.Vector3(0, 0.09, -1),
+      sunRadius: 0.22,
+    });
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(200, 48, 24), skyMat);
+    sky.position.set(0, 0, -D / 2);
+    sky.renderOrder = -1;
     s.add(sky);
-    // Distant tree line on the horizon.
-    const trees = new THREE.MeshStandardMaterial({ color: '#2f4a2c', roughness: 1 });
-    for (let i = 0; i < 60; i++) {
-      const a = Math.PI * (0.55 + (i / 60) * 0.9);
-      const r = 150 + (i % 3) * 6;
-      const h = 6 + ((i * 37) % 7);
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(3 + (i % 4), h, 7), trees);
-      cone.position.set(Math.cos(a) * r, h / 2, -D / 2 + Math.sin(a) * -r);
+    const coneGeo = new THREE.ConeGeometry(3, 8, 6);
+    for (let i = 0; i < 40; i++) {
+      const a = Math.PI * (0.55 + (i / 40) * 0.9);
+      const r = 120 + (i % 3) * 8;
+      const k = 0.8 + ((i * 37) % 7) / 8;
+      const cone = new THREE.Mesh(coneGeo, fill);
+      cone.add(neonize(coneGeo, NEON.purple, { intensity: 2 }));
+      cone.scale.setScalar(k);
+      cone.position.set(Math.cos(a) * r, 4 * k, -D / 2 + Math.sin(a) * -r);
       s.add(cone);
     }
 
-    // --- Lights. Sun through the door (shadowed), soft sky fill, a warm overhead fill.
-    this.sun = new THREE.DirectionalLight('#fff1dc', 3.2);
-    this.sun.position.set(-30, 26, -60);
-    this.sun.target.position.set(0, 0, 4);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
-    const sc = this.sun.shadow.camera;
-    sc.left = sc.bottom = -24;
-    sc.right = sc.top = 24;
-    sc.near = 10;
-    sc.far = 160;
-    this.sun.shadow.bias = -0.0004;
-    this.sun.shadow.normalBias = 0.02;
-    this.sun.shadow.radius = 3;
-    s.add(this.sun, this.sun.target);
-    s.add(new THREE.HemisphereLight('#dfe8f2', '#3a3833', 0.35));
-    const over = new THREE.SpotLight('#fff3e2', 900, 40, Math.PI * 0.32, 0.8, 2);
+    // --- Lights: dim coloured fill so the craft's dark fills still show their shape.
+    s.add(new THREE.HemisphereLight('#7a4cff', '#ff2bd6', 0.6));
+    const key = new THREE.DirectionalLight('#ff9be8', 1.2);
+    key.position.set(-30, 26, -60);
+    s.add(key);
+    const over = new THREE.SpotLight('#9fe8ff', 500, 40, Math.PI * 0.32, 0.8, 2);
     over.position.set(0, H - 1.2, 2);
     over.target.position.set(0, 0, 0);
-    over.castShadow = true;
-    over.shadow.mapSize.set(1024, 1024);
-    over.shadow.radius = 6;
-    over.shadow.bias = -0.0005;
     s.add(over, over.target);
 
-    // --- Turntable: brushed steel disc with a lit edge.
-    const disc = new THREE.Mesh(
-      new THREE.CylinderGeometry(7, 7, 0.1, 96),
-      new THREE.MeshStandardMaterial({ color: '#4a4f55', roughness: 0.28, metalness: 0.9 }),
-    );
+    // --- Turntable: dark glossy disc, cyan rim, magenta inner ring.
+    const discGeo = new THREE.CylinderGeometry(7, 7, 0.1, 96);
+    const disc = new THREE.Mesh(discGeo, neonFillMaterial('#0a0814', { roughness: 0.25, metalness: 0.9, flatShading: false }));
     disc.position.y = 0.05;
-    disc.receiveShadow = true;
+    disc.add(neonize(discGeo, NEON.cyan, { thresholdAngle: 30, intensity: 2.5 }));
     this.turntable.add(disc);
-    const rimMat = new THREE.MeshBasicNodeMaterial();
-    rimMat.colorNode = color('#bfe6ff').mul(3);
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(7, 0.03, 8, 128).rotateX(Math.PI / 2), rimMat);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(7, 0.03, 8, 128).rotateX(Math.PI / 2), glowMat(NEON.cyan, 4));
     rim.position.y = 0.1;
     this.turntable.add(rim);
+    const inner = new THREE.Mesh(new THREE.RingGeometry(3.4, 3.46, 96).rotateX(-Math.PI / 2), glowMat(NEON.magenta, 2.5));
+    inner.position.y = 0.102;
+    this.turntable.add(inner);
     s.add(this.turntable);
 
-    // Props for scale: tool chests and oil drums along the walls.
-    const chest = new THREE.MeshStandardMaterial({ color: '#a8261f', roughness: 0.35, metalness: 0.3 });
-    const drum = new THREE.MeshStandardMaterial({ color: '#2c5d8a', roughness: 0.4, metalness: 0.5 });
+    // Props for scale: tool chests and oil drums along the walls, as wireframes.
+    const chestGeo = new THREE.BoxGeometry(0.7, 1.1, 1.6);
+    const drumGeo = new THREE.CylinderGeometry(0.29, 0.29, 0.88, 12);
     for (const [x, z] of [[-W / 2 + 1.2, 6], [-W / 2 + 1.2, 9], [W / 2 - 1.2, -4]] as const) {
-      const c = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.1, 1.6), chest);
+      const c = new THREE.Mesh(chestGeo, fill);
+      c.add(neonize(chestGeo, NEON.magenta));
       c.position.set(x, 0.55, z);
-      c.castShadow = c.receiveShadow = true;
       s.add(c);
     }
     for (let i = 0; i < 5; i++) {
-      const d = new THREE.Mesh(new THREE.CylinderGeometry(0.29, 0.29, 0.88, 24), drum);
+      const d = new THREE.Mesh(drumGeo, fill);
+      d.add(neonize(drumGeo, NEON.yellow, { thresholdAngle: 40 }));
       d.position.set(W / 2 - 1 - (i % 2) * 0.62, 0.44, 12 + Math.floor(i / 2) * 0.62);
-      d.castShadow = d.receiveShadow = true;
       s.add(d);
     }
-    void vec2;
-    void abs;
   }
 
   /** Bake the image-based lighting from the hangar itself (call once the renderer is up). */
@@ -210,7 +202,7 @@ export class HangarView {
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     const rt = pmrem.fromScene(this.scene, 0, 0.1, 300, { size: 256, position: new THREE.Vector3(0, 3, 0) });
     this.scene.environment = rt.texture;
-    this.scene.environmentIntensity = 0.9;
+    this.scene.environmentIntensity = 1.0;
     pmrem.dispose();
   }
 
