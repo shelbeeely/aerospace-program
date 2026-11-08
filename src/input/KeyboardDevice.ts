@@ -3,7 +3,7 @@ import type { Action, InputDevice, RawInput } from './types.ts';
 const GAME_CODES = new Set([
   'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyB', 'KeyR', 'KeyC', 'KeyZ', 'KeyX',
   'KeyT', 'KeyG', 'KeyH', 'KeyY', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'F3',
-  'Space', 'KeyN', 'BracketLeft', 'BracketRight',
+  'Space', 'KeyN', 'BracketLeft', 'BracketRight', 'KeyM', 'KeyP', 'KeyK', 'KeyF',
 ]);
 
 export class KeyboardDevice implements InputDevice {
@@ -28,6 +28,10 @@ export class KeyboardDevice implements InputDevice {
         case 'KeyY': this.actions.push('trimReset'); break;
         case 'BracketLeft': this.actions.push('prevVehicle'); break;
         case 'BracketRight': this.actions.push('nextVehicle'); break;
+        case 'KeyM': this.actions.push('mute'); break;
+        case 'KeyP': this.actions.push('screenshot'); break;
+        case 'KeyK': this.actions.push('record'); break;
+        case 'KeyF': this.actions.push('mouseFlight'); break;
         case 'KeyZ': this.throttleSet = 1; break;
         case 'KeyX': this.throttleSet = 0; break;
       }

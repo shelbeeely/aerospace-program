@@ -22,7 +22,11 @@ export type Action =
   | 'trimReset'
   | 'studio'
   | 'nextVehicle'
-  | 'prevVehicle';
+  | 'prevVehicle'
+  | 'mute'
+  | 'screenshot'
+  | 'record'
+  | 'mouseFlight';
 
 /** What a device may know about the game when it reads. */
 export interface InputContext {

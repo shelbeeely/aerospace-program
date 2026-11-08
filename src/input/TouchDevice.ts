@@ -88,6 +88,8 @@ export class TouchDevice implements InputDevice {
       button('✦', 'Studio', 'studio'),
       button('⚙', 'Debug & weather', 'debug'),
       button('?', 'Help', 'help'),
+      button('🔊', 'Sound on/off', 'mute'),
+      button('📷', 'Screenshot', 'screenshot'),
     );
     if (document.fullscreenEnabled) bar.append(button('⛶', 'Fullscreen', () => this.toggleFullscreen()));
 

@@ -12,6 +12,8 @@ import { CraftView } from './render/CraftView.ts';
 import { DebrisView } from './render/DebrisView.ts';
 import { captureFrame } from './render/capture.ts';
 import { PerformanceGovernor } from './platform/performance.ts';
+import { FlightAudio } from './platform/audio.ts';
+import { Callouts } from './platform/speech.ts';
 import { runFlightTest } from './sim/flightTestClient.ts';
 import { DebugOverlay } from './render/DebugOverlay.ts';
 import { WorldView } from './render/WorldView.ts';
@@ -91,6 +93,8 @@ async function start() {
   const gamepad = new GamepadDevice();
   const touch = new TouchDevice();
   const player = new PlayerInput([new KeyboardDevice(), gamepad, touch]);
+  const audio = new FlightAudio();
+  const callouts = new Callouts();
   const controlsPanel = new ControlsPanel(document.getElementById('help')!, player);
   gamepad.onChange = (pad, connected) => {
     toast(
@@ -134,6 +138,8 @@ async function start() {
     player.reset();
     rig.snap();
     flightLog.reset();
+    audio.reset();
+    callouts.reset();
   };
 
   // --- Generation: craft come from the Studio (designer models) and live in the hangar library.
@@ -208,6 +214,8 @@ async function start() {
       renderer,
       backend: backendName,
       perf,
+      audio,
+      callouts,
       /** Flight-test a craft in the worker (same path the Studio uses). */
       flightTest: runFlightTest,
       /** PNG of the current 3D view (GPU readback; works on WebGPU and WebGL2). */
@@ -257,6 +265,7 @@ async function start() {
         hud.toggleHelp();
       }
       else if (a === 'studio') studio.toggle();
+      else if (a === 'mute') toast(audio.toggleMute() ? '🔇 Sound off' : '🔊 Sound on');
       else if (a === 'nextVehicle') cycleCraft(1);
       else if (a === 'prevVehicle') cycleCraft(-1);
       else if (a === 'trimReset') player.trim = 0;
@@ -279,7 +288,10 @@ async function start() {
     }
     if (stepsThisFrame === TUNING.maxStepsPerFrame) accumulator = 0; // drop time rather than spiral
     telemetry = sim.telemetry();
-    flightLog.update(telemetry, dt, sim.airframeTouchingGround());
+    const airframeHit = sim.airframeTouchingGround();
+    flightLog.update(telemetry, dt, airframeHit);
+    audio.update(telemetry, sim.craft, sim.failures.length, airframeHit, dt);
+    callouts.update(telemetry, sim.failures);
     // Structure changed: a part broke off (hide it), or the craft was rebuilt (new view).
     if (sim.version !== viewVersion) {
       if (sim.craft !== craftView.craft) replaceCraftView();

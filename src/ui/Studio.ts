@@ -218,6 +218,17 @@ export class Studio {
     void this.loadModels();
   }
 
+  show(): void {
+    this.root.classList.remove('hidden');
+  }
+
+  /** Start a new design from text (e.g. a spoken "design a seaplane"). */
+  designFromText(text: string): void {
+    this.show();
+    this.el.prompt.value = text;
+    void this.design(false);
+  }
+
   toggle(): void {
     this.root.classList.toggle('hidden');
   }
@@ -495,6 +506,20 @@ export class Studio {
       this.audioEl.volume = 0.5;
       this.audioEl.classList.remove('hidden');
       void this.audioEl.play().catch(() => {});
+      // Media Session: title on the lock screen / media hub, hardware play-pause keys.
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: style.slice(0, 60),
+          artist: `Composed by ${shortName(res.model)}`,
+          album: `Aerospace Program · ${this.host.current().craft.name}`,
+        });
+        navigator.mediaSession.setActionHandler('play', () => void this.audioEl.play());
+        navigator.mediaSession.setActionHandler('pause', () => this.audioEl.pause());
+        navigator.mediaSession.setActionHandler('stop', () => {
+          this.audioEl.pause();
+          this.audioEl.currentTime = 0;
+        });
+      }
       this.el.musicInfo.textContent = `${shortName(res.model)} · $${res.cost.toFixed(4)}${res.text ? ` · ${res.text.slice(0, 120)}` : ''}`;
       this.setStatus('Now playing. (Music is kept for this session only.)');
     });
