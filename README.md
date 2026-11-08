@@ -352,6 +352,25 @@ wind, surge, rain, scheduler lifecycle and actual Rapier ground motion.
 4. Rotor module: multirotor drones (blade element rotors + PID flight controllers) ✅
 5. Missions: deliveries between generated points of interest
 6. Helicopters ✅, blimps ✅, VTOL (next: tilt-rotors from the same Rotor module)
+7. **The Grid as a planet** (in progress): R 8 km, wraps around, real orbits ✅, curved
+   rendering ✅; next: dense procedural city over the whole globe (streamed in chunks),
+   neon terrain and oceans, airports and helipads in every region.
+8. **Ground vehicles**: wheel-based craft built from the same parts and Wheel module, with
+   steering, drive and brakes from the controls. Light cycles first: two-wheel neon bikes that
+   lean into turns and leave solid light walls behind them on the data highways (a jet wall
+   you crash into, destructible like everything else). Then cars, trucks and tanks.
+9. **Multiplayer** (needs a backend server):
+   - A small authoritative relay (WebSocket, later WebTransport) that holds rooms, assigns a
+     host, and fans out state. Static hosting (GitHub Pages) stays for the client; the server
+     is a separate deploy (e.g. a Node or Cloudflare Durable Object service).
+   - Each player simulates their own craft (the sim is deterministic per step) and sends
+     inputs plus periodic state snapshots at 20-30 Hz; others are interpolated, with
+     dead-reckoning between snapshots.
+   - Shared world state: destruction events (which structure fractured, crater, quake seed)
+     replicate as events, not as block positions, so everyone's Grid breaks the same way.
+   - Modes: free flight, races (the LLM racing work becomes "humans vs models"), light-cycle
+     arenas, and co-op deliveries. Room codes and share links; craft travel as JSON.
+   - Later: accounts, persistent hangars and leaderboards (needs storage on the server).
 
 Generation roadmap, using more of OpenRouter's model types:
 
