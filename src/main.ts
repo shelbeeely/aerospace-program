@@ -17,6 +17,7 @@ import { Callouts } from './platform/speech.ts';
 import { runFlightTest } from './sim/flightTestClient.ts';
 import { DebugOverlay } from './render/DebugOverlay.ts';
 import { WorldView } from './render/WorldView.ts';
+import { TownView } from './render/TownView.ts';
 import { WeatherView } from './render/WeatherView.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
@@ -85,6 +86,7 @@ async function start() {
   craftScene().add(craftView.root);
   const debug = new DebugOverlay(scene, craftView.root);
   const debrisView = new DebrisView(scene);
+  const townView = new TownView(scene, sim.town);
   let viewVersion = sim.version;
   let currentLivery: string | null = null;
   /** Rebuild the craft's visuals (new craft, or the sim rebuilt a broken one on reset). */
@@ -460,6 +462,7 @@ async function start() {
       viewVersion = sim.version;
     }
     debrisView.update(sim.debris);
+    townView.update(dt);
 
     // Haptics: parts breaking, hitting the ground hard, entering a stall.
     if (sim.failures.length > failuresSeen) player.rumble(1, 400);
