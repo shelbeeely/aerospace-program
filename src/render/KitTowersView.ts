@@ -15,8 +15,17 @@ import { facadeMaterial } from './StructuresView.ts';
 export class KitTowersView {
   readonly root = new THREE.Group();
   private readonly instances = new Map<number, { mesh: THREE.InstancedMesh; index: number; matrix: THREE.Matrix4 }>();
+  /** Far LOD: each tower's collider boxes drawn as plain façade boxes (a few hundred vertices). */
+  private readonly proxies = new Map<number, { start: number; count: number; matrices: THREE.Matrix4[] }>();
+  private proxyMesh: THREE.InstancedMesh | null = null;
+  /** Per group: 0 hidden (fractured), 1 full model, 2 proxy. */
+  private readonly lod = new Map<number, number>();
+  private readonly centres = new Map<number, THREE.Vector3>();
+  private readonly lastCam = new THREE.Vector3(Infinity, 0, 0);
+  private lastLodTime = 0;
   private seen = -1;
   private ready = false;
+  private static readonly zero = new THREE.Matrix4().makeScale(0, 0, 0);
 
   constructor(scene: THREE.Scene, private readonly world: StaticWorld, baseUrl = '/') {
     this.root.name = 'kit-towers';
@@ -48,7 +57,26 @@ export class KitTowersView {
     const materials = roleNames.map((r) => roles[r]);
 
     const plan = cityPlan();
-    const groups = worldStructures().groups.filter((g) => g.kit);
+    const ws = worldStructures();
+    const groups = ws.groups.filter((g) => g.kit);
+    // Proxy boxes: the collider boxes (render: false pieces) of every kit tower.
+    let total = 0;
+    for (const g of groups) total += g.pieces.length;
+    this.proxyMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), facadeMaterial('#00eaff', true), Math.max(1, total));
+    let at = 0;
+    const pm = new THREE.Matrix4();
+    for (const g of groups) {
+      const matrices = g.pieces.map((i) => {
+        const p = ws.list[i];
+        return pm.compose(new THREE.Vector3(p.x, p.y, p.z), new THREE.Quaternion(), new THREE.Vector3(p.sx, p.sy, p.sz)).clone();
+      });
+      this.proxies.set(g.id, { start: at, count: matrices.length, matrices });
+      for (let k = 0; k < matrices.length; k++) this.proxyMesh.setMatrixAt(at + k, KitTowersView.zero);
+      at += matrices.length;
+      this.centres.set(g.id, new THREE.Vector3(g.x0 + (g.size[0] * g.blockSize) / 2, 0, g.z0 + (g.size[2] * g.blockSize) / 2));
+    }
+    this.proxyMesh.frustumCulled = false;
+    this.root.add(this.proxyMesh);
     const byType = new Map<number, typeof groups>();
     for (const g of groups) {
       const list = byType.get(g.kit!.type) ?? [];
@@ -69,29 +97,50 @@ export class KitTowersView {
         const inst = plan.kit[g.kit!.index];
         q.setFromAxisAngle(up, (inst.rot * Math.PI) / 2);
         m.compose(new THREE.Vector3(inst.x, 0, inst.z), q, new THREE.Vector3(inst.scale, inst.scale, inst.scale));
-        mesh.setMatrixAt(i, m);
+        mesh.setMatrixAt(i, KitTowersView.zero);
         this.instances.set(g.id, { mesh, index: i, matrix: m.clone() });
       });
       mesh.instanceMatrix.needsUpdate = true;
-      mesh.computeBoundingSphere();
+      mesh.frustumCulled = false;
       this.root.add(mesh);
     }
     this.ready = true;
     this.seen = -1;
   }
 
-  update(): void {
-    if (!this.ready || this.world.version === this.seen) return;
+  /**
+   * LOD and fractures: full models within FULL_RANGE of the camera, box proxies beyond, nothing
+   * for a fractured tower (its blocks are drawn by TownView). Re-bucketed every 0.5 s or 100 m.
+   */
+  update(camera?: THREE.Vector3, now = performance.now()): void {
+    if (!this.ready || !this.proxyMesh) return;
+    const cam = camera ?? this.lastCam;
+    const moved = camera ? cam.distanceToSquared(this.lastCam) > 100 * 100 : false;
+    const due = now - this.lastLodTime > 500;
+    if (this.world.version === this.seen && !moved && !(due && camera)) return;
     this.seen = this.world.version;
-    const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+    this.lastLodTime = now;
+    if (camera) this.lastCam.copy(camera);
     const touched = new Set<THREE.InstancedMesh>();
+    let proxyTouched = false;
     for (const [group, it] of this.instances) {
-      it.mesh.setMatrixAt(it.index, this.world.fractured.has(group) ? zero : it.matrix);
+      const c = this.centres.get(group)!;
+      const want = this.world.fractured.has(group) ? 0 : Math.hypot(c.x - this.lastCam.x, c.z - this.lastCam.z) < FULL_RANGE ? 1 : 2;
+      if (this.lod.get(group) === want) continue;
+      this.lod.set(group, want);
+      it.mesh.setMatrixAt(it.index, want === 1 ? it.matrix : KitTowersView.zero);
       touched.add(it.mesh);
+      const px = this.proxies.get(group)!;
+      for (let k = 0; k < px.count; k++) this.proxyMesh.setMatrixAt(px.start + k, want === 2 ? px.matrices[k] : KitTowersView.zero);
+      proxyTouched = true;
     }
     for (const mesh of touched) mesh.instanceMatrix.needsUpdate = true;
+    if (proxyTouched) this.proxyMesh.instanceMatrix.needsUpdate = true;
   }
 }
+
+/** Full kit models within this distance of the camera (m); box proxies beyond. */
+const FULL_RANGE = 1400;
 
 function glowMaterial(hex: string, k: number): THREE.MeshBasicNodeMaterial {
   const m = new THREE.MeshBasicNodeMaterial();

@@ -26,6 +26,7 @@ import { WeatherView } from './render/WeatherView.ts';
 import { CityView } from './render/CityView.ts';
 import { AirportView } from './render/AirportView.ts';
 import { KitTowersView } from './render/KitTowersView.ts';
+import { LandingSitesView } from './render/LandingSitesView.ts';
 import { ExplosionView } from './render/ExplosionView.ts';
 import { ChipsView } from './render/ChipsView.ts';
 import type { ControlSource } from './sim/controls.ts';
@@ -143,6 +144,7 @@ async function start() {
   const cityView = new CityView(scene, sim.staticWorld);
   const airportView = new AirportView(scene);
   const kitView = new KitTowersView(scene, sim.staticWorld, import.meta.env.BASE_URL);
+  const sitesView = new LandingSitesView(scene, sim.staticWorld);
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
   let explosionHeardAt = -Infinity;
@@ -708,7 +710,8 @@ async function start() {
     debrisView.update(sim.debris);
     townView.update(dt);
     cityView.update(dt);
-    kitView.update();
+    kitView.update(camera.position);
+    sitesView.update();
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
     if (!sim.explosions.length) explosionHeardAt = -Infinity;

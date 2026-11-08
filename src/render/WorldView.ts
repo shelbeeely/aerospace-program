@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { abs, float, fwidth, max, smoothstep, step, uniform, uv, vec2 } from 'three/tsl';
-import { COAST, LAYOUT } from '../sim/layout.ts';
+import { COAST, LAYOUT, RUNWAYS, type LandingSite } from '../sim/layout.ts';
 import { GRID_SKY, NEON, glow, groundGridNode, synthSkyNode, type TslNode } from './neon.ts';
 
 const HORIZON = new THREE.Color(GRID_SKY.horizon);
@@ -88,12 +88,20 @@ export class WorldView {
 
     // Runway (visual only; physically the ground is flat everywhere): dark strip, neon edge
     // lines, threshold bars and aiming points, dashed magenta centreline.
-    const { length, width, centerZ } = LAYOUT.runway;
-    this.runwayMat = new THREE.MeshBasicNodeMaterial({
+    for (const r of RUNWAYS) scene.add(this.runway(r));
+
+    this.addScenery(scene);
+  }
+
+  /** One runway: dark strip, neon edges, threshold bars, aiming points, dashed magenta centreline. */
+  private runway(r: LandingSite): THREE.Mesh {
+    const { length, width } = r;
+    const mat = new THREE.MeshBasicNodeMaterial({
       polygonOffset: true,
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -4,
     });
+    this.runwayMat ??= mat;
     // Metres across (0..width) and along (0..length) the strip.
     const p = uv().mul(vec2(width, length));
     const x = p.x;
@@ -101,7 +109,6 @@ export class WorldView {
     const edges = band(x, 1.0, 0.45).add(band(x, width - 1.0, 0.45));
     const dash = float(1).sub(step(float(0.6), z.sub(70).div(50).fract())).mul(step(70, z)).mul(step(z, length - 70));
     const centre = band(x, width / 2, 0.45).mul(dash);
-    // Threshold "piano keys" and aiming points at both ends.
     let keys: TslNode = float(0);
     for (let i = 0; i < 6; i++) {
       const xk = 2.5 + i * 1.8 + 0.6;
@@ -109,16 +116,15 @@ export class WorldView {
     }
     const nearEnd = band(z, 21, 15).add(band(z, length - 21, 15));
     const aim = band(x, width / 2 - 7, 2).add(band(x, width / 2 + 7, 2)).mul(band(z, 322.5, 22.5).add(band(z, length - 322.5, 22.5)));
-    const ends = band(z, 1.2, 0.6).add(band(z, length - 1.2, 0.6)); // cross bars at the very ends
+    const ends = band(z, 1.2, 0.6).add(band(z, length - 1.2, 0.6));
     const marks: TslNode = edges.add(keys.mul(nearEnd).mul(0.1)).add(aim.mul(0.14)).add(ends).min(1);
     const surface: TslNode = uniform(this.runwayBase);
-    this.runwayMat.colorNode = surface.add(uniform(this.runwayEdge).mul(marks)).add(uniform(this.runwayCentre).mul(centre));
-    const runway = new THREE.Mesh(new THREE.PlaneGeometry(width, length), this.runwayMat);
-    runway.rotation.x = -Math.PI / 2;
-    runway.position.set(0, 0.03, centerZ);
-    scene.add(runway);
-
-    this.addScenery(scene);
+    mat.colorNode = surface.add(uniform(this.runwayEdge).mul(marks)).add(uniform(this.runwayCentre).mul(centre));
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, length), mat);
+    mesh.rotation.x = -Math.PI / 2;
+    if (r.axis === 'x') mesh.rotation.z = Math.PI / 2;
+    mesh.position.set(r.x, 0.03, r.z);
+    return mesh;
   }
 
   private addScenery(_scene: THREE.Scene): void {

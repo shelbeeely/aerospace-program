@@ -68,10 +68,51 @@ export const CITY = {
   minHeight: 10,
   /** Raised freeways: deck height (m) above the street. */
   highwayHeight: 30,
-  /** Kit towers (imported models) placed on this fraction of eligible blocks. */
-  kitFraction: 0.07,
+  /** Kit towers (imported models) placed on this fraction of eligible blocks (more in hub cores). */
+  kitFraction: 0.3,
+  kitCoreFraction: 0.55,
   colors: ['#1f8bff', '#00eaff', '#00eaff', '#ff8a1f', '#9d4dff', '#3dffb0'],
 } as const;
+
+/** A place to land: a runway (axis-aligned strip) or a helipad (circle; rooftop pads have y > 0). */
+export interface LandingSite {
+  id: string;
+  name: string;
+  kind: 'runway' | 'helipad';
+  /** Centre (m) and pad height above the street (0 = ground). */
+  x: number;
+  z: number;
+  y: number;
+  /** Runways: the axis the strip runs along, its length and width (m). Helipads: radius in width. */
+  axis: 'x' | 'z';
+  length: number;
+  width: number;
+  /** Rooftop pads: the structure group they sit on (gone while it is fractured). */
+  group?: number;
+}
+
+/** Runways. The first is Grid International (spawn, terminal, test cards). */
+export const RUNWAYS: readonly LandingSite[] = [
+  { id: 'grid', name: 'Grid International', kind: 'runway', x: 0, z: LAYOUT.runway.centerZ, y: 0, axis: 'z', length: LAYOUT.runway.length, width: LAYOUT.runway.width },
+  { id: 'north', name: 'North Field', kind: 'runway', x: -1300, z: -3500, y: 0, axis: 'x', length: 1100, width: 25 },
+  { id: 'harbour', name: 'Harbour Strip', kind: 'runway', x: 2150, z: 1500, y: 0, axis: 'z', length: 900, width: 22 },
+  { id: 'southgate', name: 'Southgate', kind: 'runway', x: -800, z: 2750, y: 0, axis: 'z', length: 1200, width: 28 },
+];
+
+/** Street-level helipads (each keeps a clear circle). Rooftop pads come from the city plan. */
+export const GROUND_HELIPADS: readonly LandingSite[] = [
+  { id: 'pad-apron', name: 'Apron Heliport', kind: 'helipad', x: -240, z: 220, y: 0, axis: 'z', length: 0, width: 12 },
+  { id: 'pad-town', name: 'Town Square Pad', kind: 'helipad', x: -1000, z: -110, y: 0, axis: 'z', length: 0, width: 10 },
+  { id: 'pad-coast', name: 'Coastguard Pad', kind: 'helipad', x: 2330, z: -1400, y: 0, axis: 'z', length: 0, width: 12 },
+  { id: 'pad-west', name: 'West Gate Pad', kind: 'helipad', x: -4600, z: 600, y: 0, axis: 'z', length: 0, width: 12 },
+  { id: 'pad-south', name: 'South Plaza Pad', kind: 'helipad', x: 300, z: 4600, y: 0, axis: 'z', length: 0, width: 12 },
+  { id: 'pad-north', name: 'North Plaza Pad', kind: 'helipad', x: 600, z: -2600, y: 0, axis: 'z', length: 0, width: 12 },
+];
+
+/** Along/across coordinates of (x, z) relative to a runway (along its axis). */
+export function runwayFrame(r: LandingSite, x: number, z: number): { along: number; across: number } {
+  return r.axis === 'z' ? { along: z - r.z, across: x - r.x } : { along: x - r.x, across: z - r.z };
+}
 
 /**
  * Airport obstacle-limitation zoning: the tallest a building may be at (x, z), in metres.
@@ -93,11 +134,36 @@ export function heightCap(x: number, z: number): number {
     const halfWidth = 300 + 0.15 * beyond;
     if (Math.abs(x) < halfWidth) return beyond < 400 ? 0 : 0.02 * beyond;
   }
+  // The other airstrips: strip and its surrounds clear, funnels beyond each end.
+  for (let i = 1; i < RUNWAYS.length; i++) {
+    const r = RUNWAYS[i];
+    const { along, across } = runwayFrame(r, x, z);
+    const half = r.length / 2;
+    if (Math.abs(across) < 110 && Math.abs(along) < half + 150) return 0;
+    const past = Math.abs(along) - half;
+    if (past > 0 && Math.abs(across) < 160 + 0.15 * past) return past < 300 ? 0 : 0.02 * past;
+  }
+  for (const p of GROUND_HELIPADS) if ((x - p.x) ** 2 + (z - p.z) ** 2 < 45 * 45) return 0;
   // Climb-out / turn corridor east of the field.
   if (x > -560 && z < zS + 1200) return 40;
   // The breakable-block town.
   if (Math.abs(x - TOWN.centerX) < 160 && Math.abs(z - TOWN.centerZ) < 130) return 0;
   return Infinity;
+}
+
+/**
+ * The lowest zoning cap over a rectangle: a 5×5 sample grid, plus exact tests against the
+ * helipad clear circles (small enough to slip between samples).
+ */
+export function heightCapRect(xa: number, za: number, xb: number, zb: number): number {
+  let cap = Infinity;
+  for (let i = 0; i <= 4; i++) for (let j = 0; j <= 4; j++) cap = Math.min(cap, heightCap(xa + ((xb - xa) * i) / 4, za + ((zb - za) * j) / 4));
+  for (const p of GROUND_HELIPADS) {
+    const dx = Math.max(xa - p.x, 0, p.x - xb);
+    const dz = Math.max(za - p.z, 0, p.z - zb);
+    if (dx * dx + dz * dz < 45 * 45) return 0;
+  }
+  return cap;
 }
 
 /** The airport around the runway: taxiway, apron, terminal and tower, all west of the runway. */

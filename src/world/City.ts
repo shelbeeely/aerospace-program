@@ -1,4 +1,4 @@
-import { CITY, heightCap } from '../sim/layout.ts';
+import { CITY, heightCapRect } from '../sim/layout.ts';
 import { KIT, kitBlockFactor } from './kit.ts';
 
 /**
@@ -130,7 +130,7 @@ function buildCity(def = CITY): CityPlan {
   /** Zoning cap over a whole block (its corners and centre). */
   const blockCap = (i: number, j: number) => {
     const xa = bx(i), za = bz(j), xb = xa + def.block, zb = za + def.block;
-    return Math.min(heightCap(xa, za), heightCap(xb, za), heightCap(xa, zb), heightCap(xb, zb), heightCap((xa + xb) / 2, (za + zb) / 2));
+    return heightCapRect(xa, za, xb, zb);
   };
   /** Skyline: the tallest hub influence plus a low-rise base. */
   const skyline = (x: number, z: number) => {
@@ -170,11 +170,12 @@ function buildCity(def = CITY): CityPlan {
       // Open data plains and plazas, more of them away from the hubs.
       if (rnd() < 0.05 + 0.1 * (1 - core)) continue;
       // Kit towers (imported models), anywhere tall enough to fit one.
-      if (rnd() < def.kitFraction && cap > 70) {
+      // Kit towers dominate the hub cores and are common everywhere else that fits one.
+      if (rnd() < (core > 0.6 ? def.kitCoreFraction : def.kitFraction) && cap > 45) {
         const type = Math.floor(rnd() * KIT.length);
         const t = KIT[type];
         const rot = Math.floor(rnd() * 4);
-        const want = Math.min(cap, Math.max(70, sky * (0.8 + rnd() * 0.5)));
+        const want = Math.min(cap * 0.96, Math.max(45, sky * (0.8 + rnd() * 0.5))); // voxel colliders run ~2% tall
         const scale = Math.min(want / t.size[1], 96 / Math.max(t.size[0], t.size[2]));
         void kitBlockFactor;
         plan.kit.push({ type, x: cx, z: cz, scale, rot });
@@ -208,7 +209,7 @@ function buildCity(def = CITY): CityPlan {
     let run: number | null = null;
     for (let i = 0; i <= nx; i++) {
       const xa = x0 + i * pitch;
-      const ok = i < nx && heightCap(xa, z) > H + 10 && heightCap(xa + pitch, z) > H + 10;
+      const ok = i < nx && heightCapRect(xa, z - 10, xa + pitch, z + 10) > H + 10;
       if (ok && run === null) run = i;
       if ((!ok || i === nx) && run !== null && i - run >= 2) {
         const xs = x0 + run * pitch, xe = x0 + i * pitch;
@@ -224,7 +225,7 @@ function buildCity(def = CITY): CityPlan {
     let run: number | null = null;
     for (let j = 0; j <= nz; j++) {
       const za = z0 + j * pitch;
-      const ok = j < nz && heightCap(x, za) > H + 16 && heightCap(x, za + pitch) > H + 16;
+      const ok = j < nz && heightCapRect(x - 10, za, x + 10, za + pitch) > H + 16;
       if (ok && run === null) run = j;
       if ((!ok || j === nz) && run !== null && j - run >= 2) {
         const zs = z0 + run * pitch, ze = z0 + j * pitch;

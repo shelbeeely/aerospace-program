@@ -37,6 +37,59 @@ export class Autopilot implements ControlSource {
     this.targets = { ...targets };
   }
 
+  /** Smoothed crab angle (heading minus ground track), deg. */
+  private crab = 0;
+
+  /**
+   * Lower-level flying for navigation modes: hold a vertical speed, a ground track (or a bank)
+   * and an airspeed (or a fixed throttle). Same inner loops and controls as sample().
+   */
+  fly(dt: number, t: Telemetry, cmd: PlaneCommand): ControlInputs {
+    const pitchRate = this.first ? 0 : (t.pitch - this.prevPitch) / dt;
+    const rollRate = this.first ? 0 : wrap180(t.roll - this.prevRoll) / dt;
+    this.prevPitch = t.pitch;
+    this.prevRoll = t.roll;
+    this.first = false;
+
+    let throttle: number;
+    if (cmd.throttle !== undefined) throttle = clamp(cmd.throttle, 0, 1);
+    else {
+      const speedErr = (cmd.speed ?? 50) - t.airspeed;
+      this.speedIntegral = clamp(this.speedIntegral + speedErr * dt, -20, 20);
+      throttle = clamp(0.5 + speedErr * 0.08 + this.speedIntegral * 0.02, 0, 1);
+    }
+
+    if (cmd.rollout && t.onGround) {
+      this.vsIntegral = 0;
+      this.pitchIntegral = 0;
+      const steer = clamp(wrap180(cmd.rollout.heading - t.heading) * 0.12, -1, 1);
+      return { pitch: -0.3, roll: 0, yaw: steer, throttle: cmd.throttle ?? 0, brake: cmd.rollout.brake, flaps: cmd.flaps };
+    }
+
+    const vsErr = cmd.vs - t.verticalSpeed;
+    this.vsIntegral = clamp(this.vsIntegral + vsErr * dt * 0.6, -8, 10);
+    const targetPitch = clamp(2 + this.vsIntegral + vsErr * 1.2, cmd.pitchMin ?? -10, cmd.pitchMax ?? 15);
+
+    let targetRoll = cmd.roll ?? 0;
+    if (cmd.roll === undefined && cmd.track !== undefined) {
+      // Ground track from the velocity; the crab (heading - track) is what the wind costs.
+      if (t.groundSpeed > 5) {
+        const track = (Math.atan2(t.velocity[0], -t.velocity[2]) * 180) / Math.PI;
+        this.crab += (clamp(wrap180(t.heading - track), -30, 30) - this.crab) * Math.min(1, dt * 0.5);
+      }
+      const maxBank = cmd.maxBank ?? 30;
+      targetRoll = clamp(wrap180(cmd.track + this.crab - t.heading) * 1.2, -maxBank, maxBank);
+    }
+
+    const pitchErr = targetPitch - t.pitch;
+    if (t.onGround) this.pitchIntegral = 0;
+    else this.pitchIntegral = clamp(this.pitchIntegral + pitchErr * dt * 0.03, -0.6, 0.6);
+    const pitch = clamp(pitchErr * 0.08 - pitchRate * 0.03 + this.pitchIntegral, -1, 1);
+    const roll = clamp((targetRoll - t.roll) * 0.04 - rollRate * 0.01, -1, 1);
+    const yaw = clamp(t.sideslip * 0.1, -1, 1);
+    return { pitch, roll, yaw, throttle, brake: 0, flaps: cmd.flaps };
+  }
+
   sample(dt: number, t: Telemetry): ControlInputs {
     const pitchRate = this.first ? 0 : (t.pitch - this.prevPitch) / dt;
     const rollRate = this.first ? 0 : wrap180(t.roll - this.prevRoll) / dt;
@@ -82,6 +135,28 @@ export class Autopilot implements ControlSource {
 
     return { pitch, roll, yaw, throttle, brake: 0 };
   }
+}
+
+/** Low-level command for {@link Autopilot.fly}: what to hold this step. */
+export interface PlaneCommand {
+  /** Vertical speed to hold (m/s, + up). */
+  vs: number;
+  /** Ground track to hold (deg); the current crab angle is added so wind doesn't push it off. */
+  track?: number;
+  /** Or an explicit bank angle (deg, + right). */
+  roll?: number;
+  /** Bank limit for track holding (deg, default 30). */
+  maxBank?: number;
+  /** Airspeed to hold with the throttle (m/s)... */
+  speed?: number;
+  /** ...or a fixed throttle 0..1. */
+  throttle?: number;
+  /** Pitch attitude limits (deg). */
+  pitchMin?: number;
+  pitchMax?: number;
+  /** On the ground: hold the nose down and steer this heading with the rudder/nose wheel. */
+  rollout?: { heading: number; brake: number };
+  flaps?: number;
 }
 
 export interface HoverTargets {
