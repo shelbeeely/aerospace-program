@@ -95,6 +95,7 @@ export class Studio {
     settings: HTMLDetailsElement;
     prompt: HTMLTextAreaElement;
     rounds: HTMLSelectElement;
+    drafts: HTMLSelectElement;
     log: HTMLOListElement;
     result: HTMLElement;
     liveryPrompt: HTMLInputElement;
@@ -138,7 +139,10 @@ export class Studio {
     });
     const rounds = h('select', { title: 'Model calls allowed: 1 designer draft, then engineer repair rounds' });
     for (const n of [1, 2, 3, 4, 5]) rounds.append(h('option', { value: String(n) }, `${n} round${n > 1 ? 's' : ''}`));
-    rounds.value = '3';
+    rounds.value = '4';
+    const drafts = h('select', { title: 'Independent first drafts, flight-tested in parallel; the best one goes on to repair' });
+    for (const n of [1, 2, 3]) drafts.append(h('option', { value: String(n) }, `${n} draft${n > 1 ? 's' : ''}`));
+    drafts.value = '2';
     const designBtn = h('button', { class: 'primary', onclick: () => this.design(false) }, 'Generate aircraft');
     const refineBtn = h('button', { onclick: () => this.design(true), title: 'Modify the craft you are flying, using your flight as feedback' }, 'Refine current');
     const cancel = h('button', { class: 'hidden', onclick: () => this.busy?.abort() }, 'Cancel');
@@ -167,6 +171,7 @@ export class Studio {
       settings,
       prompt,
       rounds,
+      drafts,
       log: h('ol', { class: 'studio-log' }),
       result: h('div', { class: 'studio-result hidden' }),
       liveryPrompt,
@@ -202,7 +207,7 @@ export class Studio {
       h('details', { class: 'settings crew-settings' },
         h('summary', {}, 'Models & generation settings'),
         h('div', { class: 'row spread' }, h('h4', {}, 'Crew'), h('label', { class: 'inline' }, freeOnly, ' Free only')),
-        crew, h('label', {}, 'Design and repair rounds', rounds),
+        crew, h('label', {}, 'Design and repair rounds', rounds), h('label', {}, 'Parallel first drafts (best one kept)', drafts),
       ),
       h('section', {}, h('h4', {}, 'Livery'), h('div', { class: 'row' }, liveryPrompt, paintBtn, unpaintBtn)),
       h('section', {},
@@ -413,6 +418,7 @@ export class Studio {
         base: refine ? cur.craft : undefined,
         feedback: refine ? this.host.flightNotes() : undefined,
         maxIterations: Number(this.el.rounds.value),
+        drafts: refine ? 1 : Number(this.el.drafts.value),
         tester: runFlightTest,
         signal,
         onEvent: (e) => {
@@ -422,7 +428,10 @@ export class Studio {
             const who = `${a.role === 'designer' ? 'Designer' : 'Engineer'}${a.model ? ` (${shortName(a.model)})` : ''}`;
             if (a.error) this.logLine(`${who}: ${a.error}`, 'bad');
             else if (a.validationErrors) this.logLine(`${who}: ${a.validationErrors.length} format errors → engineer`, 'warn');
-            else if (a.report) this.logLine(`${who}: "${a.craft?.name}" scored ${a.report.score}/100`, a.report.passed ? 'good' : 'warn');
+            else if (a.report) {
+              const fixed = a.fixes?.length ? ` (${a.fixes.length} auto-fix${a.fixes.length > 1 ? 'es' : ''})` : '';
+              this.logLine(`${who}: "${a.craft?.name}" scored ${a.report.score}/100${fixed}`, a.report.passed ? 'good' : 'warn');
+            }
           }
           this.updateSpend();
         },

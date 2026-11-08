@@ -4,6 +4,7 @@ import { TEST_PLANE } from '../craft/testPlane.ts';
 import { TWIN_PLANE } from '../craft/twinPlane.ts';
 import type { CraftDef } from '../craft/types.ts';
 import { validateCraft } from '../craft/validate.ts';
+import { autoFix } from './autofix.ts';
 import { TUNING } from '../tuning.ts';
 import { flightTest, formatReport, type FlightReport } from '../sim/flightTest.ts';
 import { extractJson, type ChatMessage, type OpenRouter } from './openrouter.ts';
@@ -27,7 +28,8 @@ Part = {
   "color": CSS hex colour,
   "modules"?: Module[],
   "strength"?: N (load before the part breaks off; omit for a sensible default; 0 = unbreakable),
-  "hp"?: J (impact energy the part absorbs before breaking off in a collision; omit for a default from mass and size; 0 = indestructible)
+  "hp"?: J (impact energy the part absorbs before breaking off in a collision; omit for a default from mass and size; 0 = indestructible),
+  "reinforce"?: 0-3 (structural reinforcement level; each level adds 15% to the part's mass, 60% to its strength and 80% to its impact HP)
 }
 Mass and inertia come ONLY from part masses and shapes. Modules are massless and attach to their part. Each module "offset" is relative to the part origin, in the part's rotated frame.
 
@@ -97,6 +99,16 @@ General:
 - Structures break when overloaded: wings at about 8 g of their share of the weight, gear on very hard landings. Don't give tiny surfaces huge control throws.
 - At most 60 parts.
 
+## Damage and crashes
+Every part is a grid of 0.25 m voxels. Hard contacts (buildings, the ground, debris) bite voxels out at the contact point; a part keeps its mass, lift and thrust in proportion to the voxels it has left and breaks off below about 35%. A crash that changes the craft's velocity by more than ~30 m/s in a fraction of a second makes it explode (reinforcement raises that a little). Use "reinforce" 1-2 on wing roots, gear and the fuselage of rugged or combat designs, and only where it's worth the weight; most parts need none.
+
+## Before you write the JSON, work out (in your head)
+1. Total mass and the CoM (mass-weighted part positions, fuel included).
+2. Airplanes: wing area, the centre of lift z, the static margin in mean chords (target 0.1-0.3), wing loading, T/W, stall speed ≈ sqrt(2·W / (1.225 · area · 1.3)).
+3. Gear: main wheels 0.3-0.8 m behind the CoM, the nose wheel well ahead, every collider at least 0.2 m above the lowest wheel point, prop tips clear of the ground.
+4. Control signs: elevator behind the CoM gain -1, left aileron +1, right aileron -1, fin (rotated [0,0,90]) rudder +1.
+5. Rotorcraft: total static thrust 1.8-2.6 × weight, CoM under the rotor(s), tip speed under 220 m/s.
+
 ## The automated flight test (pick the vehicle type that fits the request)
 - Airplane: rest on the runway, take off, climb to 140 m, turn 90°, fly hands-off.
 - Rotorcraft (has rotors + flight controller): lift off, hover 10 m, climb to 50 m, fly forward 150 m, yaw 90°, land softly.
@@ -126,6 +138,8 @@ export interface DesignAttempt {
   model?: string;
   craft?: CraftDef;
   validationErrors?: string[];
+  /** Automatic corrections applied before the flight test. */
+  fixes?: string[];
   report?: FlightReport;
   error?: string;
   cost: number;
@@ -148,8 +162,10 @@ export interface DesignRequest {
   base?: CraftDef;
   /** Extra feedback, e.g. the player's notes from a test flight. */
   feedback?: string;
-  /** Total model calls allowed, including repairs (default 3). */
+  /** Sequential rounds: the first draft, then repairs (default 3). */
   maxIterations?: number;
+  /** Independent designer drafts in round 1, tested in parallel; the best goes on (default 1). */
+  drafts?: number;
   onEvent?: (e: DesignEvent) => void;
   /** How to flight-test a candidate (the browser passes a Web Worker runner). */
   tester?: (craft: CraftDef) => Promise<FlightReport>;
@@ -185,13 +201,23 @@ function normalize(raw: unknown): { craft: unknown; name?: string; notes?: strin
   return { craft: raw };
 }
 
+/** What came of one model reply. */
+type Outcome =
+  | { kind: 'error'; api: boolean; message: string }
+  | { kind: 'invalid'; reply: string; errors: string[] }
+  | { kind: 'simError'; reply: string; message: string }
+  | { kind: 'tested'; reply: string; craft: CraftDef; report: FlightReport; fixes: string[]; name?: string; notes?: string };
+
 /**
- * Generate (or refine) a craft. Generate, validate, flight-test, then feed problems back to
- * the model until it passes or the budget runs out. Returns the best design seen.
+ * Generate (or refine) a craft. Round 1 asks the designer for `drafts` independent drafts in
+ * parallel and keeps the best; each draft is validated, auto-fixed (control signs, wheel
+ * springs) and flight-tested. Later rounds hand the test report to the engineer until it passes
+ * or the budget runs out. Returns the best design seen.
  */
 export async function designCraft(client: OpenRouter, req: DesignRequest): Promise<DesignResult> {
   const emit = req.onEvent ?? (() => {});
   const maxIterations = req.maxIterations ?? 3;
+  const drafts = Math.max(1, Math.min(4, Math.round(req.drafts ?? 1)));
   const messages: ChatMessage[] = [{ role: 'system', content: DESIGNER_SYSTEM_PROMPT }];
 
   let userMsg = req.base
@@ -204,14 +230,10 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
   let best: DesignResult | null = null;
   let totalCost = 0;
 
-  let engineerStuck = false;
-  for (let i = 1; i <= maxIterations; i++) {
-    // Round 1 is the designer's draft; later rounds are the engineer fixing reported problems.
-    // If the engineer couldn't produce usable JSON, the designer takes the next round back.
-    const role = i === 1 || engineerStuck ? 'designer' : 'engineer';
+  /** One model call → parsed, validated, auto-fixed, flight-tested. */
+  const attemptOnce = async (i: number, role: 'designer' | 'engineer', temperature: number, label: string): Promise<{ attempt: DesignAttempt; outcome: Outcome }> => {
     const model = role === 'designer' ? req.model : (req.engineerModel ?? req.model);
     const fallbacks = role === 'designer' ? req.designerFallbacks : req.engineerFallbacks;
-    emit({ type: 'status', message: `${role === 'designer' ? 'Designer' : 'Engineer'} (${model}) working, round ${i}/${maxIterations}…` });
     const attempt: DesignAttempt = { iteration: i, role, cost: 0 };
     attempts.push(attempt);
     let reply: string;
@@ -222,7 +244,7 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
         fallbacks,
         messages,
         format: 'json',
-        temperature: 0.4,
+        temperature,
         maxTokens: 16000,
         // Designers get room to think; engineers make targeted fixes and must not run out of
         // tokens mid-JSON (free reasoning models will happily think for 40K characters).
@@ -237,8 +259,8 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
     } catch (e) {
       attempt.error = e instanceof Error ? e.message : String(e);
       emit({ type: 'attempt', attempt });
-      if (best) break;
-      throw e;
+      if (req.signal?.aborted) throw e;
+      return { attempt, outcome: { kind: 'error', api: true, message: attempt.error } };
     }
     let parsed: ReturnType<typeof normalize>;
     try {
@@ -250,58 +272,78 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
         parsed = normalize(extractJson(reasoning));
         reply = JSON.stringify({ name: parsed.name, notes: parsed.notes, craft: parsed.craft });
       }
-      messages.push({ role: 'assistant', content: reply });
-      engineerStuck = false;
     } catch (e) {
-      attempt.error = `Could not parse JSON${reply ? "" : reasoning ? " (answer was only in its reasoning, and malformed)" : " (empty reply)"}: ${e instanceof Error ? e.message : e}`;
+      attempt.error = `Could not parse JSON${reply ? '' : reasoning ? ' (answer was only in its reasoning, and malformed)' : ' (empty reply)'}: ${e instanceof Error ? e.message : e}`;
       emit({ type: 'attempt', attempt });
-      // Don't leave an empty assistant turn in the thread; hand the next round to the designer.
-      if (role === 'engineer') engineerStuck = true;
-      continue;
+      return { attempt, outcome: { kind: 'error', api: false, message: attempt.error } };
     }
-
     const errors = validateCraft(parsed.craft);
     if (errors.length) {
       attempt.validationErrors = errors;
       emit({ type: 'attempt', attempt });
-      messages.push({
-        role: 'user',
-        content: `The craft failed validation:\n${errors.slice(0, 30).join('\n')}\nFix these and reply with the complete corrected JSON.`,
-      });
-      continue;
+      return { attempt, outcome: { kind: 'invalid', reply, errors } };
     }
-    const craft = parsed.craft as CraftDef;
+    const { craft, fixes } = autoFix(parsed.craft as CraftDef);
     attempt.craft = craft;
-
-    emit({ type: 'status', message: `Flight-testing "${craft.name}"…` });
-    let report: FlightReport;
+    attempt.fixes = fixes;
+    emit({ type: 'status', message: `Flight-testing "${craft.name}"${label}…` });
     try {
-      report = await (req.tester ? req.tester(craft) : flightTest(craft, { yieldEvery: 1500 }));
+      const report = await (req.tester ? req.tester(craft) : flightTest(craft, { yieldEvery: 1500 }));
+      attempt.report = report;
+      emit({ type: 'attempt', attempt });
+      return { attempt, outcome: { kind: 'tested', reply, craft, report, fixes, name: parsed.name, notes: parsed.notes } };
     } catch (e) {
       attempt.error = `Simulation error: ${e instanceof Error ? e.message : e}`;
       emit({ type: 'attempt', attempt });
-      messages.push({ role: 'user', content: `${attempt.error}. Fix the design and reply with the complete JSON.` });
+      return { attempt, outcome: { kind: 'simError', reply, message: attempt.error } };
+    }
+  };
+
+  const rank = (o: Outcome) => (o.kind === 'tested' ? 1000 + o.report.score : o.kind === 'simError' ? 2 : o.kind === 'invalid' ? 1 : 0);
+
+  let engineerStuck = false;
+  for (let i = 1; i <= maxIterations; i++) {
+    // Round 1 is the designer's draft(s); later rounds are the engineer fixing reported problems.
+    // If the engineer couldn't produce usable JSON, the designer takes the next round back.
+    const role = i === 1 || engineerStuck ? 'designer' : 'engineer';
+    const model = role === 'designer' ? req.model : (req.engineerModel ?? req.model);
+    const n = i === 1 ? drafts : 1;
+    emit({ type: 'status', message: `${role === 'designer' ? 'Designer' : 'Engineer'} (${model}) working, round ${i}/${maxIterations}${n > 1 ? `, ${n} drafts in parallel` : ''}…` });
+    // Parallel drafts vary the temperature so they explore different layouts.
+    const results = await Promise.all(Array.from({ length: n }, (_, k) =>
+      attemptOnce(i, role, n > 1 ? 0.35 + 0.25 * k : 0.4, n > 1 ? ` (draft ${k + 1}/${n})` : '')));
+    const pick = results.reduce((a, b) => (rank(b.outcome) > rank(a.outcome) ? b : a));
+    const o = pick.outcome;
+    if (o.kind === 'error') {
+      if (o.api) {
+        // The API failed (every draft, since any other outcome ranks higher): keep what we have.
+        if (best) break;
+        throw new Error(o.message);
+      }
+      // Don't leave an empty assistant turn in the thread; hand the next round to the designer.
+      if (role === 'engineer') engineerStuck = true;
       continue;
     }
-    attempt.report = report;
-    emit({ type: 'attempt', attempt });
-
-    if (!best || report.score > best.report.score) {
-      best = {
-        craft,
-        name: parsed.name ?? craft.name,
-        notes: parsed.notes ?? '',
-        report,
-        attempts,
-        model: req.model,
-        prompt: req.prompt,
-        cost: totalCost,
-      };
+    engineerStuck = false;
+    messages.push({ role: 'assistant', content: o.reply });
+    if (o.kind === 'invalid') {
+      messages.push({ role: 'user', content: `The craft failed validation:\n${o.errors.slice(0, 30).join('\n')}\nFix these and reply with the complete corrected JSON.` });
+      continue;
     }
-    if (report.passed) break;
+    if (o.kind === 'simError') {
+      messages.push({ role: 'user', content: `${o.message}. Fix the design and reply with the complete JSON.` });
+      continue;
+    }
+    if (!best || o.report.score > best.report.score) {
+      best = { craft: o.craft, name: o.name ?? o.craft.name, notes: o.notes ?? '', report: o.report, attempts, model: req.model, prompt: req.prompt, cost: totalCost };
+    }
+    if (o.report.passed) break;
+    const fixNote = o.fixes.length
+      ? `\n\nBefore testing, these automatic corrections were applied (keep them in your next version):\n${o.fixes.map((f) => `- ${f}`).join('\n')}`
+      : '';
     messages.push({
       role: 'user',
-      content: `Automated flight test results:\n${formatReport(report)}\n\nFix the issues while keeping the requested concept. Reply with the complete corrected JSON.`,
+      content: `Automated flight test results:\n${formatReport(o.report)}${fixNote}\n\nFix the issues while keeping the requested concept. Reply with the complete corrected JSON.`,
     });
   }
 
