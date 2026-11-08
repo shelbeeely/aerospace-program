@@ -76,6 +76,16 @@ export const TUNING = {
    * 8x over reality so you notice fuel and CoM shift within a flight: 4000 N burns 0.1 kg/s.
    */
   fuelPerNewtonSecond: 2.5e-5,
+  /** Turbofan thrust lapse with air density: T ∝ σ^this (σ = density / sea-level density). */
+  turbofanDensityExponent: 0.7,
+  /** Turbofan ram lapse: T ∝ 1 − this × M × (1 + BPR) / (1 + 0.1 × BPR). */
+  turbofanMachLapse: 0.25,
+  /** Turbofan TSFC (fuel per newton) rise with Mach: × (1 + this × M). */
+  turbofanTsfcMach: 0.5,
+  /** Throttle above which a turbofan's afterburner lights. */
+  afterburnerThrottle: 0.95,
+  /** Afterburner light-up / blow-out time constant (s). */
+  afterburnerSpoolTime: 0.4,
 
   // ---------------------------------------------------------------- wheels
   /**
