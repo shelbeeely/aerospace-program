@@ -427,7 +427,11 @@ export class Simulation {
     this.guardAgainstExplosion();
     // After an explosion reset the step's contacts belong to a craft that's gone: drop them.
     this.dispatchContactForces(resets === this.explosionResets);
-    if (this.groundMoving) this.town.shake(this.atmosphere.events.groundAcceleration(_tmp));
+    if (this.groundMoving) {
+      const accel = this.atmosphere.events.groundAcceleration(_tmp);
+      this.staticWorld.shake(accel, this.position.x, this.position.z, this.time);
+      this.town.shake(accel);
+    }
     // Explode when a hard contact stops (or flings) the craft by more than explodeSpeed within
     // ~0.15 s: velocity change is robust where single-step contact impulses spike.
     if (this.stepImpact > 0) this.contactWindow = this.velHistory.length;

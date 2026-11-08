@@ -44,7 +44,7 @@ h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.12em; color: #9fd0ff; }
 }
 #destroyed b { display: block; font-size: 40px; letter-spacing: 0.35em; }
 #destroyed small { display: block; margin-top: 6px; font-size: 13px; letter-spacing: 0.12em; color: #ffd9b0; }
-body.touch-ui #destroyed small { display: none; }
+body.touch-ui #destroyed small { font-size: 11px; }
 body.touch-ui #destroyed b { font-size: 26px; }
 
 #help { right: 376px; top: 16px; max-width: 380px; max-height: calc(100dvh - 32px); overflow-y: auto; user-select: text; }

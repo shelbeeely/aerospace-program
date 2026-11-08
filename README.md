@@ -402,8 +402,11 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
   is drawn voxel by voxel, keeps mass, lift and thrust in proportion to what is left, and
   breaks off below 35%. A crash that changes the craft's velocity by more than 30 m/s in
   0.15 s blows it up: fireball, shockwave, boom, the parts thrown clear and nearby buildings
-  cratered. R puts a new plane on the runway with the wreckage left where it is; Backspace
-  rebuilds the whole world.
+  cratered. Four seconds later a new plane appears on the runway, the wreckage left where it
+  is (R does the same any time); Backspace rebuilds the whole world.
+- **Earthquakes** bring the city down: intact structures within 1.2 km of the craft whose tops
+  would shake past their strength (tall, slender towers and raised highways first) fracture,
+  then the shaking knocks blocks out and whatever they held up falls as rubble.
 - **Reinforcement (hangar → craft card → Reinforce):** levels 0-3 per part, each +15% part
   mass, +60% strength and +80% impact HP. Saved with the craft; designers can set it too.
 - **Airport:** taxiway, apron, terminal with jet bridges and parked airliners, control tower and

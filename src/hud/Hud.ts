@@ -106,9 +106,12 @@ export class Hud {
   }
 
   /** The craft blew up: show the banner (and hide the stall warning). */
-  setDestroyed(on: boolean): void {
+  setDestroyed(on: boolean, respawnIn = 0): void {
     this.el.destroyed.classList.toggle('hidden', !on);
-    if (on) this.el.stall.classList.add('hidden');
+    if (!on) return;
+    this.el.stall.classList.add('hidden');
+    const small = this.el.destroyed.querySelector('small');
+    if (small) this.set(small as HTMLElement, `New plane in ${Math.ceil(respawnIn)}… · Backspace resets the world`);
   }
 
   toggleHelp(): void {

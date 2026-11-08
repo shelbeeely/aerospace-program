@@ -159,8 +159,43 @@ export class StaticWorld {
     this.pending.clear();
   }
 
+  private lastShake = -Infinity;
+
+  /**
+   * Earthquake: intact structures within QUAKE_RADIUS of `cx, cz` (the craft) whose top would
+   * shake past the block strength (tall and slender amplify the ground motion, as in Town.shake)
+   * fracture into blocks, nearest first, so Town.shake can bring them down block by block.
+   * Checked a few times a second; the fracture cap still applies.
+   */
+  shake(accel: { x: number; z: number }, cx: number, cz: number, time: number): number {
+    if (time - this.lastShake < 0.2) return 0;
+    this.lastShake = time;
+    const a = Math.hypot(accel.x, accel.z);
+    if (a < TUNING.quakeBlockStrength * 0.05) return 0;
+    const candidates: Array<{ g: number; d: number }> = [];
+    for (const g of this.structures.groups) {
+      if (this.fractured.has(g.id)) continue;
+      const mx = g.x0 + (g.size[0] * g.blockSize) / 2 - cx;
+      const mz = g.z0 + (g.size[2] * g.blockSize) / 2 - cz;
+      const d = mx * mx + mz * mz;
+      if (d > QUAKE_RADIUS * QUAKE_RADIUS) continue;
+      const [w, h, dd] = g.size;
+      const footprint = Math.max(1, Math.min(w, dd));
+      const top = a * (1 + (0.6 * (h - 1)) / footprint);
+      if (top > TUNING.quakeBlockStrength * 0.8 * quakeFragility(g.id)) candidates.push({ g: g.id, d });
+    }
+    candidates.sort((p, q) => p.d - q.d);
+    let n = 0;
+    for (const c of candidates) {
+      if (this.fractured.size >= TUNING.maxFracturedStructures) break;
+      this.fracture(c.g, { impulse: 0, x: 0, y: 0, z: 0 }, time, false);
+      n++;
+    }
+    return n;
+  }
+
   /** Rebuild a structure as its block grid of breakable blocks and blow a crater where it was hit. */
-  fracture(group: number, hit: { impulse: number; x: number; y: number; z: number }, time: number): BlockBuilding {
+  fracture(group: number, hit: { impulse: number; x: number; y: number; z: number }, time: number, crater = true): BlockBuilding {
     const g = this.structures.groups[group];
     const s = g.blockSize;
     // Static colliders out, blocks in. The grid sits on the ground (y = 0), so the anchor
@@ -172,6 +207,10 @@ export class StaticWorld {
     });
     this.fractured.set(group, building);
     this.centreCell = ''; // re-stream so the cells around the collapse stay loaded
+    if (!crater) {
+      this.version++;
+      return building;
+    }
     // Crater at the point of impact (nearest point of the structure to the striking body).
     const x1 = g.x0 + g.size[0] * s, y1 = g.size[1] * s, z1 = g.z0 + g.size[2] * s;
     const ix = Math.min(x1, Math.max(g.x0, hit.x));
@@ -212,4 +251,13 @@ export class StaticWorld {
 /** Streaming cell size and radius (m). */
 const CELL = 250;
 const STREAM_RADIUS = 1000;
+/** Earthquakes bring down structures this close to the craft (m). */
+const QUAKE_RADIUS = 1200;
+/** Per-structure build quality for earthquakes: 0.8-1.4 × (some stand, some fall). */
+function quakeFragility(id: number): number {
+  let h = Math.imul(id + 7, 0x9e3779b1);
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  h ^= h >>> 13;
+  return 0.8 + 0.6 * ((h >>> 0) / 4294967296);
+}
 const cellKey = (x: number, z: number) => `${x},${z}`;

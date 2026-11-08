@@ -146,6 +146,7 @@ async function start() {
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
   let explosionHeardAt = -Infinity;
+  let explodedAt: number | null = null;
   const _wind10 = new THREE.Vector3();
   const _tmpWindPoint = new THREE.Vector3();
   const oceanView = new OceanView(scene, sim.ocean, sim.atmosphere.events);
@@ -717,7 +718,16 @@ async function start() {
       audio.explosion(Math.hypot(e.x - camera.position.x, e.y - camera.position.y, e.z - camera.position.z));
       player.rumble(1, 900);
     }
-    hud.setDestroyed(sim.exploded);
+    // A wreck is replaced by a new plane on the runway after a few seconds (the world stays).
+    if (sim.exploded && explodedAt === null) explodedAt = sim.time;
+    if (!sim.exploded) explodedAt = null;
+    const respawnLeft = explodedAt === null ? 0 : TUNING.respawnDelay - (sim.time - explodedAt);
+    hud.setDestroyed(sim.exploded, Math.max(0, respawnLeft));
+    if (explodedAt !== null && respawnLeft <= 0) {
+      explodedAt = null;
+      reset(false);
+      toast('New plane on the runway');
+    }
     oceanView.update(sim.time, camera);
     lightningView.update(sim.time, sim.lightning.strikes, sim.craft, Math.max(sim.lightning.staticCharge, (sim.atmosphere.settings.storm ?? 0) * 0.5));
     fireView.update(sim.time, sim.fire, sim.craft);

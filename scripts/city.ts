@@ -6,7 +6,8 @@
  */
 import { JET } from '../src/craft/jet.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
-import { heightCap } from '../src/sim/layout.ts';
+import { CITY, heightCap } from '../src/sim/layout.ts';
+import { TUNING } from '../src/tuning.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 import { worldStructures } from '../src/world/structures.ts';
 
@@ -115,6 +116,39 @@ sim.resetToRunway();
 const sim2 = new Simulation(TEST_PLANE);
 for (let i = 0; i < 120 * 5; i++) sim2.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
 check(sim2.failures.length === 0 && sim2.staticWorld.fractured.size === 0, 'a parked plane on the runway touches nothing');
+
+// --- Earthquake: towers near the craft fracture and come down block by block
+{
+  const q = new Simulation(TEST_PLANE);
+  const { x: hx, z: hz } = CITY.hubs[0];
+  q.atmosphere.events.trigger('earthquake', { duration: 12 });
+  const destroyed0 = q.town.destroyed;
+  let spawned = 0;
+  let last = q.town.pool.version;
+  let peakFractured = 0;
+  const t0 = performance.now();
+  const steps = Math.round(14 / q.dt);
+  const accel = { x: 0, y: 0, z: 0 } as { x: number; y: number; z: number };
+  for (let i = 0; i < steps; i++) {
+    // Shake around downtown (the sim itself shakes around the craft on the runway).
+    const a = q.atmosphere.events.groundAcceleration();
+    accel.x = a.x; accel.z = a.z;
+    q.staticWorld.shake(accel, hx, hz, q.time);
+    q.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
+    peakFractured = Math.max(peakFractured, q.staticWorld.fractured.size);
+    if (q.town.pool.version !== last) spawned++;
+    last = q.town.pool.version;
+  }
+  const ms = (performance.now() - t0) / steps;
+  const names = [...q.staticWorld.fractured.values()].map((b) => b.def.id);
+  check(peakFractured > 0, 'the quake fractures downtown towers', `${peakFractured} structures (${names.slice(0, 3).join(', ')}…)`);
+  check(q.town.destroyed - destroyed0 > 50, 'shaking knocks blocks out of them', `${q.town.destroyed - destroyed0} blocks destroyed`);
+  check(spawned > 0, 'what they held up comes down as rubble', `${spawned} rubble spawns`);
+  check(peakFractured <= TUNING.maxFracturedStructures, 'within the fracture cap', `${peakFractured}/${TUNING.maxFracturedStructures}`);
+  check(ms < 6, 'step time during the collapse', `avg ${ms.toFixed(2)} ms`);
+  q.resetToRunway();
+  check(q.staticWorld.fractured.size === 0, 'world reset rebuilds them');
+}
 
 function centre(b: { worldCentre(c: { x: number; y: number; z: number }, o: { x: number; y: number; z: number }): { x: number; y: number; z: number } }, block: { x: number; y: number; z: number }): [number, number, number] {
   const p = b.worldCentre(block, { x: 0, y: 0, z: 0 });
