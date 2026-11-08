@@ -214,3 +214,22 @@ export const TUNING = {
 } as const;
 
 export const DEG = Math.PI / 180;
+
+/** Hazard simulation constants. Electrical coupling is a fraction of the strike energy. */
+export const HAZARDS = {
+  strikeIntervalMin: 5,
+  strikeIntervalRange: 15,
+  strikeRadius: 200,
+  strikeEnergyMinJ: 12000,
+  strikeEnergyRangeJ: 16000,
+  electricalCoupling: 0.4,
+  ignitionTemperature: 280,
+  flameTemperature: 700,
+  maximumTemperature: 1000,
+  ambientTemperature: 20,
+  coolingTime: 8,
+  heatRate: 180,
+  neighborHeatRate: 100,
+  heatDamagePerDegree: 0.5,
+  soundSpeed: 343,
+} as const;
