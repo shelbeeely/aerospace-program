@@ -75,16 +75,19 @@ export class Town {
   private readonly chunkImpulse = new Map<Chunk, number>();
   private readonly touched = new Set<BlockBuilding>();
   private readonly _p = { x: 0, y: 0, z: 0 };
+  private readonly world: RAPIER.World;
+  private readonly registry: { add(c: RAPIER.Collider, block: Block): void; delete(c: RAPIER.Collider): void };
 
   constructor(
     world: RAPIER.World,
     defs: readonly BuildingDef[] = townBuildings(),
   ) {
-    const registry = {
+    this.world = world;
+    this.registry = {
       add: (c: RAPIER.Collider, block: Block) => void this.owners.set(c.handle, { block }),
       delete: (c: RAPIER.Collider) => void this.owners.delete(c.handle),
     };
-    for (const def of defs) this.buildings.push(new BlockBuilding(world, def, registry));
+    for (const def of defs) this.buildings.push(new BlockBuilding(world, def, this.registry));
     this.pool = new DebrisPool(world, {
       addChunkCollider: (c, chunk) => void this.owners.set(c.handle, { chunk }),
       deleteChunkCollider: (c) => void this.owners.delete(c.handle),
@@ -126,7 +129,7 @@ export class Town {
     if (o.block) {
       // Rubble merely lying on a block (its weight, step after step) doesn't wear it down;
       // only a real impact from it counts.
-      if (other?.chunk && impulse < 0.5 * TUNING.blockMass * TUNING.chunkShatterSpeed) return;
+      if (other?.chunk && impulse < 0.5 * o.block.building.blockMass * TUNING.chunkShatterSpeed) return;
       if (o.block.alive) this.blockImpulse.set(o.block, (this.blockImpulse.get(o.block) ?? 0) + impulse);
     } else {
       this.chunkImpulse.set(o.chunk, (this.chunkImpulse.get(o.chunk) ?? 0) + impulse);
@@ -166,10 +169,10 @@ export class Town {
     const s = TUNING.blockSize;
     if (this.blockImpulse.size) {
       for (const [b, j] of this.blockImpulse) {
-        if (!b.alive || j <= TUNING.blockBreakImpulse) continue;
+        if (!b.alive || j <= b.building.breakImpulse) continue;
         b.building.remove(b);
         const p = this.recordBreak(b.building, b, time);
-        this.pool.wake(p.x, p.y, p.z, s * 1.5);
+        this.pool.wake(p.x, p.y, p.z, b.building.blockSize * 1.5);
         touched.add(b.building);
       }
       this.blockImpulse.clear();
@@ -224,6 +227,41 @@ export class Town {
     this.destroyed++;
     this.breaks.push({ x, y, z, color, time });
     if (this.breaks.length > 256) this.breaks.splice(0, this.breaks.length - 256);
+  }
+
+  /** Add a breakable building at runtime (a city tower that just fractured). */
+  addBuilding(def: BuildingDef): BlockBuilding {
+    const b = new BlockBuilding(this.world, def, this.registry);
+    this.buildings.push(b);
+    this.version++;
+    return b;
+  }
+
+  /** Take a runtime building out of the world entirely (its rubble stays until it settles). */
+  removeBuilding(b: BlockBuilding): void {
+    const i = this.buildings.indexOf(b);
+    if (i < 0) return;
+    this.buildings.splice(i, 1);
+    b.dispose();
+    this.version++;
+  }
+
+  /**
+   * Destroy every block of `building` within `radius` of a world point (an impact crater), and
+   * queue the support check. Returns how many blocks went.
+   */
+  blast(building: BlockBuilding, x: number, y: number, z: number, radius: number, time: number): number {
+    let n = 0;
+    const p = this._p;
+    for (const b of building.list) {
+      if (!b.alive) continue;
+      building.worldCentre(b, p);
+      if ((p.x - x) ** 2 + (p.y - y) ** 2 + (p.z - z) ** 2 > radius * radius) continue;
+      this.blockImpulse.set(b, Infinity);
+      n++;
+    }
+    void time;
+    return n;
   }
 
   /** Every building whole again, all rubble gone. */

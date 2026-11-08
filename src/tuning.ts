@@ -176,6 +176,13 @@ export const TUNING = {
    * delivers a few hundred N·s per step; a wing hitting it at flying speed, tens of thousands.
    */
   blockBreakImpulse: 9000,
+  /** Impulse (N·s) that fractures an intact city/airport structure into breakable blocks (a
+   *  light plane hitting at ~30 m/s; rubble from a collapsing neighbour does it too). */
+  structureFractureImpulse: 12000,
+  /** Block budget when a structure fractures (block size grows with the structure). */
+  maxFractureBlocks: 1400,
+  /** Most structures fractured at once (each adds up to ~2,000 block colliders). */
+  maxFracturedStructures: 10,
   /**
    * A falling chunk shatters (its blocks are destroyed) when one of its blocks takes an impulse
    * above blockMass × this speed (m/s) in one step: about a 2 m drop onto something hard.
@@ -188,6 +195,8 @@ export const TUNING = {
   maxFrozenChunks: 96,
   maxFrozenChunkColliders: 2000,
   /** A chunk slower than this (m/s and rad/s) for `chunkSettleTime` s is frozen in place. */
+  /** Chunks of more blocks than this get one collider per floor layer (cheaper; still falls whole). */
+  fineChunkBlocks: 96,
   chunkSettleSpeed: 0.15,
   chunkSettleTime: 1,
   /**

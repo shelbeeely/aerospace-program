@@ -381,3 +381,6 @@ body.touch-ui:not(.portrait) .tz-left { height: calc(100% - 64px); }
 }
 /* The knob rides up to the top at full power: keep the POWER/LIFT readout above it. */
 body.touch-ui .lever-label { top: -46px; }
+
+/* Autopilot readout lights up while engaged. */
+#h-ap-row.ap-on b, #h-ap-row.ap-on small { color: #3dffb0; }

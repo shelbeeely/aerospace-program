@@ -107,6 +107,10 @@ export interface BuildingDef {
   size: [number, number, number];
   /** Neon edge colour (render only). */
   color: string;
+  /** Block edge length (m). Default TUNING.blockSize; skyscrapers use bigger blocks. */
+  blockSize?: number;
+  /** Which grid cells exist (stepped towers, octagonal shafts). Default: all of them. */
+  mask?: (x: number, y: number, z: number) => boolean;
 }
 
 /** One block of a building. */
@@ -132,7 +136,11 @@ export interface ColliderRegistry {
  */
 export class BlockBuilding {
   readonly def: BuildingDef;
-  readonly blockSize = TUNING.blockSize;
+  readonly blockSize: number;
+  /** Mass of one block (kg) and the impulse that destroys it (N·s), scaled from the 3 m
+   *  reference block: mass with volume, strength with face area. */
+  readonly blockMass: number;
+  readonly breakImpulse: number;
   readonly blocks = new Map<string, Block>();
   /** Blocks in a fixed order (render instance ids). */
   readonly list: Block[] = [];
@@ -146,12 +154,17 @@ export class BlockBuilding {
     private readonly registry: ColliderRegistry,
   ) {
     this.def = def;
+    this.blockSize = def.blockSize ?? TUNING.blockSize;
+    const k = this.blockSize / TUNING.blockSize;
+    this.blockMass = TUNING.blockMass * k ** 3;
+    this.breakImpulse = TUNING.blockBreakImpulse * k ** 2;
     const [ox, oy, oz] = def.origin;
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(ox, oy, oz));
     const [w, h, d] = def.size;
     for (let y = 0; y < h; y++)
       for (let z = 0; z < d; z++)
         for (let x = 0; x < w; x++) {
+          if (def.mask && !def.mask(x, y, z)) continue;
           const key = blockKey(x, y, z);
           const b: Block = { x, y, z, key, index: this.list.length, alive: true, supported: true, building: this, collider: null };
           this.blocks.set(key, b);
@@ -193,7 +206,7 @@ export class BlockBuilding {
       .setRestitution(0.05)
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
       // Rapier reports a pair when either collider's threshold is crossed; the town decides.
-      .setContactForceEventThreshold(0.1 * TUNING.blockBreakImpulse * TUNING.physicsHz);
+      .setContactForceEventThreshold(0.1 * this.breakImpulse * TUNING.physicsHz);
     b.collider = this.world.createCollider(desc, this.body);
     this.registry.add(b.collider, b);
   }
@@ -215,6 +228,20 @@ export class BlockBuilding {
   unsupported(): Block[] {
     markSupport(this.blocks);
     return findUnsupported(this.blocks);
+  }
+
+  /** Remove every collider and the body (the building is being taken out of the world). */
+  dispose(): void {
+    for (const b of this.list) {
+      if (b.collider) {
+        this.registry.delete(b.collider);
+        this.world.removeCollider(b.collider, false);
+        b.collider = null;
+      }
+      b.alive = false;
+    }
+    this.world.removeRigidBody(this.body);
+    this.version++;
   }
 
   /** Every block back in place (town reset). */

@@ -378,3 +378,32 @@ Reset repairs damage, restores fuel and clears hazards.
 Run `npm run hazards` for deterministic strike, heat propagation, burnout, electrical damage,
 and reset regressions. In the browser console, `game.sim.triggerLightning()` triggers a strike
 near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)` starts a fire.
+
+
+## The Grid (city, airport, autopilot)
+
+- **The Grid** covers the whole land: ~6,500 seeded towers across five downtown hubs, data
+  highways every sixth street with light-cycle traffic, raised freeways, a 530 m Grid Spire,
+  a stepped arena, a stadium and floating slabs. The airport keeps real obstacle-limitation
+  zoning (airfield clear, approach/departure funnels rising 2%, a 40 m climb-out corridor).
+- **Everything is destructible.** Every structure is a block grid: cheap static colliders while
+  intact (streamed within 1 km of the craft), fractured into breakable blocks on a hard hit.
+  Blocks around the impact die, a BFS anchor check from the ground-level blocks finds what is
+  still supported, and everything else falls as rigid-body rubble that shatters on landing.
+  Aircraft break apart too: a wing that hits a tower detaches and the lift goes asymmetric.
+- **Airport:** taxiway, apron, terminal with jet bridges and parked airliners, control tower and
+  beacon, runway/approach/taxi lights with sequenced flashers, working PAPIs, a windsock that
+  follows the real wind.
+- **Autopilot (U / gamepad R3 / touch "Autopilot"):** holds heading, altitude and speed (hover,
+  heading and forward speed on rotorcraft), takes off by itself from the runway, and climbs to
+  clear buildings ahead. While engaged, stick pitch/roll and the throttle adjust its targets.
+
+Checks: `npm run city`, `npm run autopilot`.
+
+### Credits
+
+Tower kit: This work is based on "Tron Buildings 1"
+(https://sketchfab.com/3d-models/tron-buildings-1-88ca3618bfbe42dea14f5b438250c9e2) by
+SpringSociety (https://sketchfab.com/jcreadingtutor) licensed under CC-BY-4.0
+(http://creativecommons.org/licenses/by/4.0/). Converted with `npm run import-towers`
+(baked, re-oriented, voxelized into block grids); original files in `assets/towerKit/`.

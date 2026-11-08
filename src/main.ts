@@ -22,8 +22,12 @@ import { TownView } from './render/TownView.ts';
 import { FireView } from './render/FireView.ts';
 import { LightningView } from './render/LightningView.ts';
 import { WeatherView } from './render/WeatherView.ts';
+import { CityView } from './render/CityView.ts';
+import { AirportView } from './render/AirportView.ts';
+import { KitTowersView } from './render/KitTowersView.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
+import { FlightAutopilot } from './sim/flightAutopilot.ts';
 import { initPhysics, Simulation } from './sim/Simulation.ts';
 import { WEATHER_PRESETS } from './sim/atmosphere.ts';
 import { TUNING } from './tuning.ts';
@@ -133,6 +137,11 @@ async function start() {
   const debug = new DebugOverlay(scene, craftView.root);
   const debrisView = new DebrisView(scene);
   const townView = new TownView(scene, sim.town);
+  const cityView = new CityView(scene, sim.staticWorld);
+  const airportView = new AirportView(scene);
+  const kitView = new KitTowersView(scene, sim.staticWorld, import.meta.env.BASE_URL);
+  const _wind10 = new THREE.Vector3();
+  const _tmpWindPoint = new THREE.Vector3();
   const oceanView = new OceanView(scene, sim.ocean, sim.atmosphere.events);
   let viewVersion = sim.version;
   let currentLivery: string | null = null;
@@ -165,7 +174,9 @@ async function start() {
     controlsPanel.render();
     if (connected) player.rumble(0.4, 150);
   };
-  let pilot: ControlSource = player;
+  const autopilot = new FlightAutopilot(player);
+  autopilot.onDisengage = (thr) => { player.throttle = thr; };
+  let pilot: ControlSource = autopilot;
 
   let debugOn = false;
   document.getElementById('debug-close')!.addEventListener('click', () => {
@@ -251,6 +262,7 @@ async function start() {
 
   const flightLog = new FlightLog();
   const reset = () => {
+    autopilot.disengage();
     sim.resetToRunway();
     player.reset();
     rig.snap();
@@ -332,6 +344,7 @@ async function start() {
   };
   const setMode = (m: AppMode) => {
     if (captureBusy) return;
+    autopilot.disengage();
     mode = m;
     syncRenderControls();
     applyModeClass(m);
@@ -519,7 +532,8 @@ async function start() {
         if (!pm) throw new Error(`Unknown mode "${m}" (use "hangar" or "flight")`);
         if (pm !== mode) setMode(pm);
       },
-      setPilot: (p: ControlSource | null) => (pilot = p ?? player),
+      setPilot: (p: ControlSource | null) => (pilot = p ?? autopilot),
+      autopilot,
       reset,
     },
   });
@@ -558,6 +572,20 @@ async function start() {
     for (const a of player.poll()) {
       if (a === 'studio') setMode(mode === 'flight' ? 'hangar' : 'flight');
       else if (a === 'mute') toast(audio.toggleMute() ? '🔇 Sound off' : '🔊 Sound on');
+      else if (a === 'autopilot') {
+        if (autopilot.state.engaged) {
+          autopilot.disengage();
+          toast('Autopilot off');
+        } else {
+          const kind = vehicleKind(sim);
+          if (kind === 'lighter-than-air') toast('No autopilot for this craft');
+          else {
+            autopilot.engage(telemetry, kind);
+            const st = autopilot.state;
+            toast(`Autopilot on · HDG ${Math.round(st.heading).toString().padStart(3, '0')} · ${st.altitude.toFixed(0)} m${kind === 'airplane' ? ` · ${(st.speed * 1.944).toFixed(0)} kt` : ''} — stick and throttle adjust it`);
+          }
+        }
+      }
       else if (a === 'screenshot') void takePhoto();
       else if (a === 'nextVehicle') cycleCraft(1);
       else if (a === 'prevVehicle') cycleCraft(-1);
@@ -609,6 +637,8 @@ async function start() {
     }
     debrisView.update(sim.debris);
     townView.update(dt);
+    cityView.update(dt);
+    kitView.update();
     oceanView.update(sim.time, camera);
     lightningView.update(sim.time, sim.lightning.strikes, sim.craft, Math.max(sim.lightning.staticCharge, (sim.atmosphere.settings.storm ?? 0) * 0.5));
     fireView.update(sim.time, sim.fire, sim.craft);
@@ -632,6 +662,7 @@ async function start() {
     velocity.set(v.x, v.y, v.z);
     rig.update(dt, renderPos, renderRot, velocity);
     worldView.update(camera, renderPos);
+    airportView.update(camera, sim.atmosphere.windAt(_tmpWindPoint.set(renderPos.x, 10, renderPos.z), 0, _wind10));
     disasterView.update(sim.atmosphere.events);
     weatherView.update(dt, camera, velocity, sim.atmosphere, sim.groundWetness, sim.atmosphere.cloudAt(camera.position, 0).inCloud);
 
@@ -639,6 +670,7 @@ async function start() {
     debug.update(sim.debugForces, sim.craft, renderOffset);
 
     hud.update(telemetry, player.trim, telemetry.controls.brake > 0);
+    hud.setAutopilot(autopilot.state.engaged ? autopilot.state : null);
     fpsFrames++;
     fpsTime += dt;
     if (fpsTime > 0.5) {

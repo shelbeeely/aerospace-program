@@ -32,6 +32,7 @@ export const GAMEPAD_COMMON: Array<[string, string]> = [
   ['D-pad ←/→', 'previous / next craft'],
   ['Start', 'Studio'],
   ['Back / View', 'help'],
+  ['R3 (click right stick)', 'autopilot on / off'],
 ];
 
 export interface PadInfo {
@@ -136,7 +137,7 @@ export class GamepadDevice implements InputDevice {
     edge(B.START, 'studio');
     edge(B.BACK, 'help');
     edge(B.L3, 'trimReset');
-    edge(B.R3, 'debug');
+    edge(B.R3, 'autopilot');
     this.prevButtons = p.buttons.map((x) => x.pressed);
   }
 

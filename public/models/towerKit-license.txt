@@ -1,0 +1,11 @@
+Model Information:
+* title:	Tron Buildings 1
+* source:	https://sketchfab.com/3d-models/tron-buildings-1-88ca3618bfbe42dea14f5b438250c9e2
+* author:	SpringSociety (https://sketchfab.com/jcreadingtutor)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Tron Buildings 1" (https://sketchfab.com/3d-models/tron-buildings-1-88ca3618bfbe42dea14f5b438250c9e2) by SpringSociety (https://sketchfab.com/jcreadingtutor) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
