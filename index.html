@@ -10,7 +10,7 @@
     <title>Aerospace Program: Flight Core</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
-  <body>
+  <body class="mode-hangar">
     <canvas id="view"></canvas>
 
     <div id="hud" class="panel">
@@ -36,6 +36,15 @@
 
     <div id="stall" class="hidden">STALL</div>
 
+    <!-- Hangar mode: craft card and launch button (Studio sits alongside). -->
+    <div id="hangar-bar">
+      <div id="craft-card" class="panel"></div>
+      <button id="fly-btn" title="Fly this craft (N)">FLY ▸</button>
+      <button id="studio-open" class="panel" title="Open the Studio">✦ Studio</button>
+    </div>
+    <!-- Flight mode: back to the hangar. -->
+    <button id="to-hangar" class="panel" title="Back to the hangar (N)">◂ Hangar</button>
+
     <div id="help" class="panel hidden">
       <h3>Controls</h3>
       <table>
@@ -49,11 +58,11 @@
         <tr><td>R</td><td>reset to runway</td></tr>
         <tr><td>C</td><td>chase / orbit camera</td></tr>
         <tr><td>F3</td><td>debug forces &amp; stats</td></tr>
-        <tr><td>N</td><td>toggle the Studio (generate craft, hangar)</td></tr>
+        <tr><td>N</td><td>hangar (Studio, pick a craft) / fly</td></tr>
         <tr><td>H</td><td>toggle this help</td></tr>
       </table>
       <p class="muted">Gamepad: left stick pitch/roll, right stick or bumpers yaw, triggers throttle,
-        A brake, Y reset, Back camera.</p>
+        A brake, Y reset, Back camera, Start hangar.</p>
       <p class="muted">Tip: full throttle (Z), roll down the runway, pull back gently (S) around 60 kt.
         Rotorcraft: throttle ≈ 50% hovers. Blimp: power + pitch up to climb.</p>
       <p class="muted">Studio: describe a craft, a model designs it, the sim flight-tests it, you fly it, then Refine with what felt wrong.</p>

@@ -26,7 +26,7 @@ interface Drag {
  *   rotorcraft, the middle = hover). Horizontal drag = yaw, springs back.
  * - Right thumb: floating stick (centres where you touch). Drag down = nose up (stick back),
  *   sideways = roll. Springs back.
- * - Buttons: brake (hold), reset, camera, studio, debug, help, fullscreen.
+ * - Buttons: brake (hold), reset, camera, hangar (Studio), debug, help, fullscreen.
  */
 export class TouchDevice implements InputDevice {
   readonly root: HTMLElement;
@@ -86,7 +86,7 @@ export class TouchDevice implements InputDevice {
       button('◎', 'Camera: chase / orbit', 'camera'),
       button('‹', 'Previous craft', 'prevVehicle'),
       button('›', 'Next craft', 'nextVehicle'),
-      button('✦', 'Studio', 'studio'),
+      button('✦', 'Hangar & Studio', 'studio'),
       button('⚙', 'Debug & weather', 'debug'),
       button('?', 'Help', 'help'),
       button('FLAP', 'Flaps: next detent', () => (this.flapCycle = true)),
