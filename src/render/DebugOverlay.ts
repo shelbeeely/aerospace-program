@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import type { Craft } from '../craft/Craft.ts';
 import type { DebugForce, ForceKind } from '../modules/ForceModule.ts';
 

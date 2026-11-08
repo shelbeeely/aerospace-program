@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import { TEST_PLANE } from './craft/testPlane.ts';
 import { Hud } from './hud/Hud.ts';
 import { GamepadDevice, KeyboardDevice, PlayerInput, TouchDevice } from './input/PlayerInput.ts';
@@ -10,6 +10,7 @@ import { Library, type LibraryEntry } from './gen/library.ts';
 import { CameraRig } from './render/CameraRig.ts';
 import { CraftView } from './render/CraftView.ts';
 import { DebrisView } from './render/DebrisView.ts';
+import { captureFrame } from './render/capture.ts';
 import { DebugOverlay } from './render/DebugOverlay.ts';
 import { WorldView } from './render/WorldView.ts';
 import type { ControlSource } from './sim/controls.ts';
@@ -26,7 +27,29 @@ async function start() {
   const canvas = document.getElementById('view') as HTMLCanvasElement;
   // Phones/tablets: cap resolution and shadow cost so mid-range devices hold their frame rate.
   const mobile = matchMedia('(pointer: coarse)').matches;
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: !mobile || window.devicePixelRatio < 2, powerPreference: 'high-performance' });
+  // WebGPU when available, WebGL2 otherwise (same scene, same materials). `?renderer=webgl`
+  // forces the fallback for comparison.
+  const params = new URLSearchParams(location.search);
+  const forceWebGL = params.get('renderer') === 'webgl';
+  const presentToCanvas = !params.has('nopresent');
+  const renderer = new THREE.WebGPURenderer({
+    canvas,
+    antialias: !mobile || window.devicePixelRatio < 2,
+    powerPreference: 'high-performance',
+    forceWebGL,
+  });
+  await renderer.init();
+  // A lost GPU device (driver reset, GPU process crash) is unrecoverable for this renderer:
+  // reload on the WebGL2 backend rather than leave a frozen canvas.
+  renderer.onDeviceLost = (info) => {
+    console.warn('GPU device lost:', info.message);
+    if (!forceWebGL) {
+      const url = new URL(location.href);
+      url.searchParams.set('renderer', 'webgl');
+      location.replace(url);
+    }
+  };
+  const backendName = (renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend ? 'WebGPU' : 'WebGL2';
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobile ? 1.5 : 2));
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   renderer.shadowMap.enabled = true;
@@ -178,6 +201,10 @@ async function start() {
       scene,
       camera,
       telemetry: () => sim.telemetry(),
+      renderer,
+      backend: backendName,
+      /** PNG of the current 3D view (GPU readback; works on WebGPU and WebGL2). */
+      capture: (width?: number) => captureFrame(renderer, scene, camera, width),
       client,
       library,
       studio,
@@ -278,6 +305,10 @@ async function start() {
       fpsFrames = 0;
       fpsTime = 0;
     }
+    // `?nopresent` (automated tests): simulate and update everything but skip presenting to the
+    // canvas. Headless browsers can't composite a WebGPU canvas; game.capture() still renders.
+    if (presentToCanvas) renderer.render(scene, camera);
+
     if (debugOn) {
       const mp = sim.craft.massProps;
       const col = sim.craft.centerOfLift();
@@ -291,11 +322,10 @@ async function start() {
           `margin     ${(col.z - mp.com.z).toFixed(2)} m ${col.z - mp.com.z < 0 ? '(UNSTABLE)' : ''}\n` +
           `fuel       ${sim.craft.fuelCapacity ? `${sim.craft.fuel.toFixed(1)} / ${sim.craft.fuelCapacity} kg` : 'none (infinite)'}\n` +
           `broken     ${sim.failures.map((f) => `${f.partId} (${(f.load / 1000).toFixed(1)}/${(f.strength / 1000).toFixed(1)} kN)`).join(', ') || 'none'}\n` +
-          `draw calls ${renderer.info.render.calls}`,
+          `renderer   ${backendName}\n` +
+          `draw calls ${renderer.info.render.drawCalls}`,
       );
     }
-
-    renderer.render(scene, camera);
   }
   requestAnimationFrame(frame);
 }

@@ -1,4 +1,5 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import { clamp, mix, normalize, positionLocal, pow, uniform } from 'three/tsl';
 import { LAYOUT } from '../sim/layout.ts';
 
 const HORIZON = new THREE.Color('#cfe3f2');
@@ -92,23 +93,16 @@ export class WorldView {
   readonly sun: THREE.DirectionalLight;
   private readonly sky: THREE.Mesh;
 
-  constructor(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
-    const aniso = renderer.capabilities.getMaxAnisotropy();
+  constructor(scene: THREE.Scene, renderer: THREE.WebGPURenderer) {
+    const aniso = renderer.getMaxAnisotropy();
     scene.background = HORIZON.clone();
     scene.fog = new THREE.Fog(HORIZON.clone(), 1200, 9000);
 
     // Sky dome with a vertical gradient (follows the camera).
-    const skyMat = new THREE.ShaderMaterial({
-      side: THREE.BackSide,
-      depthWrite: false,
-      fog: false,
-      uniforms: { horizon: { value: HORIZON }, zenith: { value: ZENITH } },
-      vertexShader: `varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-      fragmentShader: `uniform vec3 horizon; uniform vec3 zenith; varying vec3 vDir;
-        void main(){ float t = clamp(vDir.y * 1.6, 0.0, 1.0); gl_FragColor = vec4(mix(horizon, zenith, pow(t, 0.7)), 1.0);
-        #include <colorspace_fragment>
-        }`,
-    });
+    // TSL node material: compiles to WGSL on WebGPU and GLSL on the WebGL2 fallback.
+    const skyMat = new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide, depthWrite: false, fog: false });
+    const t = clamp(normalize(positionLocal).y.mul(1.6), 0, 1);
+    skyMat.colorNode = mix(uniform(HORIZON), uniform(ZENITH), pow(t, 0.7));
     this.sky = new THREE.Mesh(new THREE.SphereGeometry(9500, 32, 16), skyMat);
     this.sky.renderOrder = -1;
     this.sky.frustumCulled = false;
