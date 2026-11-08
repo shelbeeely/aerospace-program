@@ -108,6 +108,8 @@ export class AeroSurface implements ForceModule {
   reynolds = 0;
   /** Ice thickness on the leading edge (m). */
   ice = 0;
+  /** Fraction of the part's voxels still attached (impact damage). */
+  integrity = 1;
 
   private upstream: Upstream[] = [];
   /** dε/dα this surface sees from the surfaces ahead (for neutral-point estimates). */
@@ -296,7 +298,8 @@ export class AeroSurface implements ForceModule {
     // Record our downwash for surfaces behind us: ε ≈ 1.7·CL/(πAR) (far-field ≈ 2·CL/(πAR)).
     this.pushEps(this.isHorizontal ? (1.7 * cl * (1 - this.stall * 0.5)) / (Math.PI * this.aspectRatio) : 0);
 
-    const qS = 0.5 * air.density * speed2 * this.area;
+    // A chewed-up surface (voxels bitten off) lifts and drags in proportion to what's left.
+    const qS = 0.5 * air.density * speed2 * this.area * this.integrity;
     _liftDir.crossVectors(_air, _s).normalize();
     const max = TUNING.maxAeroForce;
     const lift = Math.max(-max, Math.min(max, cl * qS));

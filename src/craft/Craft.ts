@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { PartVoxels } from './voxels.ts';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../tuning.ts';
 import { AeroSurface } from '../modules/AeroSurface.ts';
@@ -31,6 +32,8 @@ export class Craft {
   readonly comOffset = new THREE.Vector3();
   /** Parts still attached. */
   parts: PartDef[];
+  /** Each part as 0.25 m voxels: impacts bite them away (see PartVoxels). */
+  readonly voxels = new Map<string, PartVoxels>();
   /** Ids of parts that broke off. */
   readonly detached = new Set<string>();
   /** Structural strength per part id (N). Infinity = unbreakable. */
@@ -52,6 +55,7 @@ export class Craft {
   ) {
     this.def = def;
     this.parts = [...def.parts];
+    for (const p of this.parts) this.voxels.set(p.id, new PartVoxels(p.shape));
 
     for (const part of def.parts) {
       const partPos = v3(part.position);
@@ -211,7 +215,8 @@ export class Craft {
     }
     for (const s of this.aeroSurfaces) if (s.iceMass > 0.01) extra.push(point(`ice:${s.partId}`, s.iceMass, s.localPosition));
     for (const r of this.rotors) if (r.iceMass > 0.001) extra.push(point(`ice:${r.partId}`, r.iceMass, r.localPosition));
-    return computeMassProperties([...this.parts, ...fuelMasses, ...extra], this.comOffset);
+    const parts = this.parts.map((p) => ({ ...p, mass: this.effectiveMass(p) }));
+    return computeMassProperties([...parts, ...fuelMasses, ...extra], this.comOffset);
   }
 
   private applyMass(): void {
@@ -250,7 +255,20 @@ export class Craft {
   }
 
   private massPartsOnly(): number {
-    return this.parts.reduce((s, p) => s + p.mass, 0);
+    return this.parts.reduce((s, p) => s + this.effectiveMass(p), 0);
+  }
+
+  /** Part mass after reinforcement (+15% per level) and voxel loss. */
+  effectiveMass(p: PartDef): number {
+    return p.mass * (1 + 0.15 * reinforceLevel(p)) * (this.voxels.get(p.id)?.integrity ?? 1);
+  }
+
+  /** Voxels were bitten off a part: update its modules and, if it matters, the mass. */
+  voxelsChanged(partId: string): void {
+    const v = this.voxels.get(partId);
+    if (!v) return;
+    for (const m of this.modules) if (m.partId === partId) (m as { integrity?: number }).integrity = v.integrity;
+    if (Math.abs(this.massAtLastUpdate - (this.massPartsOnly() + this.fuel + this.water)) > 0.5) this.applyMass();
   }
 
   /** Shift the centre of mass (debug slider). Inertia is kept; only the CoM moves. */
@@ -267,8 +285,9 @@ export class Craft {
     for (const s of this.aeroSurfaces) totalArea += s.area;
     const wheels = this.wheels.length || 1;
     for (const part of this.parts) {
+      const k = 1 + 0.6 * reinforceLevel(part);
       if (part.strength !== undefined) {
-        this.strength.set(part.id, part.strength > 0 ? part.strength : Infinity);
+        this.strength.set(part.id, part.strength > 0 ? part.strength * k : Infinity);
         continue;
       }
       const mods = this.modules.filter((m) => m.partId === part.id);
@@ -286,7 +305,7 @@ export class Craft {
       const rotors = mods.filter((m): m is Rotor => m instanceof Rotor);
       if (rotors.length) s = Math.min(s, 3 * rotors.reduce((a, r) => a + Math.abs(r.staticThrust()), 0) + weight);
       // Never let a bad estimate make a part fall off at rest.
-      this.strength.set(part.id, Number.isFinite(s) ? Math.max(s, 0.5 * weight) : Infinity);
+      this.strength.set(part.id, Number.isFinite(s) ? Math.max(s, 0.5 * weight) * k : Infinity);
     }
   }
 
@@ -317,6 +336,7 @@ export class Craft {
     }
     this.colliders.delete(partId);
     this.parts = this.parts.filter((p) => p.id !== partId);
+    this.voxels.delete(partId);
     this.modules = this.modules.filter((m) => m.partId !== partId);
     this.detached.add(partId);
     if (this.parts.length) this.applyMass();
@@ -441,8 +461,15 @@ export class Craft {
     for (const m of this.modules) m.reset();
     this.electrical?.reset();
     this.water = 0;
+    for (const p of this.parts) this.voxels.set(p.id, new PartVoxels(p.shape));
+    for (const m of this.modules) (m as { integrity?: number }).integrity = 1;
     this.applyMass();
   }
+}
+
+/** Reinforcement level 0..3 of a part. */
+export function reinforceLevel(p: PartDef): number {
+  return Math.min(3, Math.max(0, Math.round(p.reinforce ?? 0)));
 }
 
 function halfHeight(p: PartDef): number {

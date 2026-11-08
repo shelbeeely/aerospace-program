@@ -299,6 +299,8 @@ export interface PartDef {
    * mass and volume. Use 0 for indestructible.
    */
   hp?: number;
+  /** Reinforcement level 0-3: each level adds 60% strength, 80% impact HP and voxel toughness, and 15% of the part's mass. */
+  reinforce?: number;
 }
 
 export interface CraftDef {

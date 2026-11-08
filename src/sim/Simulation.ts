@@ -71,6 +71,12 @@ export class Simulation {
   readonly town: Town;
   /** Visual voxel chips knocked off buildings and aircraft (the renderer flies them). */
   readonly chips = new ChipEmitter();
+  /** Explosions (renderer: fireball and shockwave; audio: boom). Newest last. */
+  readonly explosions: Array<{ x: number; y: number; z: number; time: number; radius: number }> = [];
+  /** The craft blew up (controls dead until a new plane is spawned). */
+  exploded = false;
+  /** Sum of craft contact impulses this step (N·s): decides explosions. */
+  private stepImpact = 0;
   /** Solid neon city and airport structures (static colliders). */
   readonly staticWorld: StaticWorld;
   readonly fire = new FireSystem();
@@ -158,6 +164,7 @@ export class Simulation {
     });
     this.onContactForce((e) => this.town.onContact(e));
     this.onContactForce((e) => this.staticWorld.onContact(e));
+    this.onContactForce((e) => this.voxelHit(e));
 
     const self = this;
     this.ctx = {
@@ -368,6 +375,7 @@ export class Simulation {
     this.readBodyState();
     this.loadsThisStep.clear();
     this.craft.stepElectrical(this.dt, this.atmosphere.air(this.com.y).temperature - 273.15);
+    this.stepImpact = 0;
     this.staticWorld.stream(this.position.x, this.position.z);
     for (const m of this.craft.modules) m.step(this.ctx);
     this.ocean.apply(this.craft, this.time, this.dt, ({ partId, force }) => {
@@ -388,6 +396,7 @@ export class Simulation {
     // After an explosion reset the step's contacts belong to a craft that's gone: drop them.
     this.dispatchContactForces(resets === this.explosionResets);
     if (this.groundMoving) this.town.shake(this.atmosphere.events.groundAcceleration(_tmp));
+    if (!this.exploded && this.stepImpact > this.explodeImpulse()) this.explode();
     this.staticWorld.update(this.time);
     this.town.update(this.time);
     this.stepHazards();
@@ -568,6 +577,96 @@ export class Simulation {
   }
 
   /** Break a part off: debris body, failure record, structure version bump. */
+  /** Impulse in one step that blows the craft up: its mass arriving at ~30 m/s, more if reinforced. */
+  private explodeImpulse(): number {
+    const parts = this.craft.parts;
+    const avg = parts.length ? parts.reduce((a, p) => a + Math.min(3, Math.max(0, p.reinforce ?? 0)), 0) / parts.length : 0;
+    return this.craft.massProps.mass * TUNING.explodeSpeed * (1 + 0.3 * avg);
+  }
+
+  /**
+   * Voxel damage: a craft collider struck hard bites 0.25 m voxels out of its part at the actual
+   * contact point; the bitten voxels fly off as chips. Integrity (voxels left) scales the part's
+   * mass, lift, thrust; below `TUNING.voxelBreakIntegrity` the part breaks off.
+   */
+  private voxelHit(e: ContactForceInfo): void {
+    if (this.isFreshDebris(e.collider1) || this.isFreshDebris(e.collider2)) return;
+    if (this.town.isFreshDebris(e.collider1, this.time) || this.town.isFreshDebris(e.collider2, this.time)) return;
+    const craft = this.craft;
+    const impulse = e.totalForceMagnitude * e.dt;
+    for (const [mine, other] of [[e.collider1, e.collider2], [e.collider2, e.collider1]] as const) {
+      const partId = craft.partIdForCollider(mine);
+      if (!partId) continue;
+      const part = craft.parts.find((p) => p.id === partId);
+      const vox = craft.voxels.get(partId);
+      if (!part || !vox) continue;
+      this.stepImpact += impulse;
+      const level = Math.min(3, Math.max(0, Math.round(part.reinforce ?? 0)));
+      const gear = !!part.modules?.some((m) => m.type === 'wheel') || /^(gear|skid)/.test(part.kind);
+      const tol = craft.massProps.mass * (gear ? TUNING.gearSinkLimit : TUNING.impactSafeSpeed) * (1 + 0.5 * level);
+      if (impulse <= tol) continue;
+      // Where on the part: the first solver contact point, in the part's frame.
+      const c1 = this.world.getCollider(mine);
+      const c2 = this.world.getCollider(other);
+      const wp = { ok: false, x: 0, y: 0, z: 0 };
+      if (c1 && c2) this.world.contactPair(c1, c2, (m) => {
+        if (wp.ok || m.numSolverContacts() === 0) return;
+        const p = m.solverContactPoint(0);
+        if (p) { wp.ok = true; wp.x = p.x; wp.y = p.y; wp.z = p.z; }
+      });
+      const pq = new THREE.Quaternion().setFromEuler(new THREE.Euler(...((part.rotationDeg ?? [0, 0, 0]).map((d) => (d * Math.PI) / 180) as [number, number, number])));
+      const worldQ = this.rotation.clone().multiply(pq);
+      const partPos = new THREE.Vector3(...part.position).applyQuaternion(this.rotation).add(this.position);
+      const hitW = wp.ok ? new THREE.Vector3(wp.x, wp.y, wp.z) : partPos.clone();
+      const local = hitW.clone().sub(partPos).applyQuaternion(worldQ.clone().invert());
+      const at = vox.nearestAlive(local.x, local.y, local.z);
+      if (!at) continue;
+      const radius = Math.min(4, Math.max(vox.cell * 0.6, (vox.cell * (1 + 1.8 * Math.log2(impulse / tol))) / (1 + 0.5 * level)));
+      const removed = vox.bite(at[0], at[1], at[2], radius);
+      if (!removed.length) continue;
+      // Chips: up to ~40 bursts' worth, flying with the craft and outward from the hit.
+      const lv = this.linvel;
+      const every = Math.max(1, Math.ceil(removed.length / 40));
+      for (let i = 0; i < removed.length; i += every) {
+        const w = new THREE.Vector3(...removed[i]).applyQuaternion(worldQ).add(partPos);
+        this.chips.emit({ x: w.x, y: w.y, z: w.z, radius: vox.cell, vx: lv.x * 0.7, vy: lv.y * 0.7 + 1, vz: lv.z * 0.7, speed: 3 + Math.min(12, impulse / tol), count: Math.min(every, 6), size: vox.cell, color: part.color });
+      }
+      craft.voxelsChanged(partId);
+      if (vox.integrity < TUNING.voxelBreakIntegrity) this.breakPart(partId, impulse / e.dt, craft.strength.get(partId) ?? Infinity, 'impact');
+    }
+  }
+
+  /**
+   * The craft blows up: every part but the heaviest is thrown off outward, its voxels burst
+   * into chips, and the blast craters the nearest structures.
+   */
+  explode(): void {
+    if (this.exploded) return;
+    this.exploded = true;
+    const c = this.position.clone();
+    const radius = 10 + Math.min(20, this.craft.fuel * 0.15);
+    this.explosions.push({ x: c.x, y: c.y, z: c.z, time: this.time, radius });
+    if (this.explosions.length > 32) this.explosions.splice(0, this.explosions.length - 32);
+    const parts = [...this.craft.parts].sort((a, b) => b.mass - a.mass);
+    const before = this.debris.length;
+    for (const p of parts.slice(1)) this.breakPart(p.id, Infinity, this.craft.strength.get(p.id) ?? Infinity, 'impact');
+    // Throw the pieces outward and burst their voxels.
+    for (const d of this.debris.slice(before)) {
+      const t = d.body.translation();
+      const dir = new THREE.Vector3(t.x - c.x, t.y - c.y + 0.5, t.z - c.z).normalize();
+      const v = d.body.linvel();
+      const kick = 12 + Math.random() * 18;
+      d.body.setLinvel({ x: v.x * 0.5 + dir.x * kick, y: v.y * 0.5 + Math.abs(dir.y) * kick + 6, z: v.z * 0.5 + dir.z * kick }, true);
+      d.body.setAngvel({ x: (Math.random() - 0.5) * 12, y: (Math.random() - 0.5) * 12, z: (Math.random() - 0.5) * 12 }, true);
+      this.chips.emit({ x: t.x, y: t.y, z: t.z, radius: 1.5, vx: dir.x * kick * 0.6, vy: 6, vz: dir.z * kick * 0.6, speed: 14, count: 40, size: 0.25, color: d.part.color });
+    }
+    this.chips.emit({ x: c.x, y: c.y, z: c.z, radius: 2, vx: 0, vy: 8, vz: 0, speed: 22, count: 220, size: 0.35, color: '#ff8a1f' });
+    // Blast: crater whatever stands within the radius.
+    this.staticWorld.blastAt(c.x, c.y, c.z, radius, this.time);
+    for (const b of this.town.buildings) this.town.blast(b, c.x, c.y, c.z, radius * 0.6, this.time);
+    this.version++;
+  }
+
   private breakPart(partId: string, load: number, strength: number, cause: 'load' | 'impact' | 'lightning' | 'fire'): void {
     if (this.craft.parts.length <= 1) return; // never detach the last piece
     const part = this.craft.parts.find((p) => p.id === partId);

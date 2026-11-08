@@ -37,6 +37,8 @@ export class Engine implements ForceModule {
   /** Current spool 0..1 (lags throttle). */
   spool = 0;
   thrust = 0;
+  /** Fraction of the part's voxels still attached (a battered engine makes less thrust). */
+  integrity = 1;
   /** True when the tanks ran dry. */
   starved = false;
   /** Propeller angle for visuals (rad). */
@@ -126,7 +128,7 @@ export class Engine implements ForceModule {
       }
     }
 
-    const thrust = def.maxThrust * this.spool * thrustFactor;
+    const thrust = def.maxThrust * this.spool * thrustFactor * this.integrity;
     this.thrust = thrust;
     this.propAngle = (this.propAngle + this.spool * 150 * ctx.dt * (this.propDirection || 1)) % (Math.PI * 2);
     if (thrust <= 0) return;
