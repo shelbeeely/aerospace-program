@@ -10,7 +10,8 @@
     "sim": "node --experimental-transform-types --no-warnings scripts/headless.ts",
     "weather": "node --experimental-transform-types --no-warnings scripts/weather.ts",
     "destruction": "node --experimental-transform-types --no-warnings scripts/destruction.ts",
-    "design": "node --experimental-transform-types --no-warnings scripts/design.ts"
+    "design": "node --experimental-transform-types --no-warnings scripts/design.ts",
+    "raytrace": "node --experimental-transform-types --no-warnings scripts/raytrace.ts"
   },
   "repository": {
     "type": "git",
