@@ -151,3 +151,22 @@ export function structureMask(g: StructureGroup, list: readonly Structure[]): (x
     return pieces.some((p) => insidePiece(p, cx, cy, cz, s));
   };
 }
+
+/** Height map (m) of everything standing, in 20 m cells (kit towers included). */
+let heights: { cell: number; map: Map<string, number> } | null = null;
+export function obstacleTop(x: number, z: number): number {
+  if (!heights) {
+    const map = new Map<string, number>();
+    const cell = 20;
+    for (const p of worldStructures().list) {
+      const top = p.y + p.sy / 2;
+      for (let cx = Math.floor((p.x - p.sx / 2) / cell); cx <= Math.floor((p.x + p.sx / 2) / cell); cx++)
+        for (let cz = Math.floor((p.z - p.sz / 2) / cell); cz <= Math.floor((p.z + p.sz / 2) / cell); cz++) {
+          const k = `${cx},${cz}`;
+          map.set(k, Math.max(map.get(k) ?? 0, top));
+        }
+    }
+    heights = { cell, map };
+  }
+  return heights.map.get(`${Math.floor(x / heights.cell)},${Math.floor(z / heights.cell)}`) ?? 0;
+}

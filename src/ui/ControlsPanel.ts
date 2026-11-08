@@ -11,6 +11,7 @@ const KEYBOARD: Array<[string, string]> = [
   ['T / G, Y', 'trim down / up, reset'],
   [', / . (F6 / F7)', 'flaps up / down a notch'],
   ['R', 'reset'],
+  ['U', 'autopilot on / off (then W/S altitude, A/D heading, Shift/Ctrl speed)'],
   ['C', 'chase / orbit camera'],
   ['[ / ]', 'previous / next craft'],
   ['N', 'Hangar / flight'],
@@ -118,6 +119,8 @@ export class ControlsPanel {
       ...(touchUi ? [] : [h('h4', 'Keyboard'), table(KEYBOARD)]),
       h('h4', 'Settings'),
       settings,
+      h('h4', 'Credits'),
+      h('p', 'Tower kit: "Tron Buildings 1" by SpringSociety (sketchfab.com/jcreadingtutor), CC-BY-4.0, adapted into destructible block grids.'),
     );
   }
 }

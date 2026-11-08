@@ -112,6 +112,23 @@ export class Hud {
     this.el.debug.classList.toggle('hidden', !v);
   }
 
+  /** Autopilot readout: null = off. */
+  setAutopilot(s: { kind: 'airplane' | 'rotorcraft'; heading: number; altitude: number; commanded: number; speed: number } | null): void {
+    const ap = document.getElementById('h-ap');
+    const tgt = document.getElementById('h-ap-t');
+    const row = document.getElementById('h-ap-row');
+    if (!ap || !tgt || !row) return;
+    row.classList.toggle('ap-on', !!s);
+    if (!s) {
+      this.set(ap, 'OFF');
+      this.set(tgt, '');
+      return;
+    }
+    const climb = s.commanded > s.altitude + 1 ? ` ↑${s.commanded.toFixed(0)}` : '';
+    this.set(ap, `${Math.round(s.heading).toString().padStart(3, '0')}° ${s.altitude.toFixed(0)}m`);
+    this.set(tgt, s.kind === 'airplane' ? `${(s.speed * MS_TO_KT).toFixed(0)}kt${climb}` : `${s.speed.toFixed(0)}m/s${climb}`);
+  }
+
   setStats(text: string): void {
     this.set(this.el.stats, text);
   }

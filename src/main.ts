@@ -27,6 +27,7 @@ import { AirportView } from './render/AirportView.ts';
 import { KitTowersView } from './render/KitTowersView.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
+import { FlightAutopilot } from './sim/flightAutopilot.ts';
 import { initPhysics, Simulation } from './sim/Simulation.ts';
 import { WEATHER_PRESETS } from './sim/atmosphere.ts';
 import { TUNING } from './tuning.ts';
@@ -173,7 +174,9 @@ async function start() {
     controlsPanel.render();
     if (connected) player.rumble(0.4, 150);
   };
-  let pilot: ControlSource = player;
+  const autopilot = new FlightAutopilot(player);
+  autopilot.onDisengage = (thr) => { player.throttle = thr; };
+  let pilot: ControlSource = autopilot;
 
   let debugOn = false;
   document.getElementById('debug-close')!.addEventListener('click', () => {
@@ -259,6 +262,7 @@ async function start() {
 
   const flightLog = new FlightLog();
   const reset = () => {
+    autopilot.disengage();
     sim.resetToRunway();
     player.reset();
     rig.snap();
@@ -340,6 +344,7 @@ async function start() {
   };
   const setMode = (m: AppMode) => {
     if (captureBusy) return;
+    autopilot.disengage();
     mode = m;
     syncRenderControls();
     applyModeClass(m);
@@ -527,7 +532,8 @@ async function start() {
         if (!pm) throw new Error(`Unknown mode "${m}" (use "hangar" or "flight")`);
         if (pm !== mode) setMode(pm);
       },
-      setPilot: (p: ControlSource | null) => (pilot = p ?? player),
+      setPilot: (p: ControlSource | null) => (pilot = p ?? autopilot),
+      autopilot,
       reset,
     },
   });
@@ -566,6 +572,20 @@ async function start() {
     for (const a of player.poll()) {
       if (a === 'studio') setMode(mode === 'flight' ? 'hangar' : 'flight');
       else if (a === 'mute') toast(audio.toggleMute() ? '🔇 Sound off' : '🔊 Sound on');
+      else if (a === 'autopilot') {
+        if (autopilot.state.engaged) {
+          autopilot.disengage();
+          toast('Autopilot off');
+        } else {
+          const kind = vehicleKind(sim);
+          if (kind === 'lighter-than-air') toast('No autopilot for this craft');
+          else {
+            autopilot.engage(telemetry, kind);
+            const st = autopilot.state;
+            toast(`Autopilot on · HDG ${Math.round(st.heading).toString().padStart(3, '0')} · ${st.altitude.toFixed(0)} m${kind === 'airplane' ? ` · ${(st.speed * 1.944).toFixed(0)} kt` : ''} — stick and throttle adjust it`);
+          }
+        }
+      }
       else if (a === 'screenshot') void takePhoto();
       else if (a === 'nextVehicle') cycleCraft(1);
       else if (a === 'prevVehicle') cycleCraft(-1);
@@ -650,6 +670,7 @@ async function start() {
     debug.update(sim.debugForces, sim.craft, renderOffset);
 
     hud.update(telemetry, player.trim, telemetry.controls.brake > 0);
+    hud.setAutopilot(autopilot.state.engaged ? autopilot.state : null);
     fpsFrames++;
     fpsTime += dt;
     if (fpsTime > 0.5) {

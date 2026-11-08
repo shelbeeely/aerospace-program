@@ -29,7 +29,8 @@ export type Action =
   | 'mute'
   | 'screenshot'
   | 'record'
-  | 'mouseFlight';
+  | 'mouseFlight'
+  | 'autopilot';
 
 /** What a device may know about the game when it reads. */
 export interface InputContext {

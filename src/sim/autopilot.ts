@@ -21,6 +21,8 @@ const wrap180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
  */
 export class Autopilot implements ControlSource {
   targets: AutopilotTargets;
+  /** Largest vertical speed it will command (m/s). 6 = gentle (test cards); raise for steep climbs. */
+  maxClimb = 6;
   rotateSpeed = 30;
   private prevPitch = 0;
   private prevRoll = 0;
@@ -60,7 +62,7 @@ export class Autopilot implements ControlSource {
       targetPitch = 8; // initial climb-out
     } else {
       const altErr = this.targets.altitude - t.altitude;
-      const desiredVs = clamp(altErr * 0.25, -6, 6);
+      const desiredVs = clamp(altErr * 0.25, -this.maxClimb, this.maxClimb);
       const vsErr = desiredVs - t.verticalSpeed;
       this.vsIntegral = clamp(this.vsIntegral + vsErr * dt * 0.6, -8, 10);
       targetPitch = clamp(2 + this.vsIntegral + vsErr * 1.2, -10, 15);
