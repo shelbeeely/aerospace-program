@@ -46,6 +46,9 @@ export interface Debris {
  * in the browser and in Node (see scripts/headless.ts): the basis for AI pilots and
  * faster-than-real-time races.
  */
+const _fwd = new THREE.Vector3();
+const _right = new THREE.Vector3();
+
 export class Simulation {
   readonly dt = 1 / TUNING.physicsHz;
   readonly world: RAPIER.World;
@@ -390,7 +393,7 @@ export class Simulation {
   step(controls: ControlInputs): void {
     const t0 = performance.now();
     // A wreck flies no more: engines out, surfaces slack (brakes stay on so it settles).
-    this.controls = this.exploded ? { ...neutralControls(), brake: 1 } : sanitizeControls(controls);
+    this.controls = this.exploded ? { ...neutralControls(), brake: 1 } : this.tailStrikeGuard(sanitizeControls(controls));
     (this.ctx as { controls: ControlInputs }).controls = this.controls;
 
     this.prevPosition.copy(this.position);
@@ -621,6 +624,30 @@ export class Simulation {
   }
 
   /** Break a part off: debris body, failure record, structure version bump. */
+  /**
+   * Tail-strike protection (as on fly-by-wire airliners): while the main wheels are on the
+   * ground, nose-up elevator fades out as the pitch (plus 0.3 s of pitch rate) nears the
+   * craft's tail-strike angle less a 2° margin, and turns nose-down past it.
+   */
+  private lastWheelContact = -Infinity;
+  private tailStrikeGuard(c: ControlInputs): ControlInputs {
+    if (c.pitch <= 0 || !TUNING.tailStrikeProtection) return c;
+    const strike = this.craft.tailStrikeAngle();
+    if (strike === null) return c;
+    // Also just after lift-off: an over-rotated craft that settles back drags its tail.
+    if (this.craft.wheels.some((w) => w.grounded)) this.lastWheelContact = this.time;
+    else if (this.time - this.lastWheelContact > 10 || this.position.y - this.craft.restingHeight() > 3) return c;
+    const fwd = _fwd.set(0, 0, -1).applyQuaternion(this.rotation);
+    const pitch = (Math.asin(Math.max(-1, Math.min(1, fwd.y))) * 180) / Math.PI;
+    const right = _right.set(1, 0, 0).applyQuaternion(this.rotation);
+    const pitchRate = (this.angvel.dot(right) * 180) / Math.PI; // + = nose up
+    const limit = strike - 2;
+    const predicted = pitch + Math.max(0, pitchRate) * 0.3;
+    const room = (limit - predicted) / 3; // fade over the last 3°
+    if (room >= 1) return c;
+    return { ...c, pitch: room > 0 ? c.pitch * room : Math.max(-0.4, room * 0.4) };
+  }
+
   /** Speed lost in a crash that blows the craft up (m/s): ~30, more if reinforced. */
   private explodeSpeed(): number {
     const parts = this.craft.parts;

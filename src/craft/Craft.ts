@@ -450,6 +450,45 @@ export class Craft {
     return -lowest + 0.05;
   }
 
+  /**
+   * Nose-up pitch (deg) at which the airframe first touches the ground when the craft rotates
+   * about its main wheels (null: no wheels behind the CoM, e.g. skids or a tail-dragger).
+   * Every collider part's box corners behind the main wheels are checked.
+   */
+  tailStrikeAngle(): number | null {
+    if (this._tailStrike !== undefined) return this._tailStrike;
+    const com = this.massProps.com;
+    let zMain = -Infinity;
+    let yContact = 0;
+    for (const w of this.wheels) {
+      if (w.localPosition.z <= com.z) continue; // main wheels sit behind the CoM
+      if (w.localPosition.z > zMain) {
+        zMain = w.localPosition.z;
+        yContact = w.localPosition.y - w.def.restLength * 0.75 - w.def.radius; // ~static compression
+      }
+    }
+    if (!Number.isFinite(zMain)) return (this._tailStrike = null);
+    let best = Infinity;
+    const q = new THREE.Quaternion();
+    const v = new THREE.Vector3();
+    for (const p of this.parts) {
+      if (p.collider === false) continue;
+      const s = p.shape;
+      const e = s.type === 'box' ? [s.size[0] / 2, s.size[1] / 2, s.size[2] / 2]
+        : s.type === 'sphere' ? [s.radius, s.radius, s.radius]
+        : s.axis === 'x' ? [s.length / 2, s.radius, s.radius] : s.axis === 'y' ? [s.radius, s.length / 2, s.radius] : [s.radius, s.radius, s.length / 2];
+      partQuaternion(p, q);
+      for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+        v.set(sx * e[0], sy * e[1], sz * e[2]).applyQuaternion(q).add(new THREE.Vector3(...p.position));
+        const back = v.z - zMain;
+        if (back < 0.3) continue;
+        best = Math.min(best, (Math.atan2(v.y - yContact, back) * 180) / Math.PI);
+      }
+    }
+    return (this._tailStrike = Number.isFinite(best) ? best : null);
+  }
+  private _tailStrike: number | null | undefined;
+
   /** Teleport and zero all motion and module state. */
   reset(position: THREE.Vector3, rotation: THREE.Quaternion): void {
     this.body.setTranslation(position, true);

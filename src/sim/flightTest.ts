@@ -132,6 +132,9 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
   if (kind === 'airplane' && design.thrustToWeight < 0.25)
     issues.push(`Underpowered: thrust/weight ${design.thrustToWeight}. Aim for 0.35-0.6 for a prop plane.`);
   if (kind === 'airplane' && design.wheels === 0) issues.push('No wheels: the craft cannot take off from the runway.');
+  const strike = sim.craft.tailStrikeAngle();
+  if (kind === 'airplane' && strike !== null && strike < 10)
+    issues.push(`Tail-strike angle only ${r1(strike)}°: the tail drags if the nose rotates past that on take-off or landing (tail-strike protection then limits rotation). Aim for 12-15°: lengthen the main gear, move it aft, or raise the tail.`);
 
   const v = new THREE.Vector3();
   const step = async (pilot: (t: Telemetry) => Parameters<Simulation['step']>[0], seconds: number, until?: (t: Telemetry) => boolean) => {

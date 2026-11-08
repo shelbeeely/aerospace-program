@@ -131,6 +131,8 @@ export const TUNING = {
   gearSinkLimit: 5,
   /** The craft explodes when a hard contact changes its velocity by more than this within 0.15 s (m/s; ~110 km/h). */
   explodeSpeed: 30,
+  /** Limit nose-up elevator on the ground so rotating can't drag the tail (fly-by-wire style). */
+  tailStrikeProtection: true,
   /** Seconds after an explosion before a new plane appears on the runway (browser). */
   respawnDelay: 4,
   /** A part whose voxels drop below this fraction breaks off. */
