@@ -39,11 +39,11 @@ export class ExplosionView {
       // Brighter at the limb (a glowing shell rather than a flat disc).
       const rim: TslNode = pow(float(1).sub(abs(normalView.dot(positionViewDirection))), 1.5);
       const tint = uniform(new THREE.Color('#ff8a1f'));
-      fire.colorNode = (tint as TslNode).mul(float(0.6).add(rim.mul(3))).mul(fade);
+      fire.colorNode = (tint as TslNode).mul(float(0.08).add(rim.mul(1.1))).mul(fade);
       const coreMat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
-      coreMat.colorNode = uniform(new THREE.Color('#fff2d0')).mul(6).mul(fade).mul(fade);
+      coreMat.colorNode = uniform(new THREE.Color('#fff2d0')).mul(2.5).mul(fade).mul(fade);
       const ringMat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
-      ringMat.colorNode = uniform(new THREE.Color('#5ff6ff')).mul(4).mul(ringFade);
+      ringMat.colorNode = uniform(new THREE.Color('#5ff6ff')).mul(2.5).mul(ringFade);
       const fireball = new THREE.Mesh(sphere, fire);
       const core = new THREE.Mesh(sphere, coreMat);
       const ring = new THREE.Mesh(ringGeo, ringMat);
@@ -106,7 +106,7 @@ export class ExplosionView {
       s.ring.scale.setScalar(2 + ringAge * 120);
       s.ringFade.value = Math.max(0, 1 - ringAge / 1.2);
       s.ring.visible = age < 1.2;
-      s.light.intensity = 4e5 * Math.max(0, 1 - age / 0.8) ** 2;
+      s.light.intensity = 6e4 * Math.max(0, 1 - age / 0.8) ** 2;
     }
   }
 }
