@@ -16,11 +16,11 @@ Separate Hangar editor and Flight modes; neon synthwave wireframe visuals; exact
 | 4 | Contact force events, per-part HP/energy damage, wheel sink exemption, soft CCD | Merged before resumption |
 | 5 | Grid block buildings, 6-neighbour support BFS, compound unsupported chunks, capped debris, seeded town x < -700 | Merged; BFS/collision/cap tests and WebGPU/WebGL2 validated |
 | 6 | Battery sag/SoC/heat/cutoff, motor Kv/Kt, generators, avionics, solved bus, FC brownout, HUD | Merged; power conservation/damage fixes, 26 electrical checks passed |
-| 7 | Seeded events; Rankine tornado, Holland hurricane/surge, earthquake ground acceleration, controls and neon visuals | Pending |
-| 8 | Seeded lightning/strike geometry, electrical spike hook, fuel ignition, heat/spread/burnout, smoke wind and thunder | Pending |
-| 9 | Coast x > 2500; shared CPU/TSL Gerstner waves/surge; water drag/buoyancy/damage | Pending |
-| 10 | Analytic box/sphere/cylinder/plane ray tracer; RGBA32F packed shapes <=256; shadows, 1–2 reflections, Fresnel and accumulation | Pending |
-| 11 | Raster/RT selector, desktop hangar default, flight headroom, raster fallback, converged P capture | Pending |
+| 7 | Seeded events; Rankine tornado, Holland hurricane/surge, earthquake ground acceleration, controls and neon visuals | Merged; 22 deterministic disaster checks and both rendering backends passed |
+| 8 | Seeded lightning/strike geometry, electrical spike hook, fuel ignition, heat/spread/burnout, smoke wind and thunder | Merged; 22 hazard and cross-system checks passed |
+| 9 | Coast x > 2500; shared CPU/TSL Gerstner waves/surge; water drag/buoyancy/damage | Merged; 15 ocean checks including spatial surge and quake integration passed |
+| 10 | Analytic box/sphere/cylinder/plane ray tracer; RGBA32F packed shapes <=256; shadows, 1–2 reflections, Fresnel and accumulation | Merged; CPU intersections/packing and targeted WebGPU/WebGL2 readback passed |
+| 11 | Raster/RT selector, desktop hangar default, flight headroom, raster fallback, converged P capture | Implemented on batch/raytrace-mode; final validation underway |
 
 ## Execution and preservation
 
@@ -38,4 +38,6 @@ The old plan said all workers were lost at c84027d. Remote inspection during thi
 
 ## Current checkpoint
 
-Wave 2 merged and pushed at c524eb6. All baseline suites plus electric/buildings/build pass. Units 7, 8, 9 running in isolated worktrees; unit 7 milestone pushed. Ray-trace reference intersection and packing checks committed/pushed on batch/raytrace-core; GPU work in progress. Optional live OpenRouter catalog access is blocked in this environment; browser visual checks use a catalog fixture and do not claim AI generation validation.
+Units 1–10 merged and pushed through 86cf3a4. Unit 11 implemented/pushed separately and in final validation. Independent review fixed generator power conservation/controller brownouts, last-source detach behavior, GPU box parallel-boundary intersections, event-reset rendering, and cross-system shoreline origin preservation. Spatial TSL surge matches headless hurricane physics (tested error < 1e-12 m). Hurricane convection drives lightning; smoke uses the shared atmosphere contributor path. No new npm dependencies.
+
+Optional live OpenRouter catalog access is blocked in this environment. Browser visual checks use a catalog fixture and do not claim AI generation validation. All baseline 10 vehicle cards continue scoring 100/100. Final combined-branch regression and rendering checks follow the remaining merge.
