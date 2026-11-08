@@ -107,6 +107,27 @@ export const TUNING = {
   /** Loads are low-pass filtered over this time (s) so a single noisy step can't snap a wing. */
   loadFilterTime: 0.05,
 
+  // ---------------------------------------------------------------- impact damage
+  /** Default part hit points: this many J per kg of part mass... */
+  hpPerKg: 500,
+  /** ...plus this many J per m³ of part volume. */
+  hpPerCubicMetre: 2000,
+  /**
+   * Impacts are free up to the impulse of the whole craft stopping at this speed (m/s) on one
+   * part: a 0.5 m drop (3.1 m/s) or a firm landing does nothing.
+   */
+  impactSafeSpeed: 4,
+  /** Wheels, gear legs and skids take no impact damage up to the impulse of the craft arriving at this sink rate (m/s). */
+  gearSinkLimit: 5,
+  /** Contact impulses on a collider pair are summed over this window (s) into one impact. */
+  impactWindow: 0.05,
+  /** Contact force events start at this many times the craft's weight (per collider pair). */
+  impactForceThreshold: 3,
+  /** Above this speed (m/s) the craft body predicts contacts a step ahead (soft CCD). */
+  softCcdMinSpeed: 30,
+  /** Debris faster than this (m/s) gets continuous collision detection. */
+  debrisCcdSpeed: 30,
+
   // ---------------------------------------------------------------- rigid body
   /** Tiny angular damping so a craft at rest settles. Real damping comes from aero. */
   angularDamping: 0.05,

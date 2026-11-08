@@ -34,6 +34,7 @@ export function validateCraft(input: unknown): string[] {
       errors.push(`${at}: rotationDeg must be [x,y,z] degrees`);
     if (typeof p.color !== 'string') errors.push(`${at}: color must be a CSS colour string`);
     if (p.strength !== undefined && !isNum(p.strength, 0, 1e9)) errors.push(`${at}: strength must be 0..1e9 N (0 = unbreakable)`);
+    if (p.hp !== undefined && !isNum(p.hp, 0, 1e12)) errors.push(`${at}: hp must be 0..1e12 J (0 = indestructible)`);
     errors.push(...validateShape(p.shape, at));
     (p.modules ?? []).forEach((m, j) => errors.push(...validateModule(m, `${at}.modules[${j}]`)));
   });
