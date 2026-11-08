@@ -8,7 +8,8 @@ import { TUNING } from '../tuning.ts';
 import { Atmosphere, calmWeather, densityAltitude, type CloudSample, type Precipitation, type WeatherSettings } from './atmosphere.ts';
 import { DamageModel, type ContactForceHandler, type ContactForceInfo } from './damage.ts';
 import { neutralControls, sanitizeControls, type ControlInputs } from './controls.ts';
-import { LAYOUT } from './layout.ts';
+import { Ocean } from './ocean.ts';
+import { COAST, LAYOUT } from './layout.ts';
 import { Town } from '../world/Town.ts';
 import type { Telemetry } from './telemetry.ts';
 
@@ -45,6 +46,7 @@ export class Simulation {
   readonly dt = 1 / TUNING.physicsHz;
   readonly world: RAPIER.World;
   readonly atmosphere: Atmosphere;
+  readonly ocean = new Ocean();
   craft: Craft;
   time = 0;
   steps = 0;
@@ -109,15 +111,20 @@ export class Simulation {
     this.world = new RAPIER.World({ x: 0, y: -TUNING.gravity, z: 0 });
     this.world.timestep = this.dt;
     this.atmosphere = new Atmosphere(weather);
+    this.ocean.surge = (x, z) => this.atmosphere.events.surgeHeight(x, z);
 
     const half = LAYOUT.groundSize / 2;
-    const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -5, 0));
+    const landWidth = COAST.x + half;
+    const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation((COAST.x - half) / 2, -5, 0));
     this.groundBody = ground;
     this.groundOrigin.copy(ground.translation());
     this.groundCollider = this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(half, 5, half).setFriction(0.8).setRestitution(0.1),
+      RAPIER.ColliderDesc.cuboid(landWidth / 2, 5, half).setFriction(0.8).setRestitution(0.1),
       ground,
     );
+    // Deep seabed replaces the old solid ground east of the coast.
+    const seabed = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation((COAST.x + half) / 2, -COAST.depth - 5, 0));
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid((half - COAST.x) / 2, 5, half), seabed);
     this.town = new Town(this.world);
 
     const { position, rotation } = this.spawnPose(null);
@@ -149,7 +156,7 @@ export class Simulation {
       cloud: (p) => this.atmosphere.cloudAt(p, 0, this.cloudSample),
       groundWetness: 0,
       hasFuelSystem: false,
-      groundHeight: () => self.groundMotion.y,
+      groundHeight: (x) => x > COAST.x + self.groundMotion.x ? -COAST.depth : self.groundMotion.y,
       pointVelocity(p, out) {
         _tmp.copy(p).sub(self.com);
         return out.crossVectors(self.angvel, _tmp).add(self.linvel);
@@ -335,6 +342,15 @@ export class Simulation {
     this.loadsThisStep.clear();
     this.craft.stepElectrical(this.dt, this.atmosphere.air(this.com.y).temperature - 273.15);
     for (const m of this.craft.modules) m.step(this.ctx);
+    this.ocean.apply(this.craft, this.time, this.dt, ({ partId, force }) => {
+      for (let i = 0; i < body.numColliders(); i++) {
+        const collider = body.collider(i);
+        if (this.craft.partIdForCollider(collider.handle) !== partId) continue;
+        this.damage.onContact({ collider1: collider.handle, collider2: -2, totalForceMagnitude: force,
+          maxForceMagnitude: force, dt: this.dt, time: this.time });
+        break;
+      }
+    });
     this.craft.updateSoftCcd(this.dt);
 
     this.world.step(this.events);
