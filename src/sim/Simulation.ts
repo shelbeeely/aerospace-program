@@ -88,6 +88,7 @@ export class Simulation {
   private readonly groundCollider: RAPIER.Collider;
   private readonly groundBody: RAPIER.RigidBody;
   private readonly groundMotion = new THREE.Vector3();
+  private readonly groundOrigin = new THREE.Vector3();
   private groundMoving = false;
   private readonly linvel = new THREE.Vector3();
   private readonly angvel = new THREE.Vector3();
@@ -112,6 +113,7 @@ export class Simulation {
     const half = LAYOUT.groundSize / 2;
     const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -5, 0));
     this.groundBody = ground;
+    this.groundOrigin.copy(ground.translation());
     this.groundCollider = this.world.createCollider(
       RAPIER.ColliderDesc.cuboid(half, 5, half).setFriction(0.8).setRestitution(0.1),
       ground,
@@ -279,7 +281,7 @@ export class Simulation {
     this.atmosphere.restart();
     this.groundMotion.set(0, 0, 0);
     this.groundBody.setBodyType(RAPIER.RigidBodyType.Fixed, true);
-    this.groundBody.setTranslation({ x: 0, y: -5, z: 0 }, true);
+    this.groundBody.setTranslation(this.groundOrigin, true);
     this.groundMoving = false;
     this.settleGroundWater();
     this.controls = neutralControls();
@@ -365,11 +367,15 @@ export class Simulation {
     if (moving) {
       if (!this.groundMoving) this.groundBody.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
       this.atmosphere.events.groundDisplacement(this.groundMotion);
-      this.groundBody.setNextKinematicTranslation({ x: this.groundMotion.x, y: -5 + this.groundMotion.y, z: this.groundMotion.z });
+      this.groundBody.setNextKinematicTranslation({
+        x: this.groundOrigin.x + this.groundMotion.x,
+        y: this.groundOrigin.y + this.groundMotion.y,
+        z: this.groundOrigin.z + this.groundMotion.z,
+      });
     } else if (this.groundMoving) {
       this.groundMotion.set(0, 0, 0);
       this.groundBody.setBodyType(RAPIER.RigidBodyType.Fixed, true);
-      this.groundBody.setTranslation({ x: 0, y: -5, z: 0 }, true);
+      this.groundBody.setTranslation(this.groundOrigin, true);
     }
     this.groundMoving = moving;
   }
