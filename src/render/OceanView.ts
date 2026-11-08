@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { float, positionLocal, sin, cos, uniform, vec3 } from 'three/tsl';
+import { cameraPosition, distance, float, positionLocal, positionWorld, sin, cos, smoothstep, uniform, vec3 } from 'three/tsl';
 import { COAST, LAYOUT } from '../sim/layout.ts';
 import { OCEAN_STEEPNESS, OCEAN_WAVES, type Ocean } from '../sim/ocean.ts';
 import { NEON, glow } from './neon.ts';
@@ -28,7 +28,9 @@ export class OceanView {
     }
     const fill = new THREE.MeshBasicNodeMaterial({ color: '#020919', side: THREE.DoubleSide });
     fill.positionNode = vec3(x, y, z);
-    const wire = new THREE.MeshBasicNodeMaterial({ color: glow(NEON.cyan, 1.6), wireframe: true, transparent: true, opacity: 0.75 });
+    const wire = new THREE.MeshBasicNodeMaterial({ color: glow(NEON.cyan, 1.6), wireframe: true, transparent: true, opacity: 0.5 });
+    // A dense horizon of unattenuated HDR triangles otherwise blooms into a white wall.
+    wire.colorNode = uniform(glow(NEON.cyan, 1.2)).mul(float(1).sub(smoothstep(250, 1800, distance(cameraPosition, positionWorld))));
     wire.positionNode = vec3(x, y.add(0.01), z);
     const mesh = new THREE.Mesh(geometry, fill);
     const lines = new THREE.Mesh(geometry, wire);
