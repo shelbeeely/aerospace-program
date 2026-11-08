@@ -77,12 +77,18 @@ export class RayTracer {
       }).ElseIf(header.x.equal(4), () => {
         If(abs(d.y).greaterThan(1e-6), () => accept(o.y.negate().div(d.y), vec3(0, d.y.lessThan(0).select(1,-1), 0)));
       }).ElseIf(header.x.equal(1), () => {
-        // Clamped inverse avoids NaNs for exactly parallel rays, including rays on a face.
+        // Parallel rays inside a slab impose no interval limit, even exactly on its face.
+        // Merely clamping the reciprocal makes a face-parallel ray exit at t=0.
         const safe = d.lessThan(0).select(vec3(-1), vec3(1)).mul(max(abs(d),vec3(1e-8)));
         const a = dimensions.negate().sub(o).div(safe), b = dimensions.sub(o).div(safe);
-        const lo = min(a,b), hi = max(a,b);
+        const parallel = abs(d).lessThan(vec3(1e-8));
+        const outside = abs(d.x).lessThan(1e-8).and(abs(o.x).greaterThan(dimensions.x))
+          .or(abs(d.y).lessThan(1e-8).and(abs(o.y).greaterThan(dimensions.y)))
+          .or(abs(d.z).lessThan(1e-8).and(abs(o.z).greaterThan(dimensions.z)));
+        const lo = parallel.select(vec3(-1e20), min(a,b));
+        const hi = parallel.select(vec3(1e20), max(a,b));
         const near = max(max(lo.x,lo.y),lo.z), far = min(min(hi.x,hi.y),hi.z);
-        If(far.greaterThanEqual(near), () => {
+        If(far.greaterThanEqual(near).and(outside.not()), () => {
           const distance = near.greaterThan(0.001).select(near,far);
           const p = o.add(d.mul(distance)).div(max(dimensions,vec3(1e-6)));
           const axis = abs(p);
