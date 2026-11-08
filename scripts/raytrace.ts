@@ -14,6 +14,10 @@ for (const kind of ['box','sphere','cylinder'] as const) {
 }
 const cylinder=shape('cylinder');
 check(Math.abs(intersectShape(new Vector3(0,3,0),new Vector3(0,-1,0),cylinder)!.distance-2)<1e-6,'cylinder cap');
+const faceBox=shape('box');
+check(Math.abs(intersectShape(new Vector3(1,0,3),new Vector3(0,0,-1),faceBox)!.distance-2)<1e-6,'box face-parallel boundary hit');
+check(!intersectShape(new Vector3(1.001,0,3),new Vector3(0,0,-1),faceBox),'box parallel outside slab miss');
+check(Math.abs(intersectShape(new Vector3(1,1,3),new Vector3(0,0,-1),faceBox)!.distance-2)<1e-6,'box edge-parallel boundary hit');
 const box=shape('box'); box.size.set(2,1,0.5); box.rotation.setFromAxisAngle(new Vector3(0,1,0),Math.PI/2);
 check(Math.abs(intersectShape(new Vector3(0,0,3),new Vector3(0,0,-1),box)!.distance-1)<1e-6,'oriented box');
 const plane=shape('plane');
