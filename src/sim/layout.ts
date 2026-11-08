@@ -33,3 +33,6 @@ export const TOWN = {
   /** Neon edge colours handed out to buildings. */
   colors: ['#19f0ff', '#ff2bd6', '#8a5cff', '#ff8a1f', '#39ff9c'],
 } as const;
+
+/** Coast is east of all runway and town paths; ocean floor lies below the waves. */
+export const COAST = { x: 2500, seaLevel: -1.8, depth: 80 } as const;
