@@ -193,7 +193,7 @@ export class BlockBuilding {
       .setRestitution(0.05)
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
       // Rapier reports a pair when either collider's threshold is crossed; the town decides.
-      .setContactForceEventThreshold(0.25 * TUNING.blockBreakImpulse * TUNING.physicsHz);
+      .setContactForceEventThreshold(0.1 * TUNING.blockBreakImpulse * TUNING.physicsHz);
     b.collider = this.world.createCollider(desc, this.body);
     this.registry.add(b.collider, b);
   }
