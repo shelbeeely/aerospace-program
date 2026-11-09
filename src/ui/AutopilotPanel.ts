@@ -126,7 +126,8 @@ export class AutopilotPanel {
     this.root.append(close, el('h3', '', 'Flight computer'), this.modeBar, this.hint, fields, buttons, this.status, this.guidance);
     // Enter in a field engages.
     this.root.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') this.engage();
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (e.key === 'Enter' && (tag === 'INPUT' || tag === 'SELECT')) this.engage();
       if (e.key === 'Escape') this.hide();
     });
     document.body.append(this.root);

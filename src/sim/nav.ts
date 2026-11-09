@@ -96,7 +96,8 @@ export function obstacleAhead(x: number, z: number, heading: number, reach: numb
   for (let d = 0; d <= reach; d += stepM) {
     const px = x + fx * d;
     const pz = z + fz * d;
-    top = Math.max(top, obstacleTop(px, pz), obstacleTop(px - fz * halfWidth, pz + fx * halfWidth), obstacleTop(px + fz * halfWidth, pz - fx * halfWidth));
+    const w = wrapCoord;
+    top = Math.max(top, obstacleTop(w(px), w(pz)), obstacleTop(w(px - fz * halfWidth), w(pz + fx * halfWidth)), obstacleTop(w(px + fz * halfWidth), w(pz - fx * halfWidth)));
   }
   return top;
 }

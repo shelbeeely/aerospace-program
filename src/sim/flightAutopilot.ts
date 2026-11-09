@@ -1,7 +1,7 @@
 import { obstacleTop } from '../world/structures.ts';
 import { Autopilot, HoverPilot, type PlaneCommand } from './autopilot.ts';
 import type { ControlInputs, ControlSource } from './controls.ts';
-import type { LandingSite } from './layout.ts';
+import { wrapCoord, type LandingSite } from './layout.ts';
 import {
   approachFrame,
   approachPoint,
@@ -17,6 +17,7 @@ import {
   glideslopeHeight,
   localizerTrack,
   makeApproach,
+  runwayHeadings,
   nearestPad,
   nearestRunway,
   obstacleAhead,
@@ -144,6 +145,7 @@ export class FlightAutopilot implements ControlSource {
   private approach: Approach | null = null;
   private ifHeight = 150;
   private joinFar = false;
+  private joinSide = 1;
   private touchdownAt = -1;
   private flarePitch = 0;
   /** On final: lined up with the runway (full flaps, approach speed). */
@@ -207,7 +209,7 @@ export class FlightAutopilot implements ControlSource {
     this.dest = null;
     this.approach = null;
     this.touchdownAt = -1;
-    this.lastHumanThrottle = t.controls.throttle;
+    if (!wasEngaged) this.lastHumanThrottle = t.controls.throttle;
     this.startMode(t);
   }
 
@@ -272,7 +274,10 @@ export class FlightAutopilot implements ControlSource {
     let site: LandingSite | null = null;
     if (s.destination) {
       const d = findDestination(s.destination);
-      if (d?.site?.kind === 'runway') site = d.site;
+      if (d?.site?.kind === 'runway') {
+        if (d.site.length >= landingDistanceNeeded(vapp)) site = d.site;
+        else s.notice = `${d.site.name} is too short (${d.site.length} m, needs ${r0(landingDistanceNeeded(vapp))} m): nearest long enough instead`;
+      }
     }
     site ??= nearestRunway(t.position[0], t.position[2], vapp);
     if (!site) {
@@ -281,10 +286,14 @@ export class FlightAutopilot implements ControlSource {
       s.notice = s.status = `Land: no runway long enough (needs ${r0(landingDistanceNeeded(vapp))} m)`;
       return;
     }
-    if (t.onGround && t.groundSpeed < 1) {
-      s.phase = 'landed';
+    if (t.onGround) {
+      // Rolling (or stopped) on the ground: hold the centreline of the runway we are on and stop.
+      const [h0, h1] = runwayHeadings(site);
+      const along = Math.abs(wrap180(t.heading - h0)) <= 90 ? h0 : h1;
       this.dest = { id: site.id, name: site.name, kind: 'runway', x: site.x, z: site.z, y: site.y, site };
-      this.approach = makeApproach(site, t.heading);
+      this.approach = makeApproach(site, along);
+      this.touchdownAt = t.time - 2;
+      s.phase = t.groundSpeed < 1 ? 'landed' : 'rollout';
       return;
     }
     this.dest = { id: site.id, name: site.name, kind: 'runway', x: site.x, z: site.z, y: site.y, site };
@@ -375,15 +384,18 @@ export class FlightAutopilot implements ControlSource {
     if (s.phase === 'takeoff' && !t.onGround && t.altitude > 30) s.phase = 'climb';
     if (s.mode === 'goto' && s.phase === 'climb') s.phase = 'cruise';
     if (s.phase === 'climb' && s.mode === 'hold') s.phase = 'hold';
+    const terrain = terrainHeight(t.position[0], t.position[2]);
     const top = this.clearance(t, s.heading, Math.max(300, t.groundSpeed * 12), 30);
-    s.commanded = Math.max(s.altitude, top > 0 ? top + 60 : 0);
+    const need = top > 0 ? top + 60 - terrain : 0;
+    // With a V/S hold the selected altitude is stale: compare the obstacle with where we are.
+    s.commanded = Math.max(s.vs !== null ? Math.min(s.altitude, t.altitude) : s.altitude, need);
     if (s.mode === 'takeoff' && s.phase === 'climb' && Math.abs(t.altitude - s.altitude) < 15) {
       s.mode = 'hold';
       s.phase = 'hold';
     }
     s.guidance = null;
     let out: ControlInputs;
-    if (s.vs !== null && !t.onGround && s.commanded <= s.altitude + 1) {
+    if (s.vs !== null && !t.onGround && need < t.altitude - 5) {
       out = this.plane.fly(dt, t, { vs: s.vs, track: s.heading, speed: s.speed, pitchMin: -15, pitchMax: 18 });
       s.status = `Hold · HDG ${hdg3(s.heading)} · V/S ${s.vs >= 0 ? '+' : ''}${s.vs.toFixed(1)} m/s · ${(s.speed * 1.944).toFixed(0)} kt`;
     } else {
@@ -422,7 +434,7 @@ export class FlightAutopilot implements ControlSource {
       return this.flyOrbit(dt, t, human);
     }
     const top = this.clearance(t, brg, Math.max(800, t.groundSpeed * 25), 60);
-    s.commanded = Math.max(s.altitude, top + 70);
+    s.commanded = Math.max(s.altitude + terrainHeight(t.position[0], t.position[2]), top + 70);
     const urgent = s.commanded > s.altitude + 1;
     s.heading = brg;
     const vs = this.vsToward(t, s.commanded, this.climbLimit(t, urgent));
@@ -446,7 +458,7 @@ export class FlightAutopilot implements ControlSource {
     const onCircle = Math.abs(radialErr) < R * 0.6;
     const ff = onCircle ? Math.atan((gs * gs) / (9.81 * R)) * (180 / Math.PI) : 0;
     const roll = clamp(ff + wrap180(desiredTrack - track) * 1.2, -35, 35);
-    s.commanded = Math.max(s.altitude, this.orbitFloor);
+    s.commanded = Math.max(s.altitude + terrainHeight(t.position[0], t.position[2]), this.orbitFloor);
     const vs = this.vsToward(t, s.commanded, this.climbLimit(t, s.commanded > s.altitude + 1));
     s.guidance = this.dest ? { distance: dist, glideslopeDev: null, localizerDev: null, targetSpeed: s.speed, eta: 0, siteName: this.dest.name } : null;
     s.status = `Orbit · ${this.dest ? this.dest.name : 'here'} · r ${r0(R)} m · ${r0(s.commanded)} m`;
@@ -471,19 +483,24 @@ export class FlightAutopilot implements ControlSource {
     let yawOverride: number | null = null;
 
     if (s.phase === 'join') {
+      // Turn radius at the join speed: everything about the join scales with it.
       const R = turnRadius(Math.max(gs, vapp * 1.3), 25);
-      const far = approachPoint(ap, -IF_DISTANCE - 2 * R - 600);
       const fix = approachPoint(ap, -IF_DISTANCE);
       const brgFix = bearing(t.position[0], t.position[2], fix[0], fix[1]);
       const dFix = distance(t.position[0], t.position[2], fix[0], fix[1]);
-      const fixAligned = Math.abs(wrap180(brgFix - ap.heading)) < 70;
-      if (!fixAligned && !this.joinFar && dFix > R) this.joinFar = true;
-      if (this.joinFar && fixAligned && along < -IF_DISTANCE) this.joinFar = false;
-      const wp = this.joinFar ? far : fix;
+      // Direct to the initial fix only when that arrives roughly lined up; otherwise fly an
+      // outbound leg offset 2R to our side of the centreline, whose 180° turn back ends on it.
+      const fixAligned = Math.abs(wrap180(brgFix - ap.heading)) < 45;
+      if (!fixAligned && !this.joinFar && dFix > 0.5 * R) {
+        this.joinFar = true;
+        this.joinSide = cross >= 0 ? 1 : -1;
+      }
+      if (this.joinFar && fixAligned && along < -(IF_DISTANCE + R)) this.joinFar = false;
+      const wp = this.joinFar ? approachPoint(ap, -(IF_DISTANCE + R + 500), this.joinSide * 2 * R) : fix;
       const dWp = distance(t.position[0], t.position[2], wp[0], wp[1]);
-      const headingOk = Math.abs(wrap180(t.heading - ap.heading)) < 100;
-      const captured = along < -600 && along > -(IF_DISTANCE + 4 * R + 4000) && Math.abs(cross) < Math.max(1.2 * R, 900) && headingOk && (!this.joinFar || along < -IF_DISTANCE);
-      if (captured || dWp < Math.max(0.8 * R, 400)) {
+      const headingOk = Math.abs(wrap180(t.heading - ap.heading)) < 60;
+      const captured = !this.joinFar && along < -0.8 * IF_DISTANCE && along > -(IF_DISTANCE + 3 * R + 4000) && Math.abs(cross) < Math.max(R, 800) && headingOk;
+      if (captured || dWp < Math.max(0.6 * R, 400)) {
         s.phase = 'final';
         this.established = false;
         this.joinFar = false;
@@ -713,7 +730,7 @@ export class FlightAutopilot implements ControlSource {
     let top = 0;
     for (let i = 0; i < 48; i++) {
       const a = (i / 48) * Math.PI * 2;
-      for (const r of [R - 120, R, R + 120]) top = Math.max(top, obstacleTop(cx + Math.sin(a) * r, cz - Math.cos(a) * r));
+      for (const r of [R - 120, R, R + 120]) top = Math.max(top, obstacleTop(wrapCoord(cx + Math.sin(a) * r), wrapCoord(cz - Math.cos(a) * r)));
     }
     return top > 0 ? top + 70 : 0;
   }
