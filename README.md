@@ -437,8 +437,10 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
   upright, leaning into turns. **L** cycles its trail: **jetwall** (solid light: ride into
   one and you derez) → **light ribbon** (fades ~90 m behind, solid only while lit, so it never
   permanently blocks open ground) → **off**. When a cycle derezzes or respawns, its trails
-  derez with it. Aircraft draw thin wingtip **contrails** (energy paths, visual only) above
-  35 m/s. Check: `npm run trails`.
+  derez with it. **Every vehicle has light ribbons**: craft without their own trail get them
+  automatically, from the outermost points on each side for aircraft (wingtips, rotor arms, a
+  blimp's flanks; light only, dissolving a speed-scaled distance behind) or a rear jetwall for
+  ground vehicles. Check: `npm run trails`.
 - **Reinforcement (hangar → craft card → Reinforce):** levels 0-3 per part, each +15% part
   mass, +60% strength and +80% impact HP. Saved with the craft; designers can set it too.
 - **Airport:** taxiway, apron, terminal with jet bridges and parked airliners, control tower and

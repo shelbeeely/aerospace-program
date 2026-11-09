@@ -17,7 +17,10 @@ import { terrainHeight } from './terrain.ts';
  * - **Off**: the rider deactivates the trail; re-enabling starts a new one.
  * - **Derez**: when the vehicle is destroyed or respawns, every trail it laid derezzes with it
  *   (colliders go at once, the light flickers out over DEREZ_TIME).
- * - **Contrails** (aircraft): visual only, from the wingtips above CONTRAIL_SPEED, fading with age.
+ * - **Every vehicle has one.** Craft without trail modules get light ribbons automatically: from
+ *   their outermost points on each side (aircraft: wingtips, rotor arms, a blimp's flanks; kind
+ *   'contrail', light only, no collider) or a jetwall from the rear (ground vehicles). Airborne
+ *   ribbons show above RIBBON_MIN_SPEED and dissipate a speed-scaled distance behind.
  */
 export type TrailMode = 'wall' | 'ribbon' | 'off';
 
@@ -47,14 +50,17 @@ export interface Trail {
 }
 
 const WALL_SEGMENT = 1.5;
-const CONTRAIL_SEGMENT = 4;
+const CONTRAIL_SEGMENT = 3;
 const WALL_THICKNESS = 0.18;
 /** A segment becomes solid once the cycle is this far past its end (so it never hits its own wall). */
 const SOLID_DELAY = 4;
 export const RIBBON_LENGTH = 90;
 export const DEREZ_TIME = 0.9;
 export const CONTRAIL_LIFE = 5;
-const CONTRAIL_SPEED = 35;
+/** Airborne light ribbons appear above this speed (m/s). */
+const RIBBON_MIN_SPEED = 6;
+/** How far behind an airborne ribbon reaches: RIBBON_LENGTH, or this many seconds of travel. */
+export const AIR_RIBBON_SECONDS = 2.5;
 
 const _p = new THREE.Vector3();
 
@@ -76,22 +82,32 @@ export class TrailSystem {
     return this.colliderOwner.has(handle);
   }
 
-  /** Fresh trails for a craft (its trail modules, or wingtip contrails for an airplane). */
+  /** Fresh trails for a craft: its trail modules, or automatic light ribbons (every vehicle has one). */
   start(craft: Craft, airplane: boolean): void {
     const emitters: Array<{ def: TrailDef; at: THREE.Vector3 }> = [];
     for (const m of craft.modules) if (m instanceof TrailEmitter) emitters.push({ def: m.def, at: m.localPosition.clone() });
-    if (!emitters.length && airplane) {
-      // Wingtip energy paths: the outermost collider parts on each side.
+    const ground = craft.wheels.some((w) => (w.def.drive ?? 0) > 0);
+    if (!emitters.length && ground) {
+      // A ground vehicle without its own trail: a jetwall from the rear of the craft.
+      let rear = -Infinity;
+      for (const p of craft.parts) rear = Math.max(rear, p.position[2]);
+      emitters.push({ def: { type: 'trail', kind: 'wall', height: 1.6, color: '#00eaff' }, at: new THREE.Vector3(0, 0.3, rear) });
+    } else if (!emitters.length) {
+      // Aircraft: ribbons from the outermost points on each side (wingtips, rotor arms, flanks).
       let left: THREE.Vector3 | null = null, right: THREE.Vector3 | null = null;
+      const lifting = craft.parts.some((p) => (p.modules ?? []).some((m) => m.type === 'aero'));
       for (const p of craft.parts) {
-        if (p.collider === false || !(p.modules ?? []).some((m) => m.type === 'aero')) continue;
+        if (p.collider === false) continue;
+        if (airplane && lifting && !(p.modules ?? []).some((m) => m.type === 'aero')) continue;
         const half = p.shape.type === 'box' ? p.shape.size[0] / 2 : p.shape.type === 'sphere' ? p.shape.radius : p.shape.axis === 'x' ? p.shape.length / 2 : p.shape.radius;
         const lx = p.position[0] - half, rx = p.position[0] + half;
         if (!left || lx < left.x) left = new THREE.Vector3(lx, p.position[1], p.position[2]);
         if (!right || rx > right.x) right = new THREE.Vector3(rx, p.position[1], p.position[2]);
       }
-      if (left && right && right.x - left.x > 2) {
-        for (const at of [left, right]) emitters.push({ def: { type: 'trail', kind: 'contrail', height: 0.35, color: '#e8f6ff' }, at });
+      if (left && right && right.x - left.x > 0.4) {
+        const span = right.x - left.x;
+        const height = Math.min(0.9, Math.max(0.25, span * 0.06));
+        for (const at of [left, right]) emitters.push({ def: { type: 'trail', kind: 'contrail', height, color: '#38c8ff' }, at });
       }
     }
     for (const e of emitters) this.trails.push({ id: this.nextId++, kind: e.def.kind, color: e.def.color, height: e.def.height, points: [], active: true, derezAt: null, emitter: e.at });
@@ -111,19 +127,19 @@ export class TrailSystem {
 
   /** Rider control: jetwall → light ribbon → off → jetwall. */
   cycleMode(craft: Craft, airplane: boolean, time: number): TrailMode {
-    this.mode = this.mode === 'wall' ? 'ribbon' : this.mode === 'ribbon' ? 'off' : 'wall';
+    const hasWall = this.trails.some((t) => t.kind === 'wall');
+    // Aircraft ribbons are light only: their choice is ribbon or off.
+    this.mode = this.mode === 'wall' ? 'ribbon' : this.mode === 'ribbon' ? 'off' : hasWall || !this.trails.length ? 'wall' : 'ribbon';
     if (this.mode === 'off') {
-      // Deactivated: the rider's wall derezzes behind them.
-      for (const t of this.trails) if (t.kind === 'wall' && t.derezAt === null) {
+      // Deactivated: the trail derezzes behind the vehicle.
+      for (const t of this.trails) if (t.derezAt === null) {
         t.active = false;
         t.derezAt = time;
         for (const p of t.points) this.dropCollider(p);
       }
-    } else if (!this.trails.some((t) => t.kind === 'wall' && t.active)) {
-      // Back on: wall emitters start new trails (contrails keep going).
-      const before = this.trails.length;
+    } else if (!this.trails.some((t) => t.active)) {
+      // Back on: the emitters start new trails.
       this.start(craft, airplane);
-      for (let i = this.trails.length - 1; i >= before; i--) if (this.trails[i].kind !== 'wall') this.trails.splice(i, 1);
     }
     this.version++;
     return this.mode;
@@ -137,8 +153,13 @@ export class TrailSystem {
         if (time - t.derezAt > DEREZ_TIME) { this.trails.splice(i, 1); changed = true; }
         continue;
       }
-      if (t.kind === 'contrail') {
-        while (t.points.length && time - t.points[0].time > CONTRAIL_LIFE) t.points.shift();
+      if (t.kind === 'contrail' && t.points.length) {
+        // An airborne light ribbon dissipates a speed-scaled distance behind its head.
+        const reach = Math.max(RIBBON_LENGTH, airspeed * AIR_RIBBON_SECONDS);
+        const head = t.points.at(-1)!.arc;
+        while (t.points.length > 1 && head - t.points[1].arc > reach) t.points.shift();
+        // Left behind (stopped, or switched off): the ribbon fades out in time instead.
+        while (t.points.length && time - t.points.at(-1)!.time > CONTRAIL_LIFE && time - t.points[0].time > CONTRAIL_LIFE) t.points.shift();
         if (!t.active && !t.points.length) { this.trails.splice(i, 1); changed = true; continue; }
       }
       if (!t.active) {
@@ -146,7 +167,7 @@ export class TrailSystem {
         continue;
       }
       _p.copy(t.emitter).applyQuaternion(rotation).add(position);
-      const emitting = t.kind === 'contrail' ? airspeed > CONTRAIL_SPEED && !onGround : this.mode !== 'off';
+      const emitting = this.mode !== 'off' && (t.kind === 'wall' || airspeed > RIBBON_MIN_SPEED);
       if (!emitting) {
         if (t.kind === 'contrail' && t.points.length) t.points.at(-1)!.time = Math.min(t.points.at(-1)!.time, time); // gap
         continue;
@@ -184,6 +205,7 @@ export class TrailSystem {
     }
     if (changed) this.version++;
     void craft;
+    void onGround;
   }
 
   /** Light ribbons: drop everything more than RIBBON_LENGTH behind the head. */

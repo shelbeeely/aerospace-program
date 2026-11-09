@@ -4,6 +4,7 @@
  * Run with `npm run trails`.
  */
 import { LIGHT_CYCLE } from '../src/craft/lightCycle.ts';
+import { BLIMP, HELICOPTER, QUADCOPTER } from '../src/craft/builtins.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
 import { Autopilot } from '../src/sim/autopilot.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
@@ -67,8 +68,25 @@ const wallLength = (sim: Simulation) => sim.trails.trails.filter((t) => t.kind =
   let t = sim.telemetry();
   for (let i = 0; i < 120 * 60; i++) { sim.step(ap.sample(sim.dt, t)); t = sim.telemetry(); }
   const contrails = sim.trails.trails.filter((tr) => tr.kind === 'contrail');
-  check(contrails.length === 2 && contrails.every((tr) => tr.points.length > 10), 'the trainer draws two wingtip contrails in flight', contrails.map((tr) => tr.points.length).join(', '));
-  check(sim.trails.colliderCount === 0, 'contrails are not solid');
+  check(contrails.length === 2 && contrails.every((tr) => tr.points.length > 10), 'the trainer draws two wingtip light ribbons in flight', contrails.map((tr) => tr.points.length).join(', '));
+  const reach = Math.max(...contrails.map((tr) => tr.points.at(-1)!.arc - tr.points[0].arc));
+  check(reach < Math.max(90, t.airspeed * 2.5) + 6, 'they dissipate a short, speed-scaled way behind', `${reach.toFixed(0)} m at ${t.airspeed.toFixed(0)} m/s`);
+  check(sim.trails.colliderCount === 0, 'airborne ribbons are light only, not solid');
+}
+
+// --- Every vehicle: the quadcopter, helicopter and blimp lay light ribbons too.
+for (const def of [QUADCOPTER, HELICOPTER, BLIMP]) {
+  const sim = new Simulation(def);
+  const b = sim.craft.body;
+  const t0 = b.translation();
+  b.setTranslation({ x: t0.x, y: 80, z: t0.z }, true);
+  b.setLinvel({ x: 0, y: 0, z: -15 }, true);
+  for (let i = 0; i < 120 * 3; i++) sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0.5, brake: 0 });
+  const r = sim.trails.trails.filter((tr) => tr.points.length > 3);
+  check(r.length >= 2, `${def.name} lays light ribbons`, `${sim.trails.trails.length} trails, points ${sim.trails.trails.map((tr) => tr.points.length).join(', ')}`);
+  sim.trails.cycleMode(sim.craft, false, sim.time); // wall -> ribbon (no change for aircraft)
+  sim.trails.cycleMode(sim.craft, false, sim.time); // ribbon -> off: derez
+  check(sim.trails.trails.every((tr) => tr.derezAt !== null), `${def.name}: L switches its ribbons off`);
 }
 
 console.log(failures ? `\n${failures} trail check(s) failed` : '\nall trail checks passed');

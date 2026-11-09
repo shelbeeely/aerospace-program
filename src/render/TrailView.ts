@@ -49,12 +49,15 @@ export class TrailView {
       for (let i = 1; i < pts.length && v < MAX_SEGMENTS * 6; i++) {
         const a = pts[i - 1], b = pts[i];
         let k = fadeAll;
-        if (t.kind === 'contrail') k *= Math.max(0, 1 - (time - b.time) / CONTRAIL_LIFE);
-        else if (this.trails.mode === 'ribbon' && t.derezAt === null) k *= Math.max(0, 1 - (headArc - b.arc) / RIBBON_LENGTH);
+        if (t.kind === 'contrail') {
+          // Airborne ribbon: brightest at the vehicle, dissolving toward its tail.
+          const span = Math.max(1, headArc - pts[0].arc);
+          k *= Math.max(0, (b.arc - pts[0].arc) / span) * Math.max(0, 1 - Math.max(0, time - pts[pts.length - 1].time - 1) / CONTRAIL_LIFE);
+        } else if (this.trails.mode === 'ribbon' && t.derezAt === null) k *= Math.max(0, 1 - (headArc - b.arc) / RIBBON_LENGTH);
         if (k <= 0.01) continue;
         const wall = t.kind === 'wall';
-        const lo = wall ? 0.35 * k : 0.9 * k; // translucent panel, brighter near the top
-        const hi = wall ? 1.2 * k : 0.9 * k;
+        const lo = wall ? 0.35 * k : 0.12 * k; // translucent panel, brighter near the top
+        const hi = wall ? 1.2 * k : 0.32 * k;
         // Two triangles: a0 b0 a1 / a1 b0 b1 (0 = bottom, 1 = top).
         const quad: Array<[number, number, number, number]> = [
           [a.x, a.y0, a.z, lo], [b.x, b.y0, b.z, lo], [a.x, a.y1, a.z, hi],
