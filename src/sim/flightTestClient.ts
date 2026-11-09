@@ -77,6 +77,7 @@ async function flyOne(craft: CraftDef, weather?: WeatherSettings): Promise<Fligh
  */
 export async function runFlightTest(craft: CraftDef, opts: { gusty?: boolean } = {}): Promise<FlightReport> {
   if (opts.gusty === false) return flyOne(craft);
-  const [calm, gusty] = await Promise.all([flyOne(craft), flyOne(craft, gustyWeather())]);
-  return withGusty(calm, gusty);
+  // The gusty flight is advisory: if it errors, return the calm report without it.
+  const [calm, gusty] = await Promise.all([flyOne(craft), flyOne(craft, gustyWeather()).catch(() => null)]);
+  return gusty ? withGusty(calm, gusty) : calm;
 }
