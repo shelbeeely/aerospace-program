@@ -144,6 +144,8 @@ export class FlightAutopilot implements ControlSource {
   private joinFar = false;
   private touchdownAt = -1;
   private flarePitch = 0;
+  /** On final: lined up with the runway (full flaps, approach speed). */
+  private established = false;
   private flareThrottle = 0;
   private orbitCenter: [number, number] = [0, 0];
   private orbitFloor = 0;
@@ -480,6 +482,7 @@ export class FlightAutopilot implements ControlSource {
       const captured = along < -600 && along > -(IF_DISTANCE + 4 * R + 4000) && Math.abs(cross) < Math.max(1.2 * R, 900) && headingOk && (!this.joinFar || along < -IF_DISTANCE);
       if (captured || dWp < Math.max(0.8 * R, 400)) {
         s.phase = 'final';
+        this.established = false;
         this.joinFar = false;
       } else {
         const brg = bearing(t.position[0], t.position[2], wp[0], wp[1]);
@@ -516,9 +519,14 @@ export class FlightAutopilot implements ControlSource {
         const vsFF = onSlope ? -gs * TAN_GS : 0;
         let vs = clamp(vsFF + 0.3 * (Math.max(target, floor) - h), -gs * TAN_GS - 3, 2);
         if (floor > h) vs = clamp((floor - h) * 0.3, 0, 6);
-        const flaps = distToGo < IF_DISTANCE + 1500 ? LANDING_FLAPS : 0.34;
-        const speed = distToGo < IF_DISTANCE + 1500 ? vapp : vapp * 1.15;
-        cmd = { vs, track, speed, maxBank: 25, pitchMin: -8, pitchMax: 12, flaps };
+        // Slow to the approach speed with full flaps only once established on the localizer:
+        // turning onto final at 1.3 × stall would risk a stall in the bank.
+        const aligned = Math.abs(cross) < 120 && Math.abs(wrap180(t.heading - ap.heading)) < 20;
+        if (aligned && distToGo < IF_DISTANCE + 1500) this.established = true;
+        else if (!aligned && distToGo > 1200 && (Math.abs(cross) > 250 || Math.abs(wrap180(t.heading - ap.heading)) > 35)) this.established = false;
+        const flaps = this.established ? LANDING_FLAPS : 0.34;
+        const speed = this.established ? vapp : vapp * 1.25;
+        cmd = { vs, track, speed, maxBank: this.established ? 15 : 25, pitchMin: -8, pitchMax: 12, flaps };
         s.status = `Land · ${name} · final · ${km(distToGo)}`;
         this.setLandingGuidance(ap, distToGo, h - gsH, cross, speed, gs, name);
         return this.plane.fly(dt, t, cmd);
