@@ -118,6 +118,8 @@ export function validateCraft(input: unknown): string[] {
         if (!isNum(m.radius, 0.01, 10) || !isNum(m.restLength, 0, 10)) e.push(`${at}: wheel dims invalid`);
         if (!isNum(m.stiffness, 0, 1e8) || !isNum(m.damping, 0, 1e7)) e.push(`${at}: spring invalid`);
         if (m.drive !== undefined && !isNum(m.drive, 0, 1e6)) e.push(`${at}: wheel drive 0..1e6 N`);
+        if (m.skid !== undefined && m.skid !== 1 && m.skid !== -1) e.push(`${at}: wheel skid must be 1 (right side) or -1 (left side)`);
+        if (m.skid !== undefined && !((m.drive ?? 0) > 0)) e.push(`${at}: a skid-steer wheel needs "drive" (N): the yaw channel steers by driving it`);
         break;
       case 'drag':
         if (!isNum(m.cdA, 0, 1000)) e.push(`${at}: cdA invalid`);

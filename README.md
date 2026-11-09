@@ -13,6 +13,7 @@ npm run dev            # http://localhost:5173, press N for the Studio
 npm run design -- "a twin-boom cargo plane" --model anthropic/claude-sonnet-5.5
 npm run sim            # headless physics regression (takeoff, turn, stalls, CoM shift, crash)
 npm run weather        # weather impact checks (rain, icing, ground effect, vortex ring, wet runway)
+npm run ground         # light car / tank: flat ground, skid steering, Off-Grid solids, spawn sites
 npm run build          # typecheck + production build
 ```
 
@@ -466,6 +467,18 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
   automatically, from the outermost points on each side for aircraft (wingtips, rotor arms, a
   blimp's flanks; light only, dissolving a speed-scaled distance behind) or a rear jetwall for
   ground vehicles. Check: `npm run trails`.
+- **Light Car and Program Tank (built-ins).** The **Light Car** is a four-wheel neon runabout
+  (cyan lines, red and amber accents): front wheels steer, rear wheels drive, and it lays a
+  jetwall / light ribbon from its tail. The **Program Tank** is heavy, slow and fully
+  reinforced, on six road wheels per side, and lays a red jetwall. It **skid-steers**: a wheel
+  with `skid: 1 | -1` (its side) is driven by the yaw channel, the two sides in opposite
+  directions, so A/D turns it on the spot. Both score 100/100 on the ground card in calm and
+  moderate weather and drive up and over the Off-Grid solids. Check: `npm run ground`.
+- **Spawn anywhere (hangar → craft card → Spawn).** Any runway (its threshold, facing down the
+  strip), any helipad (its centre, at pad height: rooftops too) or, for ground vehicles,
+  **Nearest street** (a clear point on the street grid nearest to where the craft was). The
+  choice lasts the session: R, the automatic respawn after a crash and Backspace's world reset
+  all use it. `window.game.spawnAt(id)` does the same from the console.
 - **Reinforcement (hangar → craft card → Reinforce):** levels 0-3 per part, each +15% part
   mass, +60% strength and +80% impact HP. Saved with the craft; designers can set it too.
 - **Airport:** taxiway, apron, terminal with jet bridges and parked airliners, control tower and

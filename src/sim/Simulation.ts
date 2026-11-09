@@ -19,6 +19,8 @@ import { LightningSystem, type LightningStrike, type StrikeTarget } from './ligh
 import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
+import { vehicleKind } from './vehicleTests.ts';
+import { nearestStreetPoint, siteSpawnPoint, type SpawnPoint, type SpawnSite } from '../world/spawnSites.ts';
 import type { Telemetry } from './telemetry.ts';
 
 function assertValidCraft(def: CraftDef): void {
@@ -291,8 +293,35 @@ export class Simulation {
     (this.ctx as { hasFuelSystem: boolean }).hasFuelSystem = this.craft.fuelTanks.length > 0;
   }
 
-  private spawnPose(craft: Craft | null) {
+  /**
+   * Where respawn(), resetToRunway() and the explosion guard put the craft: a runway, a helipad,
+   * or the nearest street (ground vehicles only). null = Grid International's runway.
+   */
+  spawnSite: SpawnSite | null = null;
+
+  /**
+   * The site a respawn would really use: the chosen one, or null (Grid International) when it
+   * does not apply: a street for a craft that isn't a ground vehicle, a rooftop pad whose tower
+   * is fractured.
+   */
+  effectiveSpawnSite(site: SpawnSite | null = this.spawnSite): SpawnSite | null {
+    if (!site) return null;
+    if (site.kind === 'street') return vehicleKind(this) === 'ground' ? site : null;
+    if (site.group !== undefined && this.staticWorld.fractured.has(site.group)) return null;
+    return site;
+  }
+
+  private spawnPose(craft: Craft | null, site: SpawnSite | null = this.spawnSite) {
     const h = craft ? craft.restingHeight() : 3;
+    let p: SpawnPoint | null = null;
+    const use = craft ? this.effectiveSpawnSite(site) : null;
+    if (use) p = use.kind === 'street' ? nearestStreetPoint(this.position.x, this.position.z) : siteSpawnPoint(use);
+    if (craft && p) {
+      // The centre of mass (not the arbitrary origin) over the spot, facing along the strip/street.
+      const rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.yaw);
+      const com = new THREE.Vector3(craft.massProps.com.x, 0, craft.massProps.com.z).applyQuaternion(rotation);
+      return { position: new THREE.Vector3(p.x - com.x, p.y + h, p.z - com.z), rotation };
+    }
     return {
       // Place the centre of mass (not the arbitrary origin) on the runway centreline at the spawn.
       position: craft
@@ -733,7 +762,8 @@ export class Simulation {
   }
 
   /** Speed lost in a crash that blows the craft up (m/s): ~30, more if reinforced. */
-  private explodeSpeed(): number {
+  /** Speed change (m/s) in a hard contact that blows the craft up: higher for reinforced craft. */
+  explodeSpeed(): number {
     const parts = this.craft.parts;
     const avg = parts.length ? parts.reduce((a, p) => a + Math.min(3, Math.max(0, p.reinforce ?? 0)), 0) / parts.length : 0;
     return TUNING.explodeSpeed * (1 + 0.3 * avg);
@@ -865,7 +895,11 @@ export class Simulation {
       this.angvel.length() < TUNING.maxSaneAngularSpeed;
     if (!ok) {
       this.explosionResets++;
+      // Back to the one known-good pose (not a spawn site worked out from a bad state).
+      const site = this.spawnSite;
+      this.spawnSite = null;
       this.resetToRunway();
+      this.spawnSite = site;
     }
   }
 

@@ -13,6 +13,8 @@ const _v = new THREE.Vector3();
 const _fwd = new THREE.Vector3();
 const _lat = new THREE.Vector3();
 const _f = new THREE.Vector3();
+const _rot = new THREE.Vector3();
+const _arm = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const DOWN = new THREE.Vector3(0, -1, 0);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -72,6 +74,8 @@ export class Wheel implements ForceModule {
     const fade =
       1 - (1 - TUNING.steerHighSpeedFactor) * Math.min(1, speed / TUNING.steerFadeSpeed);
     this.steerAngle = (def.maxSteerDeg ?? 0) * DEG * ctx.controls.yaw * fade;
+    // Skid steering fades the same way: full differential to pivot, gentle at speed.
+    const skidYaw = ctx.controls.yaw * fade;
 
     const maxLen = def.restLength + def.radius;
     this.ray.origin = { x: _mount.x, y: _mount.y, z: _mount.z };
@@ -126,7 +130,15 @@ export class Wheel implements ForceModule {
     _lat.crossVectors(_fwd, _normal).normalize();
 
     const vLong = _v.dot(_fwd);
-    const vLat = _v.dot(_lat);
+    let vLat = _v.dot(_lat);
+    // Skid steering (tracks): the scrub that resists the hull pivoting about its centre is
+    // relieved, so the tracks hold the hull against sliding sideways but let it turn.
+    const skid = def.skid ?? 0;
+    if (skid) {
+      // Only the turn about the ground normal: roll and pitch stay fully damped.
+      _rot.crossVectors(_normal, _arm.copy(_contact).sub(ctx.com)).multiplyScalar(ctx.angvel.dot(_normal));
+      vLat -= TUNING.skidYawRelief * _rot.dot(_lat);
+    }
     this.spinAngle = (this.spinAngle + (vLong / def.radius) * ctx.dt) % (Math.PI * 2);
 
     const massShare = load / TUNING.gravity;
@@ -146,7 +158,11 @@ export class Wheel implements ForceModule {
 
     let fLong = THREE.MathUtils.clamp(-vLong * gain, -muLong * load, muLong * load);
     // Driven wheel (ground vehicles): the throttle pushes along the ground, within the grip circle.
-    if (def.drive) fLong += ctx.controls.throttle * def.drive * grip * (1 - ctx.controls.brake);
+    // Skid-steered wheels add the yaw channel, left and right sides in opposite directions.
+    if (def.drive) {
+      const push = skid ? THREE.MathUtils.clamp(ctx.controls.throttle - skid * skidYaw, -1, 1) : ctx.controls.throttle;
+      fLong += push * def.drive * grip * (1 - ctx.controls.brake);
+    }
     let fLat = THREE.MathUtils.clamp(-vLat * gain, -muLat * load, muLat * load);
     // Friction circle
     const total = Math.hypot(fLong, fLat);
