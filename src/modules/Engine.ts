@@ -14,11 +14,17 @@ const _at = new THREE.Vector3();
 const FORWARD = new THREE.Vector3(0, 0, -1);
 const UP = new THREE.Vector3(0, 1, 0);
 const RIGHT = new THREE.Vector3(1, 0, 0);
+const _w = new THREE.Vector3();
+const _iq = new THREE.Quaternion();
+const _tau = new THREE.Vector3();
 
 /**
  * Thrust along the part's forward axis with throttle, first-order spool lag and fuel. Props
  * also produce reaction torque (the airframe rolls against the prop) and P-factor (at an
  * angle to the airflow, one side of the disk bites harder, so the thrust line shifts).
+ * Rockets carry their own oxidiser: thrust ignores air density (full thrust in vacuum) and
+ * burn maxThrust / (isp · g0) kg/s at full power. An engine with `rcsTorque` also fires
+ * reaction-control thrusters that turn the craft where the air is too thin for its surfaces.
  */
 export class Engine implements ForceModule {
   readonly type = 'engine';
@@ -27,6 +33,7 @@ export class Engine implements ForceModule {
   readonly def: EngineDef;
   readonly isProp: boolean;
   readonly isTurbofan: boolean;
+  readonly isRocket: boolean;
   readonly propDirection: number;
   readonly fuelFlow: number;
   /** Afterburner level 0..1 (lags the throttle crossing the light-up threshold). */
@@ -43,6 +50,8 @@ export class Engine implements ForceModule {
   starved = false;
   /** Propeller angle for visuals (rad). */
   propAngle = 0;
+  /** RCS authority 0..1 last step (fades out as dynamic pressure builds). */
+  rcs = 0;
 
   constructor(
     readonly partId: string,
@@ -54,10 +63,12 @@ export class Engine implements ForceModule {
     this.localPosition = position;
     this.localRotation = rotation;
     this.isTurbofan = def.kind === 'turbofan';
-    this.isProp = !this.isTurbofan && def.propMaxSpeed !== undefined;
-    // Turbofans have no propeller: no reaction torque or P-factor.
-    this.propDirection = this.isTurbofan ? 0 : (def.propDirection ?? (this.isProp ? 1 : 0));
-    this.fuelFlow = def.fuelFlow ?? def.maxThrust * TUNING.fuelPerNewtonSecond;
+    this.isRocket = def.kind === 'rocket';
+    this.isProp = !this.isTurbofan && !this.isRocket && def.propMaxSpeed !== undefined;
+    // Turbofans and rockets have no propeller: no reaction torque or P-factor.
+    this.propDirection = this.isTurbofan || this.isRocket ? 0 : (def.propDirection ?? (this.isProp ? 1 : 0));
+    this.fuelFlow =
+      def.fuelFlow ?? (this.isRocket ? Engine.rocketFuelFlow(def.maxThrust, def.isp ?? TUNING.rocketDefaultIsp) : def.maxThrust * TUNING.fuelPerNewtonSecond);
   }
 
   reset(): void {
@@ -66,6 +77,12 @@ export class Engine implements ForceModule {
     this.starved = false;
     this.afterburner = 0;
     this.mach = 0;
+    this.rcs = 0;
+  }
+
+  /** Rocket propellant flow (kg/s) at a thrust (N) and specific impulse (s): T / (isp · g0). */
+  static rocketFuelFlow(thrust: number, isp: number): number {
+    return thrust / (Math.max(1, isp) * TUNING.standardGravity);
   }
 
   /**
@@ -84,7 +101,7 @@ export class Engine implements ForceModule {
 
   step(ctx: StepContext): void {
     const def = this.def;
-    const tau = def.spoolTime ?? TUNING.engineSpoolTime;
+    const tau = def.spoolTime ?? (this.isRocket ? TUNING.rocketSpoolTime : TUNING.engineSpoolTime);
     const k = 1 - Math.exp(-ctx.dt / Math.max(1e-3, tau));
     const command = this.starved ? 0 : ctx.controls.throttle;
     this.spool += (command - this.spool) * k;
@@ -93,7 +110,8 @@ export class Engine implements ForceModule {
     ctx.toWorldDir(this.localDirection(_dir), _dir);
     ctx.airVelocity(_p, _v);
     const air = this.isTurbofan ? ctx.air(_p.y) : undefined;
-    const sigma = (air ? air.density : ctx.airDensity(_p.y)) / TUNING.seaLevelDensity;
+    const density = air ? air.density : ctx.airDensity(_p.y);
+    const sigma = density / TUNING.seaLevelDensity;
 
     // Engine-specific thrust factor (fraction of maxThrust at full spool) and fuel factor
     // (fraction of fuelFlow at full spool).
@@ -111,6 +129,9 @@ export class Engine implements ForceModule {
       thrustFactor = dry * abThrust;
       // Fuel follows dry thrust (gas-generator work) with TSFC rising with Mach; reheat on top.
       fuelFactor = dry * (1 + TUNING.turbofanTsfcMach * this.mach) * abFuel;
+    } else if (this.isRocket) {
+      // Rocket: carries its own oxidiser, so the same thrust at sea level and in vacuum.
+      thrustFactor = 1;
     } else {
       // Air-breathing: thrust scales with density.
       thrustFactor = sigma;
@@ -127,6 +148,9 @@ export class Engine implements ForceModule {
         this.spool *= got / need;
       }
     }
+
+    // RCS after the main engine's fuel draw, so a trickle of attitude control can't starve it.
+    if (def.rcsTorque) this.stepRcs(ctx, 0.5 * density * _v.lengthSq());
 
     const thrust = def.maxThrust * this.spool * thrustFactor * this.integrity;
     this.thrust = thrust;
@@ -161,5 +185,36 @@ export class Engine implements ForceModule {
 
     _f.copy(_dir).multiplyScalar(thrust);
     ctx.applyForce('thrust', _f, _at);
+  }
+
+  /**
+   * Reaction control: rate-command attitude thrusters. Stick deflection commands a body rate
+   * (up to TUNING.rcsMaxRate); with the stick centred they null the rotation. Torque is capped
+   * at rcsTorque per axis and fades out between TUNING.rcsFullQ and TUNING.rcsFadeQ of dynamic
+   * pressure, where the control surfaces take over. Off near the ground (below rcsMinHeight,
+   * full by twice that), so it never pivots a taxiing craft. Fuel: |torque| / arm / (isp · g0).
+   */
+  private stepRcs(ctx: StepContext, q: number): void {
+    const height = _p.y - ctx.groundHeight(_p.x, _p.z);
+    const fade =
+      THREE.MathUtils.clamp((TUNING.rcsFadeQ - q) / (TUNING.rcsFadeQ - TUNING.rcsFullQ), 0, 1) *
+      THREE.MathUtils.clamp(height / TUNING.rcsMinHeight - 1, 0, 1);
+    this.rcs = fade;
+    if (fade <= 0) return;
+    const c = ctx.controls;
+    const maxRate = TUNING.rcsMaxRate;
+    // Craft-local body rates: +X nose up, +Y nose left, +Z right wing up (roll left).
+    _w.copy(ctx.angvel).applyQuaternion(_iq.copy(ctx.rotation).invert());
+    const gain = 1 / (TUNING.rcsRateBand * maxRate);
+    const axis = (cmd: number, rate: number) => THREE.MathUtils.clamp((cmd * maxRate - rate) * gain, -1, 1);
+    _tau.set(axis(c.pitch, _w.x), axis(-c.yaw, _w.y), axis(-c.roll, _w.z)).multiplyScalar(this.def.rcsTorque! * fade * this.integrity);
+    const mag = Math.abs(_tau.x) + Math.abs(_tau.y) + Math.abs(_tau.z);
+    if (mag < 1e-6) return;
+    if (ctx.hasFuelSystem) {
+      const need = Engine.rocketFuelFlow(mag / TUNING.rcsArm, TUNING.rcsIsp) * ctx.dt;
+      const got = ctx.drawFuel(need);
+      if (got < need * 0.999) _tau.multiplyScalar(got / need);
+    }
+    ctx.applyTorque(ctx.toWorldDir(_tau, _tau));
   }
 }

@@ -1,11 +1,13 @@
 import { BLIMP, HELICOPTER, QUADCOPTER } from '../craft/builtins.ts';
 import { JET } from '../craft/jet.ts';
+import { ORBITER } from '../craft/orbiter.ts';
 import { TEST_PLANE } from '../craft/testPlane.ts';
 import { TWIN_PLANE } from '../craft/twinPlane.ts';
 import type { CraftDef } from '../craft/types.ts';
 import { validateCraft } from '../craft/validate.ts';
 import { autoFix } from './autofix.ts';
 import { TUNING } from '../tuning.ts';
+import { PLANET } from '../sim/layout.ts';
 import { flightTest, formatReport, type FlightReport } from '../sim/flightTest.ts';
 import { extractJson, type ChatMessage, type OpenRouter } from './openrouter.ts';
 
@@ -45,12 +47,15 @@ Mass and inertia come ONLY from part masses and shapes. Modules are massless and
    - Ailerons: LEFT wing (x<0) gain +1, RIGHT wing (x>0) gain -1.
    - Flaps: channel "flaps", gain 1, maxDeflectionDeg 30, on the INBOARD wing panels (trailing edge, chordFraction 0.25). The pilot lowers them in 3 notches.
    - Vertical fin: give the part "rotationDeg":[0,0,90] (span then points up, normal points left, -X). Rudder: channel "yaw", gain +1 when the fin is behind the CoM.
-2. Engine: {"type":"engine","offset"?:[x,y,z],"maxThrust":N,"kind"?:"prop"|"turbofan","propMaxSpeed"?:m/s,"propRadius"?:m,"propDirection"?:1|-1|0,"bypassRatio"?:number,"afterburner"?:{"thrustRatio":number,"fuelRatio":number},"fuelFlow"?:kg/s,"spoolTime"?:s}
+2. Engine: {"type":"engine","offset"?:[x,y,z],"maxThrust":N,"kind"?:"prop"|"turbofan"|"rocket","propMaxSpeed"?:m/s,"propRadius"?:m,"propDirection"?:1|-1|0,"bypassRatio"?:number,"afterburner"?:{"thrustRatio":number,"fuelRatio":number},"isp"?:s,"rcsTorque"?:N·m,"fuelFlow"?:kg/s,"spoolTime"?:s}
    Thrust acts along the part's -Z (forward) through the module point. maxThrust is the static sea-level thrust.
    - Propeller ("kind":"prop" or just set propMaxSpeed): propMaxSpeed is the airspeed where thrust fades to zero (80-130 typical). Keep propeller tips at least 0.2 m above the ground. Thrust scales with air density.
      Propellers make reaction torque and P-factor (a single prop rolls/yaws the craft). Twin engines with opposite propDirection (counter-rotating: left 1, right -1) cancel it.
    - Turbofan ("kind":"turbofan", NO propMaxSpeed/propDirection/propRadius): thrust = maxThrust × σ^${TUNING.turbofanDensityExponent} × (1 - ${TUNING.turbofanMachLapse}·M·(1+BPR)/(1+0.1·BPR)), σ = density ratio, M = Mach, BPR = bypassRatio (default 1; 0-1 trainers/fighters, 3-5 business jets: more static thrust per fuel but faster lapse with speed). Fuel per newton rises with Mach. Expect ~30% of static thrust at Mach 0.8 and 10 km. spoolTime 1-3 s for jets.
      afterburner (optional, turbofan only): above ${Math.round(TUNING.afterburnerThrottle * 100)}% throttle once spooled up, thrust × thrustRatio (1.3-1.7) and fuel flow × fuelRatio (3-5). Great for takeoff and climb, very thirsty.
+   - Rocket ("kind":"rocket", NO propeller fields): carries its own oxidiser, so thrust = maxThrust × throttle at any altitude, in vacuum too. Propellant flow = maxThrust / (isp × ${TUNING.standardGravity}) kg/s at full power (isp default ${TUNING.rocketDefaultIsp} s; ~250-320 kerosene/solid, ~450 hydrogen): about 10× a jet's burn, so give rocket craft big tanks. Ignition is quick (spoolTime default ${TUNING.rocketSpoolTime} s).
+   - Reaction control ("rcsTorque", any engine, usually the rocket): thrusters that turn the craft from the pitch/roll/yaw stick with up to rcsTorque N·m per axis, burning a little fuel. Rate-command: full stick asks for ${TUNING.rcsMaxRate} rad/s, a centred stick holds the attitude still. Full authority below ${TUNING.rcsFullQ} Pa of dynamic pressure, fading out by ${TUNING.rcsFadeQ} Pa, where the control surfaces take over (they lose authority in thin air). ~1-2 N·m per kg of craft turns a spaceplane briskly.
+   - Orbits: the planet is small (radius ${PLANET.radius} m, surface gravity ${PLANET.gravity} m/s²). Orbital speed is ~${Math.round(Math.sqrt(PLANET.gravity * PLANET.radius))} m/s at the surface but ~${Math.round(Math.sqrt((PLANET.gravity * PLANET.radius ** 2) / (PLANET.radius + 40000)))} m/s at 40 km, where the air is thin enough to stay up. A spaceplane needs a rocket, RCS, and wings and gear to land; climb steeply out of the thick air, then build horizontal speed and circularise at the apoapsis.
    - Omitting both kind and propMaxSpeed gives a simple jet with flat thrust (density scaling only).
    If the craft has fuel tanks, engines burn fuel and stop when it runs out. Without tanks they run forever.
 3. Wheel (raycast suspension): {"type":"wheel","offset"?:[x,y,z],"radius":m,"restLength":m,"stiffness":N/m,"damping":N·s/m,"maxSteerDeg"?:deg,"brakes"?:boolean}
@@ -120,6 +125,8 @@ Airplane: ${JSON.stringify(TEST_PLANE)}
 Light twin: ${JSON.stringify(TWIN_PLANE)}
 
 Jet trainer: ${JSON.stringify(JET)}
+
+Spaceplane (rocket + RCS, reaches orbit): ${JSON.stringify(ORBITER)}
 
 Quadcopter: ${JSON.stringify(QUADCOPTER)}
 

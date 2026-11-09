@@ -147,6 +147,7 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
 
 async function flyCard(def: CraftDef, opts: FlightTestOptions): Promise<FlightReport> {
   const sim = new Simulation(def, opts.weather);
+  sim.traffic.enabled = false; // test cards fly a clean world (no AI light-cycle traffic)
   const design = analyzeDesign(sim);
   const kind = vehicleKind(sim);
   const issues: string[] = [];

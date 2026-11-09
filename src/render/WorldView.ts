@@ -4,6 +4,7 @@ import { COAST, PLANET, RUNWAYS, type LandingSite } from '../sim/layout.ts';
 import { cityGroundNode, summary } from './cityGround.ts';
 import { terrainHeightNode } from './terrainNode.ts';
 import { flatWorld } from './curvature.ts';
+import { OffGridView } from './OffGridView.ts';
 import { GRID_SKY, NEON, glow, synthSkyNode, type TslNode } from './neon.ts';
 
 const HORIZON = new THREE.Color(GRID_SKY.horizon);
@@ -45,6 +46,8 @@ export class WorldView {
   groundMat!: THREE.MeshBasicNodeMaterial;
   runwayMat!: THREE.MeshBasicNodeMaterial;
   private readonly ground: THREE.Mesh;
+  /** The Off-Grid's solids near the camera as real geometry (the disc stays flat under them). */
+  readonly offGrid: OffGridView;
 
   constructor(scene: THREE.Scene, renderer: THREE.WebGPURenderer) {
     void renderer;
@@ -88,9 +91,11 @@ export class WorldView {
     const sea: TslNode = wrapX(flatWorld.x);
     this.groundMat.opacityNode = float(1).sub(step(float(COAST.x), sea).mul(step(sea, float(COAST.x + COAST.width))));
     this.groundMat.alphaTest = 0.5;
-    // Off-Grid mountains: displace the disc by the same terrain the physics uses.
+    // Off-Grid mountains: near the camera they are instanced solids (crisp planar faces); beyond
+    // that range the disc is displaced by the same terrain the physics uses.
+    this.offGrid = new OffGridView(scene);
     const wp: TslNode = modelWorldMatrix.mul(vec4(positionLocal, 1)).xyz;
-    this.groundMat.positionNode = positionLocal.add(vec3(0, terrainHeightNode(summary(), wp.x, wp.z), 0));
+    this.groundMat.positionNode = positionLocal.add(vec3(0, terrainHeightNode(summary(), wp.x, wp.z, this.offGrid.exclusion), 0));
     this.ground = new THREE.Mesh(groundDisc(PLANET.radius * Math.PI * 0.97), this.groundMat);
     this.ground.frustumCulled = false;
     scene.add(this.ground);
@@ -144,6 +149,7 @@ export class WorldView {
   update(camera: THREE.Camera, focus: THREE.Vector3): void {
     this.sky.position.copy(camera.position);
     this.ground.position.set(camera.position.x, 0, camera.position.z);
+    this.offGrid.update(camera.position);
     this.sun.target.position.copy(focus);
     this.sun.position.copy(focus).addScaledVector(SUN_DIR, 300);
   }
