@@ -14,7 +14,7 @@ const wheel = ([x, z]: [number, number]): WheelDef => ({
   stiffness: 32000,
   damping: 3200,
   brakes: true,
-  ...(z < 0 ? { maxSteerDeg: 30 } : { drive: 3600 }),
+  ...(z < 0 ? { maxSteerDeg: 30 } : { drive: 1500 }),
 });
 
 const CHASSIS_Y = 0.7;

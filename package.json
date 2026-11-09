@@ -23,7 +23,8 @@
     "hazards": "node --experimental-transform-types --no-warnings scripts/hazards.ts",
     "trails": "node --experimental-transform-types --no-warnings scripts/trails.ts",
     "planet": "node --experimental-transform-types --no-warnings scripts/planet.ts",
-    "raymode": "node --experimental-transform-types --no-warnings scripts/raymode.ts"
+    "raymode": "node --experimental-transform-types --no-warnings scripts/raymode.ts",
+    "ground": "node --experimental-transform-types --no-warnings scripts/groundVehicles.ts"
   },
   "repository": {
     "type": "git",

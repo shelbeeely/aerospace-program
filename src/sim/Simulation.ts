@@ -17,6 +17,7 @@ import { LightningSystem, type LightningStrike, type StrikeTarget } from './ligh
 import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
+import { nearestStreetPoint, siteSpawnPoint, type SpawnPoint, type SpawnSite } from '../world/spawnSites.ts';
 import type { Telemetry } from './telemetry.ts';
 
 function assertValidCraft(def: CraftDef): void {
@@ -283,8 +284,25 @@ export class Simulation {
     (this.ctx as { hasFuelSystem: boolean }).hasFuelSystem = this.craft.fuelTanks.length > 0;
   }
 
-  private spawnPose(craft: Craft | null) {
+  /**
+   * Where respawn(), resetToRunway() and the explosion guard put the craft: a runway, a helipad,
+   * or the nearest street (ground vehicles only). null = Grid International's runway.
+   */
+  spawnSite: SpawnSite | null = null;
+
+  private spawnPose(craft: Craft | null, site: SpawnSite | null = this.spawnSite) {
     const h = craft ? craft.restingHeight() : 3;
+    let p: SpawnPoint | null = null;
+    if (craft && site) {
+      if (site.kind !== 'street') p = siteSpawnPoint(site);
+      else if (craft.wheels.some((w) => (w.def.drive ?? 0) > 0)) p = nearestStreetPoint(this.position.x, this.position.z);
+    }
+    if (craft && p) {
+      // The centre of mass (not the arbitrary origin) over the spot, facing along the strip/street.
+      const rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.yaw);
+      const com = new THREE.Vector3(craft.massProps.com.x, 0, craft.massProps.com.z).applyQuaternion(rotation);
+      return { position: new THREE.Vector3(p.x - com.x, p.y + h, p.z - com.z), rotation };
+    }
     return {
       // Place the centre of mass (not the arbitrary origin) on the runway centreline at the spawn.
       position: craft

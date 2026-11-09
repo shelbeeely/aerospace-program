@@ -7,6 +7,8 @@ import { GamepadDevice, KeyboardDevice, PlayerInput, TouchDevice } from './input
 import { ControlsPanel, toast } from './ui/ControlsPanel.ts';
 import { vehicleKind } from './sim/vehicleTests.ts';
 import { BUILTINS } from './craft/builtins.ts';
+import { landingSite, landingSites } from './world/landingSites.ts';
+import { STREET_SITE } from './world/spawnSites.ts';
 import { browserClient } from './gen/openrouter.ts';
 import { Library, type LibraryEntry } from './gen/library.ts';
 import { CameraRig } from './render/CameraRig.ts';
@@ -329,10 +331,10 @@ async function start() {
   const _identity = new THREE.Quaternion();
   /** Pose the craft on the turntable: the runway spawn pose (sim just reset), moved to x = z = 0. */
   const showOnTurntable = () => {
-    const spawn = sim.position;
     const mp = sim.craft.massProps;
-    // The spawn pose puts the CoM on the runway centreline; keep that, centred on the turntable.
-    _hangarPos.set(-mp.com.x, spawn.y + hangarView.turntableTop, -mp.com.z);
+    // The spawn pose puts the CoM on the runway centreline; keep that, centred on the turntable
+    // (at the craft's resting height: the spawn site may be a rooftop or a hillside street).
+    _hangarPos.set(-mp.com.x, sim.craft.restingHeight() + hangarView.turntableTop, -mp.com.z);
     craftView.update(_hangarPos, _identity);
     hangarView.fit(sim.craft.boundingRadius(), _hangarPos.y + mp.com.y);
     updateCraftCard();
@@ -361,7 +363,59 @@ async function start() {
         row('SPAN', `${(span * 2).toFixed(1)} m`) +
         row('T/W', tw),
     );
-    craftCard.append(reinforcePanel());
+    craftCard.append(spawnPicker(), reinforcePanel());
+  };
+  /**
+   * "Spawn at": any runway, any helipad, or (ground vehicles) the nearest street. The choice
+   * lasts the session and is where respawn (R), auto-respawn and a world reset put the craft.
+   */
+  let spawnChoice = (() => {
+    try {
+      return sessionStorage.getItem('spawnAt') ?? 'grid';
+    } catch {
+      return 'grid';
+    }
+  })();
+  const applySpawnChoice = () => {
+    sim.spawnSite = spawnChoice === 'street' ? STREET_SITE : landingSite(spawnChoice) ?? null;
+  };
+  applySpawnChoice();
+  const spawnPicker = () => {
+    const label = document.createElement('label');
+    label.className = 'spawn-at';
+    const name = document.createElement('span');
+    name.textContent = 'SPAWN';
+    const sel = document.createElement('select');
+    sel.setAttribute('aria-label', 'Spawn at');
+    const group = (title: string, sites: Array<{ id: string; name: string }>) => {
+      const g = document.createElement('optgroup');
+      g.label = title;
+      for (const s of sites) {
+        const o = document.createElement('option');
+        o.value = s.id;
+        o.textContent = s.name;
+        g.append(o);
+      }
+      sel.append(g);
+    };
+    const sites = landingSites();
+    if (vehicleKind(sim) === 'ground') group('Streets', [STREET_SITE]);
+    group('Runways', sites.filter((s) => s.kind === 'runway'));
+    group('Helipads', sites.filter((s) => s.kind === 'helipad'));
+    // A street choice with an aircraft selected spawns on Grid International (kept for the next ground vehicle).
+    sel.value = spawnChoice === 'street' && vehicleKind(sim) !== 'ground' ? 'grid' : spawnChoice;
+    sel.addEventListener('change', () => {
+      spawnChoice = sel.value;
+      try {
+        sessionStorage.setItem('spawnAt', spawnChoice);
+      } catch { /* private mode: the choice still lasts until reload */ }
+      applySpawnChoice();
+      reset(false);
+      if (mode === 'hangar') showOnTurntable();
+      sel.blur();
+    });
+    label.append(name, sel);
+    return label;
   };
   /**
    * Per-part reinforcement (hangar): levels 0-3, each +15% part mass, +60% strength, +80% impact
@@ -616,6 +670,13 @@ async function start() {
       /** Reset the whole world (respawn() keeps the world and only replaces the craft). */
       reset: () => reset(true),
       respawn: () => reset(false),
+      /** Choose where respawns put the craft: a landing-site id, 'street' or 'grid' (as the hangar's Spawn at select). */
+      spawnAt: (id: string) => {
+        spawnChoice = id;
+        applySpawnChoice();
+        reset(false);
+        if (mode === 'hangar') showOnTurntable();
+      },
     },
   });
 
@@ -745,7 +806,9 @@ async function start() {
     if (explodedAt !== null && respawnLeft <= 0) {
       explodedAt = null;
       reset(false);
-      toast('New plane on the runway');
+      const site = sim.spawnSite;
+      const elsewhere = site && site.id !== 'grid' && (site.kind !== 'street' || vehicleKind(sim) === 'ground');
+      toast(elsewhere ? `New craft at ${site.name}` : 'New plane on the runway');
     }
     oceanView.update(sim.time, camera);
     lightningView.update(sim.time, sim.lightning.strikes, sim.craft, Math.max(sim.lightning.staticCharge, (sim.atmosphere.settings.storm ?? 0) * 0.5));
