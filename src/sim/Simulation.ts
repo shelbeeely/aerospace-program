@@ -21,7 +21,12 @@ import { ChipEmitter } from './chips.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
 import { vehicleKind } from './vehicleTests.ts';
 import { nearestStreetPoint, siteSpawnPoint, type SpawnPoint, type SpawnSite } from '../world/spawnSites.ts';
-import type { Telemetry } from './telemetry.ts';
+import { orbitElements, type OrbitTelemetry, type Telemetry } from './telemetry.ts';
+
+function roundOrbit(o: OrbitTelemetry): OrbitTelemetry {
+  const r = (x: number | null, d = 0) => (x === null ? null : Math.round(x * 10 ** d) / 10 ** d);
+  return { apoapsis: r(o.apoapsis), periapsis: r(o.periapsis)!, speed: r(o.speed, 2)!, period: r(o.period, 1) };
+}
 
 function assertValidCraft(def: CraftDef): void {
   const errors = validateCraft(def);
@@ -689,19 +694,30 @@ export class Simulation {
    * The planet in a flat frame: the world's gravity is the surface value, so add back what
    * altitude takes away ((R / (R + h))²) plus the centripetal lift v_h² / (R + h) of flying
    * around a sphere. At ~280 m/s near the ground (less higher up) the craft is in orbit.
+   * Climbing also costs horizontal speed (−v_r·v_h / r, conservation of angular momentum), so
+   * energy and angular momentum are conserved and eccentric orbits are Keplerian too.
    */
   private planetForces(): void {
     const R = PLANET.radius;
-    const lift = (y: number, vx: number, vz: number) => {
+    const accel = (y: number, vx: number, vy: number, vz: number, out: { x: number; y: number; z: number }) => {
       const r = R + Math.max(0, y);
-      return PLANET.gravity - PLANET.gravity * (R / r) ** 2 + (vx * vx + vz * vz) / r;
+      out.y = PLANET.gravity - PLANET.gravity * (R / r) ** 2 + (vx * vx + vz * vz) / r;
+      const k = y > 0 ? -vy / r : 0;
+      out.x = k * vx;
+      out.z = k * vz;
+      return out;
     };
+    const a = { x: 0, y: 0, z: 0 };
     const b = this.craft.body;
-    b.addForce({ x: 0, y: b.mass() * lift(this.position.y, this.linvel.x, this.linvel.z), z: 0 }, true);
+    const m = b.mass();
+    accel(this.position.y, this.linvel.x, this.linvel.y, this.linvel.z, a);
+    b.addForce({ x: m * a.x, y: m * a.y, z: m * a.z }, true);
     for (const d of this.debris) {
       const t = d.body.translation();
       const v = d.body.linvel();
-      d.body.applyImpulse({ x: 0, y: d.body.mass() * lift(t.y, v.x, v.z) * this.dt, z: 0 }, true);
+      const dm = d.body.mass() * this.dt;
+      accel(t.y, v.x, v.y, v.z, a);
+      d.body.applyImpulse({ x: dm * a.x, y: dm * a.y, z: dm * a.z }, true);
     }
   }
 
@@ -980,6 +996,7 @@ export class Simulation {
       densityAltitude: Math.round(densityAltitude(air.density)),
       vortexRing: r(rotors.reduce((a, x) => Math.max(a, x.vortexRing), 0)),
       electrical: craft.electrical?.telemetry() ?? null,
+      orbit: roundOrbit(orbitElements(this.position.y, ground.y, Math.hypot(ground.x, ground.z))),
       weather: {
         precipitation: r(precip.rate, 1),
         precipitationKind: precip.kind,

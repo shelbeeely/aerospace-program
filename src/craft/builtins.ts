@@ -2,6 +2,7 @@ import { JET } from './jet.ts';
 import { LIGHT_CAR } from './lightCar.ts';
 import { LIGHT_CYCLE } from './lightCycle.ts';
 import { TANK } from './tank.ts';
+import { ORBITER } from './orbiter.ts';
 import { TEST_PLANE } from './testPlane.ts';
 import { TWIN_PLANE } from './twinPlane.ts';
 import type { CraftDef, ModuleDef, RotorDef } from './types.ts';
@@ -272,6 +273,7 @@ export const BUILTINS: BuiltinCraft[] = [
   { id: 'trainer', label: 'Trainer T-1 (single prop)', craft: TEST_PLANE, hint: 'Z for full throttle, S to rotate at ~60 kt. "." lowers flaps a notch. Expect a left swing from prop torque.' },
   { id: 'twin', label: 'Twinstar B-2 (twin prop)', craft: TWIN_PLANE, hint: 'Counter-rotating props: no swing. Z for full throttle, rotate with S at ~85 kt.' },
   { id: 'jet', label: 'Hawkeye J-3 (jet trainer)', craft: JET, hint: 'Throttle above 95% lights the afterburner (thirsty). Rotate at ~145 kt; throttle back below 95% to cruise.' },
+  { id: 'orbiter', label: 'Orbiter (rocket spaceplane)', craft: ORBITER, hint: 'Rocket: full thrust in vacuum, thirsty. Climb ~40°, ease the nose down above 8 km, circularise at the apoapsis (ORB row). RCS steers in thin air.' },
   { id: 'quad', label: 'Lifter Q-4 (quadcopter)', craft: QUADCOPTER, hint: 'Throttle 50% ≈ hover. W/S/A/D tilt, Q/E yaw.' },
   { id: 'cycle', label: 'Light Cycle', craft: LIGHT_CYCLE, hint: 'W to go, S to brake, A/D to steer. L: jetwall → light ribbon → off. Its trail derezzes with it.' },
   { id: 'car', label: 'Light Car', craft: LIGHT_CAR, hint: 'W to go, S to brake, A/D to steer the front wheels. L: jetwall → light ribbon → off.' },
