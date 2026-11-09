@@ -188,6 +188,11 @@ export interface WheelDef {
   maxSteerDeg?: number;
   /** Driven wheel: the throttle pushes it along the ground with up to this force (N). */
   drive?: number;
+  /**
+   * Skid steering (tanks): the side the wheel is on, +1 right, -1 left. The yaw channel then
+   * drives the two sides in opposite directions (with `drive`), so the craft turns in place.
+   */
+  skid?: 1 | -1;
   brakes?: boolean;
 }
 

@@ -104,6 +104,8 @@ export const TUNING = {
   /** Nose-wheel steering is faded out between 0 m/s and this speed down to `steerHighSpeedFactor`. */
   steerFadeSpeed: 30,
   steerHighSpeedFactor: 0.25,
+  /** Skid-steer wheels (tanks): fraction of the pivot scrub the tracks relieve, so the hull can turn in place. */
+  skidYawRelief: 0.7,
 
   // ---------------------------------------------------------------- structure
   /**
