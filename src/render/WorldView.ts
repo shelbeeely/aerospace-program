@@ -1,7 +1,8 @@
 import * as THREE from 'three/webgpu';
-import { abs, float, fwidth, max, smoothstep, step, uniform, uv, vec2 } from 'three/tsl';
+import { abs, float, fwidth, max, modelWorldMatrix, positionLocal, smoothstep, step, uniform, uv, vec2, vec3, vec4 } from 'three/tsl';
 import { COAST, PLANET, RUNWAYS, type LandingSite } from '../sim/layout.ts';
-import { cityGroundNode } from './cityGround.ts';
+import { cityGroundNode, summary } from './cityGround.ts';
+import { terrainHeightNode } from './terrainNode.ts';
 import { flatWorld } from './curvature.ts';
 import { GRID_SKY, NEON, glow, synthSkyNode, type TslNode } from './neon.ts';
 
@@ -87,6 +88,9 @@ export class WorldView {
     const sea: TslNode = wrapX(flatWorld.x);
     this.groundMat.opacityNode = float(1).sub(step(float(COAST.x), sea).mul(step(sea, float(COAST.x + COAST.width))));
     this.groundMat.alphaTest = 0.5;
+    // Off-Grid mountains: displace the disc by the same terrain the physics uses.
+    const wp: TslNode = modelWorldMatrix.mul(vec4(positionLocal, 1)).xyz;
+    this.groundMat.positionNode = positionLocal.add(vec3(0, terrainHeightNode(summary(), wp.x, wp.z), 0));
     this.ground = new THREE.Mesh(groundDisc(PLANET.radius * Math.PI * 0.97), this.groundMat);
     this.ground.frustumCulled = false;
     scene.add(this.ground);

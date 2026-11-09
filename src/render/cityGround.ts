@@ -1,8 +1,9 @@
 import * as THREE from 'three/webgpu';
-import { abs, cameraPosition, color, distance, float, floor, fract, hash, max, min, mix, smoothstep, step, texture, uniform, vec2 } from 'three/tsl';
+import { abs, cameraPosition, color, distance, float, floor, fract, fwidth, hash, max, min, mix, smoothstep, step, texture, uniform, vec2 } from 'three/tsl';
 import { CITY } from '../sim/layout.ts';
 import { blockSummary, GRID } from '../world/planetCity.ts';
 import { flatWorld } from './curvature.ts';
+import { terrainEdgesNode } from './terrainNode.ts';
 import { gridLines, type TslNode } from './neon.ts';
 
 /**
@@ -13,7 +14,7 @@ import { gridLines, type TslNode } from './neon.ts';
  * Block data comes from blockSummary() (370 × 370 texels, one per block).
  */
 let summaryTex: THREE.DataTexture | null = null;
-function summary(): THREE.DataTexture {
+export function summary(): THREE.DataTexture {
   if (summaryTex) return summaryTex;
   const n = GRID.blocks;
   summaryTex = new THREE.DataTexture(blockSummary(), n, n, THREE.RGBAFormat, THREE.UnsignedByteType);
@@ -70,9 +71,10 @@ export function cityGroundNode(): TslNode {
   const bj: TslNode = floor(p.z.sub(gz0).div(pitch));
   const uv: TslNode = vec2(bi.add(0.5).div(GRID.blocks), bj.add(0.5).div(GRID.blocks));
   const block: TslNode = texture(summary(), uv);
-  const kind: TslNode = block.b; // 0 city, 0.5 open, 0.75 airfield, 1 sea
-  const isCity: TslNode = float(1).sub(step(0.25, kind));
-  const noRoads: TslNode = step(0.6, kind); // airfields (and sea) have no streets
+  const kind: TslNode = block.b; // 0 city, 0.25 Off-Grid, 0.5 open, 0.75 airfield, 1 sea
+  const isCity: TslNode = float(1).sub(step(0.125, kind));
+  const offGrid: TslNode = step(0.125, kind).mul(float(1).sub(step(0.375, kind)));
+  const noRoads: TslNode = max(step(0.6, kind), offGrid); // airfields, sea and the Off-Grid have no streets
 
   const pad: TslNode = mix(color('#040820'), color('#0b1a5a'), gridLines(p.xz, 10, 1).mul(0.6));
   const asphalt: TslNode = color('#020311');
@@ -90,5 +92,19 @@ export function cityGroundNode(): TslNode {
   const interior: TslNode = float(1).sub(street);
   const far: TslNode = smoothstep(CITY_LIGHTS_FROM, CITY_LIGHTS_FROM.mul(1.3), distance(p.xz, cameraPosition.xz));
   const lights: TslNode = tint.mul(height.mul(5).add(0.6)).mul(sparkle).mul(interior).mul(isCity).mul(far);
-  return c.add(lights);
+
+  // The Off-Grid, outside the system: black and deep-blue ground under a faint electric-blue
+  // survey grid; its geometric solids are drawn by light in the contrasting palette: amber
+  // square contours every 40 m, ridgelines and base outlines glowing orange to red at the apex.
+  const h: TslNode = max(p.y, float(0));
+  const t: TslNode = fract(h.div(40));
+  const contour: TslNode = float(1).sub(smoothstep(0, max(fwidth(h.div(40)).mul(1.5), float(0.02)), min(t, float(1).sub(t)))).mul(smoothstep(2, 10, h));
+  const edges: TslNode = terrainEdgesNode(summary(), p.x, p.z);
+  const hot: TslNode = mix(color('#ff8a1f'), color('#ff2a1a'), smoothstep(60, 300, h));
+  const survey: TslNode = gridLines(p.xz, 50, 1).mul(0.35);
+  const waste: TslNode = mix(color('#010208'), color('#06102a'), smoothstep(0, 250, h))
+    .add(color('#1f6bff').mul(survey))
+    .add(color('#ffb347').mul(contour.mul(0.9)))
+    .add(hot.mul(edges.mul(2.6)));
+  return mix(c.add(lights), waste, offGrid);
 }

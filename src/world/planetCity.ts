@@ -1,4 +1,5 @@
 import { CITY, COAST, hash01, heightCap, heightCapRect, isSea, PLANET, PLANET_HUBS, wrapCoord } from '../sim/layout.ts';
+import { nearWasteland, wastelandByte } from '../sim/terrain.ts';
 import { makeTowerBuilder, mulberry32, type CityPlan } from './City.ts';
 import { KIT } from './kit.ts';
 import { planStructures, type Structures } from './structures.ts';
@@ -110,7 +111,7 @@ function generate(ci: number, cj: number, key: string): PlanetChunk {
     for (let bj = 0; bj < GRID.chunkBlocks; bj++) {
       const gi = ci * GRID.chunkBlocks + bi;
       const gj = cj * GRID.chunkBlocks + bj;
-      if (isCentralBlock(gi, gj)) continue;
+      if (isCentralBlock(gi, gj) || nearWasteland(gi, gj)) continue;
       const xa = x + bi * GRID.pitch + def.street / 2;
       const za = z + bj * GRID.pitch + def.street / 2;
       const xb = xa + def.block, zb = za + def.block;
@@ -180,7 +181,9 @@ export function blockSummary(): Uint8Array {
     const cx = xa + CITY.block / 2, cz = za + CITY.block / 2;
     const o = (gj * n + gi) * 4;
     let kind = 0;
+    const waste = wastelandByte(gi, gj);
     if (isSea(cx)) kind = 255;
+    else if (waste > 0 || nearWasteland(gi, gj)) kind = 64;
     else {
       const cap = heightCap(cx, cz);
       if (cap === 0) kind = 192;
@@ -190,7 +193,7 @@ export function blockSummary(): Uint8Array {
     out[o] = Math.min(255, Math.round((Math.min(h, 400) / 400) * 255));
     out[o + 1] = Math.floor(hash01(gi, gj, 9) * CITY.colors.length);
     out[o + 2] = kind;
-    out[o + 3] = 255;
+    out[o + 3] = waste; // Off-Grid mask: the terrain shader blends it exactly like terrain.ts
   }
   void COAST;
   return out;

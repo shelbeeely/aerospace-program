@@ -97,7 +97,8 @@ export const CITY = {
   /** Kit towers (imported models) placed on this fraction of eligible blocks (more in hub cores). */
   kitFraction: 0.3,
   kitCoreFraction: 0.55,
-  colors: ['#1f8bff', '#00eaff', '#00eaff', '#ff8a1f', '#9d4dff', '#3dffb0'],
+  // Primary illumination cyan / electric blue / white; contrasting orange and amber.
+  colors: ['#1f8bff', '#00eaff', '#00eaff', '#ff8a1f', '#e8f6ff', '#ffb347'],
 } as const;
 
 /** A place to land: a runway (axis-aligned strip) or a helipad (circle; rooftop pads have y > 0). */

@@ -46,7 +46,7 @@ export class KitTowersView {
     const roles: Record<string, THREE.Material> = {
       metal: facadeMaterial('#1f8bff', false),
       metalLight: facadeMaterial('#00eaff', false),
-      walls: facadeMaterial('#9d4dff', false),
+      walls: facadeMaterial('#1f6bff', false),
       floor: facadeMaterial('#1f8bff', false),
       glow: glowMaterial('#00eaff', 3.2),
       emissive: glowMaterial('#ff8a1f', 3.6),

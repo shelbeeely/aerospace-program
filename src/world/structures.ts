@@ -2,6 +2,7 @@ import { CITY } from '../sim/layout.ts';
 import { TUNING } from '../tuning.ts';
 import { airportPlan } from './Airport.ts';
 import { cityPlan, type CityPlan } from './City.ts';
+import { terrainHeight } from '../sim/terrain.ts';
 import { planetObstacleTop } from './planetCity.ts';
 import { KIT, kitBlockFactor, kitSolid, rotate, rotatedGrid, unrotate } from './kit.ts';
 
@@ -182,5 +183,5 @@ export function obstacleTop(x: number, z: number): number {
     heights = { cell, map };
   }
   const central = heights.map.get(`${Math.floor(x / heights.cell)},${Math.floor(z / heights.cell)}`) ?? 0;
-  return Math.max(central, planetObstacleTop(x, z));
+  return Math.max(central, planetObstacleTop(x, z), terrainHeight(x, z));
 }

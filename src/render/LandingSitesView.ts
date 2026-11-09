@@ -90,7 +90,7 @@ export class LandingSitesView {
     pts.push(-w, 0, -h, -w, 0, h, w, 0, -h, w, 0, h, -w, 0, 0, w, 0, 0);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-    const lines = new THREE.LineSegments(g, neonLineMaterial(s.y > 0 ? '#ff8a1f' : '#3dffb0', 3.5));
+    const lines = new THREE.LineSegments(g, neonLineMaterial(s.y > 0 ? '#ff8a1f' : '#00eaff', 3.5));
     lines.position.set(s.x, s.y + 0.08, s.z);
     return lines;
   }

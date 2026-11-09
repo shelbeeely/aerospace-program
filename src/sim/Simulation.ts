@@ -10,6 +10,7 @@ import { DamageModel, type ContactForceHandler, type ContactForceInfo } from './
 import { neutralControls, sanitizeControls, type ControlInputs } from './controls.ts';
 import { Ocean } from './ocean.ts';
 import { COAST, isSea, LAYOUT, PLANET } from './layout.ts';
+import { terrainHeight } from './terrain.ts';
 import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
@@ -201,7 +202,7 @@ export class Simulation {
       cloud: (p) => this.atmosphere.cloudAt(p, 0, this.cloudSample),
       groundWetness: 0,
       hasFuelSystem: false,
-      groundHeight: (x) => isSea(x - self.groundMotion.x) ? -COAST.depth : self.groundMotion.y,
+      groundHeight: (x, z) => isSea(x - self.groundMotion.x) ? -COAST.depth : terrainHeight(x, z) + self.groundMotion.y,
       pointVelocity(p, out) {
         _tmp.copy(p).sub(self.com);
         return out.crossVectors(self.angvel, _tmp).add(self.linvel);
@@ -882,7 +883,7 @@ export class Simulation {
       airspeed: r(speed),
       groundSpeed: r(Math.hypot(ground.x, ground.z)),
       wind: [r(wind.x), r(wind.y), r(wind.z)],
-      altitude: r(this.position.y - craft.restingHeight() + 0.05),
+      altitude: r(this.position.y - terrainHeight(this.position.x, this.position.z) - craft.restingHeight() + 0.05),
       verticalSpeed: r(ground.y),
       heading: r(heading, 1),
       pitch: r(pitch, 1),

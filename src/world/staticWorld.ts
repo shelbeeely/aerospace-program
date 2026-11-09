@@ -5,6 +5,7 @@ import { airportPlan } from './Airport.ts';
 import type { BlockBuilding } from './BlockBuilding.ts';
 import { cityPlan } from './City.ts';
 import { PLANET } from '../sim/layout.ts';
+import { chunkHasTerrain, solidHulls } from '../sim/terrain.ts';
 import { chunkAt, GRID, imageOffset, planetChunk } from './planetCity.ts';
 import { structureMask, worldStructures, type Structures } from './structures.ts';
 import type { Town } from './Town.ts';
@@ -38,6 +39,8 @@ export class StaticWorld {
   /** Bumped whenever outer chunks are registered (renderers rebuild their chunk views). */
   contentVersion = 0;
   private lastChunkKey = '';
+  /** Off-Grid terrain near the craft: one convex hull per geometric solid (key: chunk@image). */
+  private readonly terrain = new Map<string, RAPIER.Collider[]>();
   private chunksPending = false;
   /** Streaming: pieces bucketed by 250 m cells; only cells near the craft (and near fractured
    *  structures) carry colliders. Rapier walks every collider each step, so 23,000 static ones
@@ -122,6 +125,7 @@ export class StaticWorld {
     this.chunksPending = false;
     let budget = 3;
     const S = GRID.chunkSize;
+    this.streamTerrain(ci, cj, x, z);
     for (let di = -2; di <= 2; di++) for (let dj = -2; dj <= 2; dj++) {
       const c = planetChunk(ci + di, cj + dj);
       const ox = imageOffset(c.x + S / 2, x);
@@ -160,6 +164,37 @@ export class StaticWorld {
       this.outerChunks.set(k, { ci: c.ci, cj: c.cj, ox, oz, pieceStart, pieceEnd: L.length, groupStart, groupEnd: G.length });
       this.centreCell = ''; // new cells may need loading
       this.contentVersion++;
+    }
+  }
+
+  /** Heightfields for Off-Grid chunks within TERRAIN_RADIUS; far ones are released. */
+  private streamTerrain(ci: number, cj: number, x: number, z: number): void {
+    const S = GRID.chunkSize;
+    const keep = new Set<string>();
+    for (let di = -2; di <= 2; di++) for (let dj = -2; dj <= 2; dj++) {
+      const a = ci + di, b = cj + dj;
+      const cx0 = GRID.x0 + (((a % GRID.chunks) + GRID.chunks) % GRID.chunks) * S;
+      const cz0 = GRID.z0 + (((b % GRID.chunks) + GRID.chunks) % GRID.chunks) * S;
+      const ox = imageOffset(cx0 + S / 2, x), oz = imageOffset(cz0 + S / 2, z);
+      const dx = Math.max(cx0 + ox - x, 0, x - (cx0 + ox + S));
+      const dz = Math.max(cz0 + oz - z, 0, z - (cz0 + oz + S));
+      if (dx * dx + dz * dz > TERRAIN_RADIUS * TERRAIN_RADIUS) continue;
+      if (!chunkHasTerrain(a, b)) continue;
+      const k = `${a},${b}@${ox},${oz}`;
+      keep.add(k);
+      if (this.terrain.has(k)) continue;
+      // Exact: the union of the solids' hulls is the terrain surface.
+      const list: RAPIER.Collider[] = [];
+      for (const pts of solidHulls(cx0, cz0, cx0 + S, cz0 + S)) {
+        for (let i = 0; i < pts.length; i += 3) { pts[i] += ox; pts[i + 2] += oz; }
+        const desc = RAPIER.ColliderDesc.convexHull(pts);
+        if (desc) list.push(this.world.createCollider(desc.setFriction(0.9).setRestitution(0.05), this.body));
+      }
+      this.terrain.set(k, list);
+    }
+    for (const [k, list] of this.terrain) if (!keep.has(k)) {
+      for (const c of list) this.world.removeCollider(c, false);
+      this.terrain.delete(k);
     }
   }
 
@@ -317,6 +352,9 @@ export class StaticWorld {
 /** Streaming cell size and radius (m). */
 const CELL = 250;
 const STREAM_RADIUS = 1000;
+/** Off-Grid terrain colliders within this distance of the craft (m). */
+const TERRAIN_RADIUS = 2200;
+
 /** Planet chunks within this distance of the craft are registered (physics + near render). */
 const REGISTER_RADIUS = 2000;
 /** Earthquakes bring down structures this close to the craft (m). */
