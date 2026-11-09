@@ -49,9 +49,9 @@ export class ExplosionView {
       const shellMat = new THREE.MeshBasicNodeMaterial(add);
       // A glowing shell of light (bright at the limb), in the circuit colour.
       const rim: TslNode = pow(float(1).sub(abs(normalView.dot(positionViewDirection))), 2);
-      shellMat.colorNode = (tint as TslNode).mul(float(0.05).add(rim.mul(1.4))).mul(fade);
+      shellMat.colorNode = (tint as TslNode).mul(float(0.02).add(rim.mul(0.7))).mul(fade);
       const coreMat = new THREE.MeshBasicNodeMaterial(add);
-      coreMat.colorNode = (tint as TslNode).mul(0.5).add(float(1.5)).mul(fade).mul(fade);
+      coreMat.colorNode = (tint as TslNode).mul(1.1).add(float(0.25)).mul(fade).mul(fade);
       const ringMat = new THREE.MeshBasicNodeMaterial({ ...add, side: THREE.DoubleSide });
       ringMat.colorNode = (tint as TslNode).mul(2.6).mul(ringFade);
       const crownMat = new THREE.MeshBasicNodeMaterial({ ...add, side: THREE.DoubleSide });
@@ -131,7 +131,7 @@ export class ExplosionView {
         s.crown.scale.set(width, Math.max(0.01, h * rise), width);
         s.crownFade.value = Math.max(0, 1 - age / LIFE) ** 1.2;
       }
-      s.light.intensity = 6e4 * Math.max(0, 1 - age / 0.7) ** 2;
+      s.light.intensity = 2.5e4 * Math.max(0, 1 - age / 0.7) ** 2;
     }
   }
 }
