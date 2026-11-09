@@ -125,10 +125,18 @@ export class CameraRig {
       this.lastTarget.copy(target);
       // Mouse-wheel zoom is a fixed ratio per notch: speed it up far out so the globe view is
       // a few spins away rather than a hundred.
+      // Wheel zoom is a fixed ratio per notch: speed it up smoothly far out, so the globe view
+      // is a few spins away rather than a hundred.
       const dist = this.camera.position.distanceTo(target);
-      this.controls.zoomSpeed = dist > ORBIT_NEAR_MAX ? 3 : 1;
+      this.controls.zoomSpeed = 1 + 2 * Math.min(1, Math.max(0, (dist - ORBIT_NEAR_MAX) / 1600));
       this.controls.maxPolarAngle = orbitMaxPolar(dist);
       this.controls.update();
+      // A zoom applied by that update changes the allowed angle: clamp again at the new range.
+      const after = this.camera.position.distanceTo(target);
+      if (Math.abs(after - dist) > 1) {
+        this.controls.maxPolarAngle = orbitMaxPolar(after);
+        this.controls.update();
+      }
       return;
     }
 
@@ -157,12 +165,15 @@ export class CameraRig {
         const tilt = Math.min(Math.max(0, (pitch + aim.pitch) * aim.blend), pitch + Math.PI / 2 - 0.02);
         if (tilt > 1e-4) {
           _tilt.setFromAxisAngle(_right.normalize(), -tilt);
-          _offset.applyQuaternion(_tilt).multiplyScalar(1 + aim.blend * 1.2);
+          _offset.applyQuaternion(_tilt);
           _look.applyQuaternion(_tilt);
           _up.applyQuaternion(_tilt);
         }
       }
     }
+    // Pull back a little at altitude (from the blend alone, so a dive that zeroes the tilt
+    // doesn't make the camera lunge).
+    _offset.multiplyScalar(1 + aim.blend * 1.2);
     this.camera.position.copy(target).add(_offset);
     if (this.camera.position.y < 0.6) this.camera.position.y = 0.6;
     _look.add(target);

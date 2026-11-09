@@ -46,6 +46,11 @@ export const CITY_LIGHTS_FROM = uniform(6000);
  * hidden (sub-pixel boxes only shimmer) and the ground's city lights cover every block.
  */
 export const GLOBE_VIEW_ALT = 8000;
+/**
+ * The globe-view LOD switch for this frame, decided once from the camera altitude (WorldView
+ * .update, after the camera moved) so every view flips together.
+ */
+export const GLOBE_VIEW = { on: false };
 /** Overall gain of the far city lights (WorldView raises it a little from orbit). */
 export const CITY_LIGHTS_GAIN = uniform(1);
 
@@ -168,7 +173,7 @@ export function cityGroundNode(): TslNode {
   // Structure stays drawn by light: the data highways as cyan lines on the city, an amber
   // survey grid on the Off-Grid, a faint cyan swell grid on the sea (pixel-wide, so they hold
   // from orbit and fade to their mean once the cells shrink below a few pixels).
-  const hwy: TslNode = gridLines(vec2(p.x.sub(gx0), p.z.sub(gz0)), pitch * n, 1);
+  const hwy: TslNode = gridLines(vec2(p.x.sub(gx0), p.z.sub(gz0)), pitch * n, 1).mul(isCity);
   const cityFar: TslNode = (color('#030719') as TslNode).add(color('#1f4bff').mul(0.03)).add(color('#00eaff').mul(hwy.mul(0.35)));
   const lightsFar: TslNode = g.rgb.mul(GLOW_SCALE).mul(far).mul(CITY_LIGHTS_GAIN);
   const wasteFar: TslNode = (color('#020414') as TslNode).add(color('#ff8a1f').mul(0.025))

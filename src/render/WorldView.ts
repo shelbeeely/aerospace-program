@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { abs, cameraPosition, clamp, color, dot, float, fwidth, max, modelWorldMatrix, normalize, positionLocal, positionWorld, pow, smoothstep, step, uniform, uv, vec2, vec3, vec4 } from 'three/tsl';
 import { COAST, PLANET, RUNWAYS, type LandingSite } from '../sim/layout.ts';
-import { CITY_LIGHTS_FROM, CITY_LIGHTS_GAIN, GLOBE_VIEW_ALT, cityGroundNode, summary } from './cityGround.ts';
+import { CITY_LIGHTS_FROM, CITY_LIGHTS_GAIN, GLOBE_VIEW, GLOBE_VIEW_ALT, cityGroundNode, summary } from './cityGround.ts';
 import { terrainHeightNode } from './terrainNode.ts';
 import { curveOrigin, flatWorld } from './curvature.ts';
 import { GRID_SKY, NEON, SKY_PLANET, glow, synthSkyNode, type TslNode } from './neon.ts';
@@ -98,12 +98,9 @@ export class WorldView {
     // The planet's ground: a disc that follows the camera, its rings widening with distance out
     // to just short of the antipode, so the curvature bend has vertices to bend. The ocean band
     // is cut out (the sea surface sits below the land level).
-    // Only cut where the ocean mesh really is (one copy: x in the band, |z| < C/2); in the
-    // wrapped copies seen from orbit the ground's own dark sea colour fills the band instead of
-    // leaving a hole onto the sky.
-    const sx: TslNode = flatWorld.x;
-    const inOcean: TslNode = step(float(COAST.x), sx).mul(step(sx, float(COAST.x + COAST.width)))
-      .mul(step(abs(flatWorld.z), float(PLANET.circumference / 2)));
+    // From orbit (oceanCut 0) the ocean mesh is hidden and the ground draws the sea itself.
+    const sx: TslNode = wrapX(flatWorld.x);
+    const inOcean: TslNode = step(float(COAST.x), sx).mul(step(sx, float(COAST.x + COAST.width)));
     this.groundMat.opacityNode = float(1).sub(inOcean.mul(this.oceanCut));
     this.groundMat.alphaTest = 0.5;
     // Off-Grid mountains: displace the disc by the same terrain the physics uses.
@@ -164,7 +161,9 @@ export class WorldView {
     // a touch brighter, so the globe glows) once the planet is seen whole.
     const alt = camera.position.y;
     const globe = alt > GLOBE_VIEW_ALT;
-    CITY_LIGHTS_FROM.value = globe ? 0 : 6000;
+    GLOBE_VIEW.on = globe;
+    // (1 m, not 0: smoothstep needs distinct edges.)
+    CITY_LIGHTS_FROM.value = globe ? 1 : 6000;
     this.oceanCut.value = globe ? 0 : 1;
     CITY_LIGHTS_GAIN.value = 1 + 0.25 * Math.min(1, Math.max(0, (alt - 3000) / 20000));
     this.sky.position.copy(camera.position);
@@ -172,6 +171,12 @@ export class WorldView {
     this.sun.target.position.copy(focus);
     this.sun.position.copy(focus).addScaledVector(SUN_DIR, 300);
   }
+}
+
+/** x wrapped into [-C/2, C/2) in a shader (the ocean band repeats every circumference). */
+function wrapX(x: TslNode): TslNode {
+  const c = PLANET.circumference;
+  return x.sub(x.add(c / 2).div(c).floor().mul(c));
 }
 
 /** A flat disc (y = 0) of exponentially widening rings: dense near the centre, sparse far out. */

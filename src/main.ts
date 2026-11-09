@@ -29,7 +29,7 @@ import { AirportView } from './render/AirportView.ts';
 import { KitTowersView } from './render/KitTowersView.ts';
 import { LandingSitesView } from './render/LandingSitesView.ts';
 import { PlanetCityView } from './render/PlanetCityView.ts';
-import { GLOBE_VIEW_ALT } from './render/cityGround.ts';
+import { GLOBE_VIEW } from './render/cityGround.ts';
 import { TrailView } from './render/TrailView.ts';
 import { ExplosionView } from './render/ExplosionView.ts';
 import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
@@ -739,8 +739,6 @@ async function start() {
     kitView.update(camera.position);
     sitesView.update();
     planetView.update(camera.position);
-    // From orbit the ground's city lights draw the centre too (sub-pixel towers only shimmer).
-    cityView.root.visible = camera.position.y <= GLOBE_VIEW_ALT;
     trailView.update(sim.time);
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
@@ -762,7 +760,6 @@ async function start() {
       toast('New plane on the runway');
     }
     oceanView.update(sim.time, camera);
-    oceanView.root.visible = camera.position.y <= GLOBE_VIEW_ALT; // the ground draws the sea from orbit
     lightningView.update(sim.time, sim.lightning.strikes, sim.craft, Math.max(sim.lightning.staticCharge, (sim.atmosphere.settings.storm ?? 0) * 0.5));
     fireView.update(sim.time, sim.fire, sim.craft);
 
@@ -804,6 +801,8 @@ async function start() {
     }
     if (++curvatureTick % 60 === 1) applyCurvature(scene);
     worldView.update(camera, renderPos);
+    // From orbit the ground draws the sea and the centre's city lights (sub-pixel towers shimmer).
+    cityView.root.visible = oceanView.root.visible = !GLOBE_VIEW.on;
     airportView.update(camera, sim.atmosphere.windAt(_tmpWindPoint.set(renderPos.x, 10, renderPos.z), 0, _wind10));
     disasterView.update(sim.atmosphere.events);
     weatherView.update(dt, camera, velocity, sim.atmosphere, sim.groundWetness, sim.atmosphere.cloudAt(camera.position, 0).inCloud);
