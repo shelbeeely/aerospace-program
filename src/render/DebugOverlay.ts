@@ -34,7 +34,7 @@ export class DebugOverlay {
     geo.setAttribute('color', new THREE.BufferAttribute(this.colors, 3).setUsage(THREE.DynamicDrawUsage));
     this.lines = new THREE.LineSegments(
       geo,
-      new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, transparent: true }),
+      new THREE.LineBasicNodeMaterial({ vertexColors: true, depthTest: false, transparent: true }),
     );
     this.lines.frustumCulled = false;
     this.lines.renderOrder = 10;
@@ -44,7 +44,7 @@ export class DebugOverlay {
     const marker = (color: string, r: number) => {
       const m = new THREE.Mesh(
         new THREE.SphereGeometry(r, 16, 12),
-        new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 }),
+        new THREE.MeshBasicNodeMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 }),
       );
       m.renderOrder = 11;
       craftRoot.add(m);
