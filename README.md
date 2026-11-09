@@ -330,6 +330,31 @@ geometry (incidence, dihedral, washout, control throws, spring rates) is in `tes
 After a change, `npm run sim` prints lift-off speed, stall altitude loss and the instability
 test, so you can see the effect without flying.
 
+## Multiplayer (Grid Link)
+
+Up to 16 programs per room share the Grid: aircraft, cars and light cycles, with their trails.
+The relay is a small [Bun](https://bun.sh) server (WebSocket only, no accounts, nothing stored).
+
+```bash
+npm run server          # bun server/index.ts, ws://localhost:8787 (PORT=… to change)
+npm run dev             # then press O (or the ◈ GRID LINK button): CREATE ROOM, or JOIN a code
+npm run test:server     # bun test server: two clients join, relay, isolation, size limits
+```
+
+- **Invite:** COPY INVITE gives `…/?mode=fly&room=CODE&server=ws://host:8787`; opening that
+  link joins straight away. The server defaults to `ws://<page host>:8787`.
+- **What's shared:** each player's pose, velocity and controls at 20 Hz, drawn from their
+  CraftDef and interpolated 100 ms behind; their jetwalls, ribbons and contrails (in their
+  colour); structure fractures (by structure name, so everyone sees the same tower fall);
+  explosions; derezzes; chat. Remote jetwalls near you are solid: ride into one and you derez.
+- **Not shared:** the weather, the town's loose blocks and rubble physics (each client simulates
+  its own collapse from the same fracture), and craft-to-craft collisions.
+- **Server:** `GET /health` reports rooms and players. Messages are shape-checked, size-capped
+  (32 KB, 256 KB for a craft) and rate-limited; silent players are dropped after 20 s.
+  Protocol: `src/net/protocol.ts` (versioned; client and server share it). Room logic:
+  `server/rooms.ts`. Client: `src/net/NetClient.ts`, `src/render/RemoteCraftView.ts`,
+  `src/ui/MultiplayerPanel.ts`. Not connected, the game is single-player as before.
+
 ## Disasters
 
 F3 has explicit **Tornado**, **Hurricane**, **Earthquake**, and **Clear events** buttons.
