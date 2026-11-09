@@ -47,6 +47,7 @@ export const flatWorld: TslNode = (() => {
 })();
 
 const bent = new WeakSet<THREE.Material>();
+const warned = new Set<string>();
 
 /**
  * Give every node material under `root` the bend (once per material). Objects flagged
@@ -59,7 +60,13 @@ export function applyCurvature(root: THREE.Object3D): void {
     const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
     if (!m) return;
     for (const mat of Array.isArray(m) ? m : [m]) {
-      if (bent.has(mat) || !(mat as THREE.NodeMaterial).isNodeMaterial) continue;
+      if (bent.has(mat)) continue;
+      if (!(mat as THREE.NodeMaterial).isNodeMaterial) {
+        // A classic material can't take the bend: it would float off the curved world (the
+        // neon-edges-above-buildings bug). Use the *NodeMaterial equivalent instead.
+        if (!warned.has(mat.type)) { warned.add(mat.type); console.warn(`curvature: ${mat.type} on "${o.name || o.type}" is not a node material and will not bend with the planet`); }
+        continue;
+      }
       const nm = mat as THREE.NodeMaterial;
       nm.positionNode = curvedPosition((nm.positionNode as TslNode | null) ?? positionLocal);
       nm.needsUpdate = true;

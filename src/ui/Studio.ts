@@ -435,7 +435,7 @@ export class Studio {
             else if (a.validationErrors) this.logLine(`${who}: ${a.validationErrors.length} format errors → engineer`, 'warn');
             else if (a.report) {
               const fixed = a.fixes?.length ? ` (${a.fixes.length} auto-fix${a.fixes.length > 1 ? 'es' : ''})` : '';
-              this.logLine(`${who}: "${a.craft?.name}" scored ${a.report.score}/100${fixed}`, a.report.passed ? 'good' : 'warn');
+              this.logLine(`${who}: "${a.craft?.name}" scored ${a.report.score}/100${a.report.gusty ? ` (gusty ${a.report.gusty.score}, advisory)` : ''}${fixed}`, a.report.passed ? 'good' : 'warn');
             }
           }
           this.updateSpend();
