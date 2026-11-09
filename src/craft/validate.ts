@@ -98,7 +98,12 @@ export function validateCraft(input: unknown): string[] {
         if (m.propDirection !== undefined && ![1, -1, 0].includes(m.propDirection)) e.push(`${at}: propDirection must be 1, -1 or 0`);
         if (m.fuelFlow !== undefined && !isNum(m.fuelFlow, 0, 1000)) e.push(`${at}: fuelFlow 0..1000 kg/s`);
         if (m.spoolTime !== undefined && !isNum(m.spoolTime, 0, 30)) e.push(`${at}: spoolTime 0..30 s`);
-        if (m.kind !== undefined && m.kind !== 'prop' && m.kind !== 'turbofan') e.push(`${at}: kind must be "prop" or "turbofan"`);
+        if (m.kind !== undefined && m.kind !== 'prop' && m.kind !== 'turbofan' && m.kind !== 'rocket') e.push(`${at}: kind must be "prop", "turbofan" or "rocket"`);
+        if (m.kind === 'rocket' && (m.propMaxSpeed !== undefined || m.propDirection || m.propRadius !== undefined))
+          e.push(`${at}: a rocket has no propeller: remove propMaxSpeed/propDirection/propRadius`);
+        if (m.isp !== undefined && m.kind !== 'rocket') e.push(`${at}: isp only applies to kind "rocket"`);
+        if (m.isp !== undefined && !isNum(m.isp, 50, 1000)) e.push(`${at}: isp 50..1000 s`);
+        if (m.rcsTorque !== undefined && !isNum(m.rcsTorque, 0, 1e6)) e.push(`${at}: rcsTorque 0..1e6 N·m`);
         if (m.kind === 'turbofan' && m.propMaxSpeed !== undefined) e.push(`${at}: a turbofan has no propeller: remove propMaxSpeed (or use kind "prop")`);
         if (m.kind === 'turbofan' && (m.propDirection || m.propRadius !== undefined))
           e.push(`${at}: a turbofan has no propeller: remove propDirection/propRadius`);

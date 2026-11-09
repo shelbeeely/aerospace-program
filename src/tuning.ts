@@ -86,6 +86,23 @@ export const TUNING = {
   afterburnerThrottle: 0.95,
   /** Afterburner light-up / blow-out time constant (s). */
   afterburnerSpoolTime: 0.4,
+  /** Standard gravity g0 for specific impulse (m/s²): fuel flow = thrust / (isp · g0). */
+  standardGravity: 9.80665,
+  /** Rocket specific impulse when the def leaves `isp` out (s). */
+  rocketDefaultIsp: 300,
+  /** Rocket ignition / shutdown time constant (s): much quicker than a turbine. */
+  rocketSpoolTime: 0.15,
+  /** RCS: full authority below this dynamic pressure (Pa)... */
+  rcsFullQ: 150,
+  /** ...fading to none at this one, where control surfaces work (Pa). */
+  rcsFadeQ: 1500,
+  /** RCS: body rate (rad/s) commanded by full stick. */
+  rcsMaxRate: 0.6,
+  /** RCS: rate error (fraction of rcsMaxRate) that saturates the thrusters. */
+  rcsRateBand: 0.25,
+  /** RCS: notional thruster lever arm (m) and specific impulse (s) for its propellant use. */
+  rcsArm: 2,
+  rcsIsp: 220,
 
   // ---------------------------------------------------------------- wheels
   /**

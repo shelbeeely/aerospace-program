@@ -1,4 +1,38 @@
 import type { ElectricalTelemetry } from '../craft/ElectricalSystem.ts';
+import { PLANET } from './layout.ts';
+
+/** Keplerian orbit of the craft around the planet (two-body, from its current state). */
+export interface OrbitTelemetry {
+  /** Highest point above sea level (m), or null on an escape trajectory. */
+  apoapsis: number | null;
+  /** Lowest point above sea level (m); negative = the orbit dips into the planet (suborbital). */
+  periapsis: number;
+  /** Speed relative to the planet's centre (m/s). */
+  speed: number;
+  /** Orbital period (s), or null on an escape trajectory. */
+  period: number | null;
+}
+
+/**
+ * Orbit elements from the local flat-frame state: r = R + h, radial speed = vertical speed,
+ * tangential speed = horizontal speed. μ = g0·R² (surface gravity × radius²).
+ */
+export function orbitElements(altitude: number, verticalSpeed: number, horizontalSpeed: number): OrbitTelemetry {
+  const R = PLANET.radius;
+  const mu = PLANET.gravity * R * R;
+  const r = R + Math.max(-R * 0.99, altitude);
+  const v2 = verticalSpeed * verticalSpeed + horizontalSpeed * horizontalSpeed;
+  const energy = v2 / 2 - mu / r;
+  const h = r * horizontalSpeed; // specific angular momentum
+  const e = Math.sqrt(Math.max(0, 1 + (2 * energy * h * h) / (mu * mu)));
+  const speed = Math.sqrt(v2);
+  if (energy >= 0) {
+    // Parabolic/hyperbolic: periapsis from h² / (μ(1 + e)).
+    return { apoapsis: null, periapsis: (h * h) / (mu * (1 + e)) - R, speed, period: null };
+  }
+  const a = -mu / (2 * energy);
+  return { apoapsis: a * (1 + e) - R, periapsis: a * (1 - e) - R, speed, period: 2 * Math.PI * Math.sqrt((a * a * a) / mu) };
+}
 
 /**
  * A plain, JSON-serializable snapshot of the craft's flight state. This is what the HUD shows
@@ -68,6 +102,8 @@ export interface Telemetry {
   };
   /** 0..1 how deep any rotor is in vortex ring state. */
   vortexRing: number;
+  /** Orbit around the planet from the current position and velocity. */
+  orbit?: OrbitTelemetry;
   /** Electrical bus (battery, generator, avionics), or null/absent if the craft has none. */
   electrical?: ElectricalTelemetry | null;
 }

@@ -32,7 +32,7 @@ const H_TROPO = 11000;
  * the actual temperature, so a hot day gives thinner air (higher density altitude), as in reality.
  */
 export function isa(altitude: number, temperatureOffset = 0, qnhHpa = 1013.25, humidity = 0): AirState {
-  const h = Math.min(Math.max(altitude, -500), 30000);
+  const h = Math.min(Math.max(altitude, -500), 100000); // isothermal exponential above 11 km: near-vacuum by 60-100 km (orbits)
   let tStd: number;
   let p: number;
   if (h <= H_TROPO) {

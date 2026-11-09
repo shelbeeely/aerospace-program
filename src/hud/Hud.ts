@@ -54,6 +54,7 @@ export class Hud {
     this.set(this.el.aoa, blank(t.airspeed > 3 ? t.angleOfAttack.toFixed(1) : '--'));
     this.set(this.el.g, blank(t.gForce.toFixed(1)));
     this.set(this.el.hdg, blank(Math.round(t.heading % 360).toString().padStart(3, '0')));
+    this.updateOrbit(t);
     this.el.battRow.style.display = e && e.battery !== null ? '' : 'none';
     this.el.busRow.style.display = e ? '' : 'none';
     if (e) {
@@ -105,6 +106,20 @@ export class Hud {
     this.el.stall.classList.toggle('hidden', !(t.stall > 0.35 && !t.onGround && t.airspeed > 5));
   }
 
+  /** ORB row: apoapsis / periapsis (km) and period, once high or fast enough to care. */
+  private updateOrbit(t: Telemetry): void {
+    const row = document.getElementById('h-orb-row');
+    const orb = document.getElementById('h-orb');
+    const per = document.getElementById('h-orb-t');
+    if (!row || !orb || !per) return;
+    const o = t.orbit;
+    const show = !!o && (t.altitude > 2000 || o.speed > 150);
+    row.style.display = show ? '' : 'none';
+    if (!show || !o) return;
+    this.set(orb, `Ap ${o.apoapsis === null ? 'ESC' : km(o.apoapsis)} Pe ${km(o.periapsis)}`);
+    this.set(per, o.period === null ? '' : `T ${clock(o.period)}`);
+  }
+
   /** The craft blew up: show the banner (and hide the stall warning). */
   setDestroyed(on: boolean, respawnIn = 0): void {
     this.el.destroyed.classList.toggle('hidden', !on);
@@ -154,4 +169,18 @@ function electricalFlags(e: Telemetry['electrical']): string[] {
     e.battery !== null && e.battery < 0.2 && !e.batteryCutoff ? 'LOW BATT' : '',
     e.failed.length ? `AVIONICS FAILED: ${e.failed.join(', ')}` : '',
   ];
+}
+
+/** Altitude in km with one decimal (sub-surface periapsis shows negative). */
+function km(m: number): string {
+  return `${(m / 1000).toFixed(1)}k`;
+}
+
+/** Period as m:ss (h:mm:ss past an hour). */
+function clock(s: number): string {
+  const t = Math.round(s);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const ss = String(t % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
 }
