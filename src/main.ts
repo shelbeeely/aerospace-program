@@ -32,6 +32,7 @@ import { AirportView } from './render/AirportView.ts';
 import { KitTowersView } from './render/KitTowersView.ts';
 import { LandingSitesView } from './render/LandingSitesView.ts';
 import { PlanetCityView } from './render/PlanetCityView.ts';
+import { GLOBE_VIEW } from './render/cityGround.ts';
 import { TrailView } from './render/TrailView.ts';
 import { TrafficView } from './render/TrafficView.ts';
 import { ExplosionView } from './render/ExplosionView.ts';
@@ -652,6 +653,8 @@ async function start() {
       /** PNG of the current 3D view (GPU readback; works on WebGPU and WebGL2). */
       capture,
       takePhoto,
+      /** Camera rig (chase / orbit; rig.setOrbitDistance(m) pulls the orbit camera back). */
+      rig,
       get captureInfo() { return captureInfo; },
       get renderMode() { return actualRenderMode(); },
       get requestedRenderMode() { return requestedRender[mode]; },
@@ -860,7 +863,9 @@ async function start() {
     curveOrigin.value.copy(camera.position);
     updateSkyPlanet(camera.position.y, PLANET.radius);
     const alt = Math.max(0, camera.position.y);
-    const far = Math.max(20000, Math.min(PLANET.radius * 3, 6000 + Math.sqrt(2 * PLANET.radius * alt + alt * alt) * 1.6));
+    // Far plane just past the horizon (the tangent distance), so from orbit the whole visible
+    // disc of the planet, out to its limb, is inside the clip range.
+    const far = Math.max(20000, Math.min(PLANET.radius * 12, 6000 + Math.sqrt(2 * PLANET.radius * alt + alt * alt) * 1.15));
     const near = Math.min(20, Math.max(0.3, alt / 4000));
     if (Math.abs(camera.far - far) > far * 0.05 || camera.near !== near) {
       camera.far = far;
@@ -869,6 +874,8 @@ async function start() {
     }
     if (++curvatureTick % 60 === 1) applyCurvature(scene);
     worldView.update(camera, renderPos);
+    // From orbit the ground draws the sea and the centre's city lights (sub-pixel towers shimmer).
+    cityView.root.visible = oceanView.root.visible = !GLOBE_VIEW.on;
     airportView.update(camera, sim.atmosphere.windAt(_tmpWindPoint.set(renderPos.x, 10, renderPos.z), 0, _wind10));
     disasterView.update(sim.atmosphere.events);
     weatherView.update(dt, camera, velocity, sim.atmosphere, sim.groundWetness, sim.atmosphere.cloudAt(camera.position, 0).inCloud);

@@ -1,11 +1,11 @@
 import * as THREE from 'three/webgpu';
-import { abs, float, fwidth, max, modelWorldMatrix, positionLocal, smoothstep, step, uniform, uv, vec2, vec3, vec4 } from 'three/tsl';
+import { abs, cameraPosition, clamp, color, dot, float, fwidth, max, modelWorldMatrix, normalize, positionLocal, positionWorld, pow, smoothstep, step, uniform, uv, vec2, vec3, vec4 } from 'three/tsl';
 import { COAST, PLANET, RUNWAYS, type LandingSite } from '../sim/layout.ts';
-import { cityGroundNode, summary } from './cityGround.ts';
+import { CITY_LIGHTS_FROM, CITY_LIGHTS_GAIN, GLOBE_VIEW, GLOBE_VIEW_ALT, cityGroundNode, summary } from './cityGround.ts';
 import { terrainHeightNode } from './terrainNode.ts';
-import { flatWorld } from './curvature.ts';
+import { curveOrigin, flatWorld } from './curvature.ts';
 import { OffGridView } from './OffGridView.ts';
-import { GRID_SKY, NEON, glow, synthSkyNode, type TslNode } from './neon.ts';
+import { GRID_SKY, NEON, SKY_PLANET, glow, synthSkyNode, type TslNode } from './neon.ts';
 
 const HORIZON = new THREE.Color(GRID_SKY.horizon);
 const ZENITH = new THREE.Color(GRID_SKY.zenith);
@@ -48,6 +48,9 @@ export class WorldView {
   private readonly ground: THREE.Mesh;
   /** The Off-Grid's solids near the camera as real geometry (the disc stays flat under them). */
   readonly offGrid: OffGridView;
+  /** 1: the ground leaves a hole for the ocean mesh; 0 (from orbit, where the ocean is hidden
+   *  rather than z-fight 1.8 m under the ground at a 20 km+ clip range): it draws the sea. */
+  private readonly oceanCut = uniform(1);
 
   constructor(scene: THREE.Scene, renderer: THREE.WebGPURenderer) {
     void renderer;
@@ -84,12 +87,24 @@ export class WorldView {
       polygonOffsetUnits: 4,
     });
     // Streets everywhere on the seamless block grid, and city lights far away (cityGround.ts).
-    this.groundMat.colorNode = cityGroundNode();
+    // From altitude, a shell of air hazes the ground toward the limb: deep blue facing the
+    // camera, electric blue to cyan where the view grazes the sphere (the planet's rim glows).
+    const centre: TslNode = vec3(curveOrigin.x, -PLANET.radius, curveOrigin.z);
+    const normal: TslNode = normalize(positionWorld.sub(centre));
+    const toEye: TslNode = normalize(cameraPosition.sub(positionWorld));
+    const graze: TslNode = float(1).sub(clamp(dot(normal, toEye), 0, 1));
+    const rim: TslNode = pow(graze, 6);
+    const haze: TslNode = (color('#0a1c5c') as TslNode).mul(pow(graze, 2).mul(0.35))
+      .add((color(GRID_SKY.band) as TslNode).mul(rim.mul(0.55)))
+      .add((color(NEON.cyan) as TslNode).mul(pow(graze, 18).mul(0.6)));
+    this.groundMat.colorNode = cityGroundNode().add(haze.mul(SKY_PLANET.shell));
     // The planet's ground: a disc that follows the camera, its rings widening with distance out
     // to just short of the antipode, so the curvature bend has vertices to bend. The ocean band
     // is cut out (the sea surface sits below the land level).
-    const sea: TslNode = wrapX(flatWorld.x);
-    this.groundMat.opacityNode = float(1).sub(step(float(COAST.x), sea).mul(step(sea, float(COAST.x + COAST.width))));
+    // From orbit (oceanCut 0) the ocean mesh is hidden and the ground draws the sea itself.
+    const sx: TslNode = wrapX(flatWorld.x);
+    const inOcean: TslNode = step(float(COAST.x), sx).mul(step(sx, float(COAST.x + COAST.width)));
+    this.groundMat.opacityNode = float(1).sub(inOcean.mul(this.oceanCut));
     this.groundMat.alphaTest = 0.5;
     // Off-Grid mountains: near the camera they are instanced solids (crisp planar faces); beyond
     // that range the disc is displaced by the same terrain the physics uses.
@@ -147,6 +162,15 @@ export class WorldView {
 
   /** Keep the sky and the ground disc centred on the camera and the light around the focus point. */
   update(camera: THREE.Camera, focus: THREE.Vector3): void {
+    // City lights LOD: on blocks beyond the lit-box range near the ground; everywhere (and a
+    // a touch brighter, so the globe glows) once the planet is seen whole.
+    const alt = camera.position.y;
+    const globe = alt > GLOBE_VIEW_ALT;
+    GLOBE_VIEW.on = globe;
+    // (1 m, not 0: smoothstep needs distinct edges.)
+    CITY_LIGHTS_FROM.value = globe ? 1 : 6000;
+    this.oceanCut.value = globe ? 0 : 1;
+    CITY_LIGHTS_GAIN.value = 1 + 0.25 * Math.min(1, Math.max(0, (alt - 3000) / 20000));
     this.sky.position.copy(camera.position);
     this.ground.position.set(camera.position.x, 0, camera.position.z);
     this.offGrid.update(camera.position);
