@@ -117,8 +117,9 @@ export class Hud {
     const show = !!o && (t.altitude > 2000 || o.speed > 150);
     row.style.display = show ? '' : 'none';
     if (!show || !o) return;
-    this.set(orb, `Ap ${o.apoapsis === null ? 'ESC' : km(o.apoapsis)} Pe ${km(o.periapsis)}`);
-    this.set(per, o.period === null ? '' : `T ${clock(o.period)}`);
+    // Ap/Pe in km (ESC = escape trajectory), then the period.
+    this.set(orb, `${o.apoapsis === null ? 'ESC' : km(o.apoapsis)}/${km(o.periapsis)}`);
+    this.set(per, o.period === null ? 'km' : `km ${clock(o.period)}`);
   }
 
   /** The craft blew up: show the banner (and hide the stall warning). */
@@ -174,7 +175,7 @@ function electricalFlags(e: Telemetry['electrical']): string[] {
 
 /** Altitude in km with one decimal (sub-surface periapsis shows negative). */
 function km(m: number): string {
-  return `${(m / 1000).toFixed(1)}k`;
+  return (m / 1000).toFixed(1);
 }
 
 /** Period as m:ss (h:mm:ss past an hour). */
