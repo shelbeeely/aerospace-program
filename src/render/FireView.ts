@@ -6,7 +6,7 @@ import { glow } from './neon.ts';
 /** Wire flames and expanding violet smoke rings, driven by real per-part combustion. */
 export class FireView {
   private readonly geometry = new THREE.BufferGeometry();
-  private readonly material = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false });
+  private readonly material = new THREE.LineBasicNodeMaterial({ vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false });
   private readonly lines = new THREE.LineSegments(this.geometry, this.material);
   constructor(scene: THREE.Scene) {
     // Reuse GPU buffers: replacing attributes every frame leaks backend buffers until disposal.
