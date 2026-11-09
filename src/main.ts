@@ -1,4 +1,6 @@
+import type { CraftDef } from './craft/types.ts';
 import * as THREE from 'three/webgpu';
+import { PLANET } from './sim/layout.ts';
 import { TEST_PLANE } from './craft/testPlane.ts';
 import { Hud } from './hud/Hud.ts';
 import { GamepadDevice, KeyboardDevice, PlayerInput, TouchDevice } from './input/PlayerInput.ts';
@@ -25,6 +27,13 @@ import { WeatherView } from './render/WeatherView.ts';
 import { CityView } from './render/CityView.ts';
 import { AirportView } from './render/AirportView.ts';
 import { KitTowersView } from './render/KitTowersView.ts';
+import { LandingSitesView } from './render/LandingSitesView.ts';
+import { PlanetCityView } from './render/PlanetCityView.ts';
+import { TrailView } from './render/TrailView.ts';
+import { ExplosionView } from './render/ExplosionView.ts';
+import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
+import { updateSkyPlanet } from './render/neon.ts';
+import { ChipsView } from './render/ChipsView.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
 import { FlightAutopilot } from './sim/flightAutopilot.ts';
@@ -140,10 +149,19 @@ async function start() {
   const cityView = new CityView(scene, sim.staticWorld);
   const airportView = new AirportView(scene);
   const kitView = new KitTowersView(scene, sim.staticWorld, import.meta.env.BASE_URL);
+  const sitesView = new LandingSitesView(scene, sim.staticWorld);
+  const planetView = new PlanetCityView(scene, sim.staticWorld, kitView);
+  const trailView = new TrailView(scene, sim.trails);
+  const chipsView = new ChipsView(scene, sim.chips);
+  const explosionView = new ExplosionView(scene);
+  let explosionHeardAt = -Infinity;
+  let explodedAt: number | null = null;
   const _wind10 = new THREE.Vector3();
   const _tmpWindPoint = new THREE.Vector3();
   const oceanView = new OceanView(scene, sim.ocean, sim.atmosphere.events);
   let viewVersion = sim.version;
+  let wrapsSeen = 0;
+  let curvatureTick = 0;
   let currentLivery: string | null = null;
   /** Rebuild the craft's visuals (new craft, or the sim rebuilt a broken one on reset). */
   const replaceCraftView = () => {
@@ -261,9 +279,11 @@ async function start() {
   }
 
   const flightLog = new FlightLog();
-  const reset = () => {
+  /** world: true rebuilds every structure and restarts the weather; false only respawns the craft. */
+  const reset = (world = true) => {
     autopilot.disengage();
-    sim.resetToRunway();
+    if (world) sim.resetToRunway();
+    else sim.respawn();
     player.reset();
     rig.snap();
     flightLog.reset();
@@ -296,7 +316,7 @@ async function start() {
     player.profile = vehicleKind(sim);
     controlsPanel.render();
     rig.fitCraft(sim.craft.boundingRadius());
-    reset();
+    reset(false);
     if (mode === 'hangar') showOnTurntable();
     studio.renderHangar();
   };
@@ -341,9 +361,68 @@ async function start() {
         row('SPAN', `${(span * 2).toFixed(1)} m`) +
         row('T/W', tw),
     );
+    craftCard.append(reinforcePanel());
+  };
+  /**
+   * Per-part reinforcement (hangar): levels 0-3, each +15% part mass, +60% strength, +80% impact
+   * HP. Saved into the craft definition (and the library entry, for generated craft).
+   */
+  let reinforceOpen = false;
+  const reinforcePanel = () => {
+    const def = sim.craft.def;
+    const details = document.createElement('details');
+    details.className = 'reinforce';
+    details.open = reinforceOpen;
+    details.addEventListener('toggle', () => (reinforceOpen = details.open));
+    const extra = def.parts.reduce((s, p) => s + p.mass * 0.15 * (p.reinforce ?? 0), 0);
+    const summary = document.createElement('summary');
+    summary.textContent = `REINFORCE${extra > 0 ? ` · +${extra.toFixed(0)} kg` : ''}`;
+    details.append(summary);
+    const list = document.createElement('div');
+    list.className = 'reinforce-list';
+    for (const p of def.parts) {
+      const label = document.createElement('label');
+      const name = document.createElement('span');
+      name.textContent = p.id;
+      name.title = p.kind;
+      const sel = document.createElement('select');
+      sel.setAttribute('aria-label', `Reinforcement for ${p.id}`);
+      for (let lv = 0; lv <= 3; lv++) {
+        const o = document.createElement('option');
+        o.value = String(lv);
+        o.textContent = lv ? `${'▮'.repeat(lv)} +${(p.mass * 0.15 * lv).toFixed(p.mass * 0.15 < 1 ? 1 : 0)} kg` : 'none';
+        sel.append(o);
+      }
+      sel.value = String(p.reinforce ?? 0);
+      sel.addEventListener('change', () => {
+        const next = structuredClone(def);
+        const part = next.parts.find((x) => x.id === p.id)!;
+        const lv = Number(sel.value);
+        if (lv) part.reinforce = lv;
+        else delete part.reinforce;
+        applyCraftEdit(next);
+      });
+      label.append(name, sel);
+      list.append(label);
+    }
+    details.append(list);
+    return details;
+  };
+  /** Swap in an edited version of the current craft (keeps its library entry in step). */
+  const applyCraftEdit = (def: CraftDef) => {
+    sim.loadCraft(def);
+    replaceCraftView();
+    viewVersion = sim.version;
+    if (currentEntry) {
+      library.update(currentEntry.id, { craft: def });
+      currentEntry = { ...currentEntry, craft: def };
+    }
+    if (mode === 'hangar') showOnTurntable();
+    else updateCraftCard();
   };
   const setMode = (m: AppMode) => {
     if (captureBusy) return;
+    curveOn.value = m === 'flight' ? 1 : 0; // the hangar is flat
     autopilot.disengage();
     mode = m;
     syncRenderControls();
@@ -360,7 +439,7 @@ async function start() {
     debug.setVisible(!hangar && debugOn); // the CoM/CoL markers ride on the craft view
     if (hangar) {
       // Physics is paused in the hangar: put the craft back at its spawn pose on the turntable.
-      sim.resetToRunway();
+      sim.respawn(); // the world (and its wreckage) stays as it is
       if (sim.version !== viewVersion) {
         if (sim.craft !== craftView.craft) replaceCraftView();
         viewVersion = sim.version;
@@ -374,7 +453,7 @@ async function start() {
         document.getElementById('studio-open')?.setAttribute('aria-expanded', 'false');
       } else studio.show();
     } else {
-      reset();
+      reset(false);
     }
     flyBtn.blur();
     toHangarBtn.blur();
@@ -383,7 +462,7 @@ async function start() {
   const fly = (entry?: LibraryEntry | null) => {
     if (entry !== undefined) select(entry);
     if (mode !== 'flight') setMode('flight');
-    else reset();
+    else reset(false);
   };
   flyBtn.addEventListener('click', () => fly());
   toHangarBtn.addEventListener('click', () => setMode('hangar'));
@@ -534,7 +613,9 @@ async function start() {
       },
       setPilot: (p: ControlSource | null) => (pilot = p ?? autopilot),
       autopilot,
-      reset,
+      /** Reset the whole world (respawn() keeps the world and only replaces the craft). */
+      reset: () => reset(true),
+      respawn: () => reset(false),
     },
   });
 
@@ -578,7 +659,7 @@ async function start() {
           toast('Autopilot off');
         } else {
           const kind = vehicleKind(sim);
-          if (kind === 'lighter-than-air') toast('No autopilot for this craft');
+          if (kind === 'lighter-than-air' || kind === 'ground') toast('No autopilot for this craft');
           else {
             autopilot.engage(telemetry, kind);
             const st = autopilot.state;
@@ -586,11 +667,16 @@ async function start() {
           }
         }
       }
+      else if (a === 'trail') {
+        const m = sim.trails.cycleMode(sim.craft, sim.isAirplane(), sim.time);
+        toast(m === 'wall' ? 'Jetwall: solid light' : m === 'ribbon' ? 'Light ribbon: fades behind you' : 'Trail off');
+      }
       else if (a === 'screenshot') void takePhoto();
       else if (a === 'nextVehicle') cycleCraft(1);
       else if (a === 'prevVehicle') cycleCraft(-1);
       else if (mode !== 'flight') continue; // the rest only means something in flight
-      else if (a === 'reset') reset();
+      else if (a === 'reset') { reset(false); toast('New plane — the world stays as it is'); }
+      else if (a === 'resetWorld') { reset(true); toast('World reset'); }
       else if (a === 'camera') rig.toggle(renderPos);
       else if (a === 'help') {
         controlsPanel.render(); // reflect the current profile / devices
@@ -638,7 +724,29 @@ async function start() {
     debrisView.update(sim.debris);
     townView.update(dt);
     cityView.update(dt);
-    kitView.update();
+    kitView.update(camera.position);
+    sitesView.update();
+    planetView.update(camera.position);
+    trailView.update(sim.time);
+    chipsView.update(dt);
+    explosionView.update(sim.time, sim.explosions);
+    if (!sim.explosions.length) explosionHeardAt = -Infinity;
+    for (const e of sim.explosions) {
+      if (e.time <= explosionHeardAt) continue;
+      explosionHeardAt = e.time;
+      audio.explosion(Math.hypot(e.x - camera.position.x, e.y - camera.position.y, e.z - camera.position.z));
+      player.rumble(1, 900);
+    }
+    // A wreck is replaced by a new plane on the runway after a few seconds (the world stays).
+    if (sim.exploded && explodedAt === null) explodedAt = sim.time;
+    if (!sim.exploded) explodedAt = null;
+    const respawnLeft = explodedAt === null ? 0 : TUNING.respawnDelay - (sim.time - explodedAt);
+    hud.setDestroyed(sim.exploded, Math.max(0, respawnLeft));
+    if (explodedAt !== null && respawnLeft <= 0) {
+      explodedAt = null;
+      reset(false);
+      toast('New plane on the runway');
+    }
     oceanView.update(sim.time, camera);
     lightningView.update(sim.time, sim.lightning.strikes, sim.craft, Math.max(sim.lightning.staticCharge, (sim.atmosphere.settings.storm ?? 0) * 0.5));
     fireView.update(sim.time, sim.fire, sim.craft);
@@ -660,7 +768,24 @@ async function start() {
 
     const v = sim.craft.body.linvel();
     velocity.set(v.x, v.y, v.z);
+    // Crossed a wrap edge: the craft jumped one circumference; the camera jumps with it.
+    if (sim.wrapCount !== wrapsSeen) {
+      wrapsSeen = sim.wrapCount;
+      rig.snap();
+    }
     rig.update(dt, renderPos, renderRot, velocity);
+    // Planet curvature follows the camera; from high up the clip range opens to show the globe.
+    curveOrigin.value.copy(camera.position);
+    updateSkyPlanet(camera.position.y, PLANET.radius);
+    const alt = Math.max(0, camera.position.y);
+    const far = Math.max(20000, Math.min(PLANET.radius * 3, 6000 + Math.sqrt(2 * PLANET.radius * alt + alt * alt) * 1.6));
+    const near = Math.min(20, Math.max(0.3, alt / 4000));
+    if (Math.abs(camera.far - far) > far * 0.05 || camera.near !== near) {
+      camera.far = far;
+      camera.near = near;
+      camera.updateProjectionMatrix();
+    }
+    if (++curvatureTick % 60 === 1) applyCurvature(scene);
     worldView.update(camera, renderPos);
     airportView.update(camera, sim.atmosphere.windAt(_tmpWindPoint.set(renderPos.x, 10, renderPos.z), 0, _wind10));
     disasterView.update(sim.atmosphere.events);

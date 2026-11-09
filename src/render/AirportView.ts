@@ -126,7 +126,8 @@ export class AirportView {
     const centre: TslNode = step(abs(across.sub(w / 2)), float(0.2)) as TslNode;
     const edge: TslNode = step(min(across, float(w).sub(across)) as TslNode, float(0.35)) as TslNode;
     mat.colorNode = (color('#03050f') as TslNode).add(color('#39ff6a').mul(centre.mul(2.2))).add(color('#ffd23f').mul(edge.mul(1.6)));
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(along === 'z' ? w : l, along === 'z' ? l : w).rotateX(-Math.PI / 2), mat);
+    const n = Math.ceil(l / 40);
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(along === 'z' ? w : l, along === 'z' ? l : w, along === 'z' ? 1 : n, along === 'z' ? n : 1).rotateX(-Math.PI / 2), mat);
     mesh.position.set(x, 0.025, z);
     return mesh;
   }
@@ -144,7 +145,7 @@ export class AirportView {
     }
     const grid: TslNode = step(fract(p.x.div(20)), float(0.02)).add(step(fract(p.y.div(20)), float(0.02))).min(1);
     mat.colorNode = (color('#04071a') as TslNode).add(color('#1f3cff').mul(grid.mul(0.35))).add(color('#ffd23f').mul(lead.min(1).mul(1.6)));
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), mat);
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d, Math.ceil(w / 40), Math.ceil(d / 40)).rotateX(-Math.PI / 2), mat);
     mesh.position.set(x, 0.022, z);
     return mesh;
   }

@@ -81,6 +81,19 @@ export class PlayerInput implements ControlSource {
     this.smoothed.yaw += (clamp1(r.yaw) - this.smoothed.yaw) * k;
     this.throttle = Math.max(0, Math.min(1, this.throttle + clamp1(r.throttleRate) * TUNING.throttleRate * dt));
     this.trim = Math.max(-0.5, Math.min(0.5, this.trim + clamp1(r.trimRate) * TUNING.trimRate * dt));
+    if (this.profile === 'ground') {
+      // Ground vehicles: W/stick-forward accelerates, S/stick-back brakes, A/D (or Q/E) steer;
+      // the throttle lever still sets a cruise power.
+      const fwd = Math.max(0, -this.smoothed.pitch), back = Math.max(0, this.smoothed.pitch);
+      return {
+        pitch: 0,
+        roll: 0,
+        yaw: clamp1(this.smoothed.roll + this.smoothed.yaw),
+        throttle: Math.max(this.throttle, fwd),
+        brake: Math.min(1, Math.max(r.brake, back)),
+        flaps: 0,
+      };
+    }
     return {
       pitch: clamp1(this.smoothed.pitch + this.trim),
       roll: this.smoothed.roll,

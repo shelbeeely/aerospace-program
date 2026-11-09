@@ -186,6 +186,8 @@ export interface WheelDef {
   damping: number;
   /** Max steering angle (deg), driven by the yaw channel. */
   maxSteerDeg?: number;
+  /** Driven wheel: the throttle pushes it along the ground with up to this force (N). */
+  drive?: number;
   brakes?: boolean;
 }
 
@@ -260,6 +262,25 @@ export interface AvionicsDef {
   essential?: boolean;
 }
 
+/** Gyro stabiliser: keeps a two-wheel craft upright, leaning into turns (light cycles). */
+export interface StabilizerDef {
+  type: 'stabilizer';
+  offset?: Vec3Tuple;
+  /** Roll stiffness (N·m per radian of error). ~10× the craft mass is a good start. */
+  strength: number;
+}
+
+/** Where the craft lays down a light trail. */
+export interface TrailDef {
+  type: 'trail';
+  offset?: Vec3Tuple;
+  /** 'wall': a light cycle's jetwall / light ribbon (from the ground up to `height`); 'contrail': a thin energy path. */
+  kind: 'wall' | 'contrail';
+  /** Wall height (m) or contrail width (m). */
+  height: number;
+  color: string;
+}
+
 export type ModuleDef =
   | AeroSurfaceDef
   | EngineDef
@@ -273,7 +294,9 @@ export type ModuleDef =
   | BatteryDef
   | MotorDef
   | GeneratorDef
-  | AvionicsDef;
+  | AvionicsDef
+  | StabilizerDef
+  | TrailDef;
 
 export interface PartDef {
   id: string;
@@ -299,6 +322,8 @@ export interface PartDef {
    * mass and volume. Use 0 for indestructible.
    */
   hp?: number;
+  /** Reinforcement level 0-3: each level adds 60% strength, 80% impact HP and voxel toughness, and 15% of the part's mass. */
+  reinforce?: number;
 }
 
 export interface CraftDef {

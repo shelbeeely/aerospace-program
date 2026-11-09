@@ -74,6 +74,8 @@ export class Rotor implements ForceModule {
   torque = 0;
   /** Blade azimuth for visuals (rad). */
   angle = 0;
+  /** Fraction of the part's voxels still attached (impact damage). */
+  integrity = 1;
   /** Ice thickness on the blade leading edges (m). */
   ice = 0;
   /** 0..1 how deep in vortex ring state; ground effect inflow reduction 0..1. */
@@ -416,6 +418,8 @@ export class Rotor implements ForceModule {
       res = { thrust: res.thrust * (1 - this.vortexRing * (0.3 + 0.15 * surge)), torque: res.torque };
     }
 
+    // Chipped blades lose thrust fast (lift goes with blade area, and they shake).
+    if (this.integrity < 1) res = { thrust: res.thrust * this.integrity ** 2, torque: res.torque };
     this.thrust = res.thrust;
     this.torque = res.torque;
 

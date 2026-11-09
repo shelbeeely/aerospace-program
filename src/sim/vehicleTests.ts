@@ -5,7 +5,7 @@ import type { ControlInputs } from './controls.ts';
 import type { Simulation } from './Simulation.ts';
 import type { Telemetry } from './telemetry.ts';
 
-export type VehicleKind = 'airplane' | 'rotorcraft' | 'lighter-than-air';
+export type VehicleKind = 'airplane' | 'rotorcraft' | 'lighter-than-air' | 'ground';
 
 /** What kind of test card fits this craft. */
 export function vehicleKind(sim: Simulation): VehicleKind {
@@ -13,6 +13,7 @@ export function vehicleKind(sim: Simulation): VehicleKind {
   const weight = craft.massProps.mass * TUNING.gravity;
   const buoyancy = craft.gasCells.reduce((a, c) => a + c.seaLevelLift(), 0);
   if (buoyancy > 0.7 * weight) return 'lighter-than-air';
+  if (craft.wheels.some((w) => (w.def.drive ?? 0) > 0)) return 'ground';
   if (craft.rotors.length && craft.flightController) return 'rotorcraft';
   if (craft.rotors.length && !craft.engines.length) return 'rotorcraft';
   return 'airplane';
@@ -228,4 +229,74 @@ export async function lighterThanAirCard(sim: Simulation, step: Step, state: { c
   phases.push({ name: 'hands-off', passed: stable, points: 25 });
 
   return { phases, maxAltitude: r1(maxAltitude), crashed: state.crashed, issues, log };
+}
+
+/** Steering and speed control for ground vehicles (test cards, and later AI riders). */
+export class GroundPilot {
+  heading: number;
+  speed: number;
+  brake = 0;
+  private speedI = 0;
+  constructor(heading: number, speed: number) {
+    this.heading = heading;
+    this.speed = speed;
+  }
+  sample(dt: number, t: Telemetry): ControlInputs {
+    const err = ((((this.heading - t.heading) % 360) + 540) % 360) - 180;
+    const yaw = Math.max(-1, Math.min(1, err * 0.04));
+    const se = this.speed - t.groundSpeed;
+    this.speedI = Math.max(-5, Math.min(5, this.speedI + se * dt));
+    const throttle = this.brake > 0 ? 0 : Math.max(0, Math.min(1, 0.3 + se * 0.15 + this.speedI * 0.05));
+    return { pitch: 0, roll: 0, yaw, throttle, brake: this.brake };
+  }
+}
+
+/**
+ * Ground vehicle card (light cycles, cars): rest upright, accelerate to 25 m/s, turn to 090,
+ * brake to a stop, never falling over.
+ */
+export async function groundCard(sim: Simulation, step: Step, state: { crashed: boolean }): Promise<CardResult> {
+  const issues: string[] = [];
+  const log: string[] = [];
+  const phases: CardResult['phases'] = [];
+  let worstRoll = 0;
+  const watch = (pilot: (t: Telemetry) => ControlInputs) => (t: Telemetry) => {
+    worstRoll = Math.max(worstRoll, Math.abs(t.roll));
+    return pilot(t);
+  };
+  let t = await step(watch(() => ({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 })), 3);
+  const restOk = t.onGround && Math.abs(t.roll) < 10;
+  phases.push({ name: 'rest', passed: restOk, points: 10 });
+  log.push(`rest: roll ${t.roll}°, on wheels ${t.onGround}`);
+  if (!restOk) issues.push(`Does not stand upright on its wheels at rest (roll ${t.roll}°): add a "stabilizer" module, or wheels spread sideways.`);
+
+  const pilot = new GroundPilot(t.heading, 25);
+  const t0 = t.time;
+  t = await step(watch((tt) => pilot.sample(sim.dt, tt)), 25, (tt) => tt.groundSpeed >= 25);
+  const accel = t.groundSpeed >= 24 && !state.crashed;
+  phases.push({ name: 'accelerate', passed: accel, points: 30 });
+  log.push(`accelerate: ${r1(t.groundSpeed)} m/s after ${r1(t.time - t0)} s`);
+  if (!accel) issues.push(`Only reached ${r1(t.groundSpeed)} m/s: give the rear wheel more "drive" (N) or reduce mass and drag.`);
+
+  pilot.heading = (t.heading + 90) % 360;
+  pilot.speed = 20;
+  t = await step(watch((tt) => pilot.sample(sim.dt, tt)), 15);
+  const err = Math.abs(((((pilot.heading - t.heading) % 360) + 540) % 360) - 180);
+  const turned = err < 15 && !state.crashed;
+  phases.push({ name: 'turn', passed: turned, points: 25 });
+  log.push(`turn: heading ${Math.round(t.heading)}° (target ${Math.round(pilot.heading)}), lean ${t.roll}°`);
+  if (!turned) issues.push(`Could not turn to ${Math.round(pilot.heading)}° (ended ${Math.round(t.heading)}°): more "maxSteerDeg" on the front wheel, or more grip.`);
+
+  pilot.brake = 1;
+  t = await step(watch((tt) => pilot.sample(sim.dt, tt)), 15, (tt) => tt.groundSpeed < 0.5);
+  const stopped = t.groundSpeed < 1 && !state.crashed;
+  phases.push({ name: 'brake', passed: stopped, points: 20 });
+  log.push(`brake: ${r1(t.groundSpeed)} m/s`);
+  if (!stopped) issues.push('Did not stop: give the wheels "brakes": true.');
+
+  const upright = worstRoll < 50 && !state.crashed;
+  phases.push({ name: 'upright', passed: upright, points: 15 });
+  log.push(`max lean ${Math.round(worstRoll)}°`);
+  if (!upright) issues.push(`Fell over (lean reached ${Math.round(worstRoll)}°): stronger "stabilizer", lower centre of mass.`);
+  return { phases, maxAltitude: 0, crashed: state.crashed, issues, log };
 }

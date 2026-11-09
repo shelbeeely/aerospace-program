@@ -6,7 +6,9 @@
  */
 import { JET } from '../src/craft/jet.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
-import { heightCap } from '../src/sim/layout.ts';
+import { CITY, heightCap, runwayFrame } from '../src/sim/layout.ts';
+import { landingSites } from '../src/world/landingSites.ts';
+import { TUNING } from '../src/tuning.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 import { worldStructures } from '../src/world/structures.ts';
 
@@ -34,8 +36,27 @@ const breach = zoned.filter((p) => {
 check(breach.length === 0, 'every city structure respects the airport height zoning', breach.length ? `${breach.length} breaches, e.g. ${breach[0].x.toFixed(0)},${breach[0].z.toFixed(0)}` : `${zoned.length} pieces`);
 const span = { x0: Math.min(...zoned.map((p) => p.x)), x1: Math.max(...zoned.map((p) => p.x)), z0: Math.min(...zoned.map((p) => p.z)), z1: Math.max(...zoned.map((p) => p.z)) };
 check(span.x1 - span.x0 > 6000 && span.z1 - span.z0 > 9000, 'the city covers the whole land', `${(span.x1 - span.x0).toFixed(0)} × ${(span.z1 - span.z0).toFixed(0)} m`);
+// --- Landing sites: every runway strip and street pad is clear of structures; rooftop pads exist.
+{
+  const sites = landingSites();
+  const blocked: string[] = [];
+  for (const s of sites) {
+    if (s.y > 0) continue;
+    const hit = w.list.find((p) => {
+      if (s.kind === 'runway') {
+        const a = runwayFrame(s, p.x, p.z);
+        const halfAlong = (s.axis === 'z' ? p.sz : p.sx) / 2, halfAcross = (s.axis === 'z' ? p.sx : p.sz) / 2;
+        return Math.abs(a.across) < s.width / 2 + 20 + halfAcross && Math.abs(a.along) < s.length / 2 + 60 + halfAlong;
+      }
+      return Math.hypot(Math.max(Math.abs(p.x - s.x) - p.sx / 2, 0), Math.max(Math.abs(p.z - s.z) - p.sz / 2, 0)) < s.width + 10;
+    });
+    if (hit) blocked.push(`${s.name} (${w.groups[hit.group].name})`);
+  }
+  check(blocked.length === 0, 'every airstrip and street helipad is clear', blocked.length ? blocked.join(', ') : `${sites.filter((s) => s.kind === 'runway').length} runways, ${sites.filter((s) => s.kind === 'helipad').length} helipads`);
+  check(sites.filter((s) => s.group !== undefined).length >= 6, 'rooftop helipads sit on towers across the hubs', `${sites.filter((s) => s.group !== undefined).length} rooftop pads`);
+}
 const kits = w.groups.filter((g) => g.kit).length;
-check(kits > 50, 'imported kit towers are placed across the grid', `${kits} towers`);
+check(kits > 500, 'imported kit towers are placed across the grid', `${kits} towers`);
 const tallest = city.reduce((a, b) => (b.size[1] * b.blockSize > a.size[1] * a.blockSize ? b : a));
 check(tallest.size[1] * tallest.blockSize > 450, 'the landmark spire tops 450 m', `${(tallest.size[1] * tallest.blockSize).toFixed(0)} m`);
 
@@ -115,6 +136,39 @@ sim.resetToRunway();
 const sim2 = new Simulation(TEST_PLANE);
 for (let i = 0; i < 120 * 5; i++) sim2.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
 check(sim2.failures.length === 0 && sim2.staticWorld.fractured.size === 0, 'a parked plane on the runway touches nothing');
+
+// --- Earthquake: towers near the craft fracture and come down block by block
+{
+  const q = new Simulation(TEST_PLANE);
+  const { x: hx, z: hz } = CITY.hubs[0];
+  q.atmosphere.events.trigger('earthquake', { duration: 12 });
+  const destroyed0 = q.town.destroyed;
+  let spawned = 0;
+  let last = q.town.pool.version;
+  let peakFractured = 0;
+  const t0 = performance.now();
+  const steps = Math.round(14 / q.dt);
+  const accel = { x: 0, y: 0, z: 0 } as { x: number; y: number; z: number };
+  for (let i = 0; i < steps; i++) {
+    // Shake around downtown (the sim itself shakes around the craft on the runway).
+    const a = q.atmosphere.events.groundAcceleration();
+    accel.x = a.x; accel.z = a.z;
+    q.staticWorld.shake(accel, hx, hz, q.time);
+    q.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
+    peakFractured = Math.max(peakFractured, q.staticWorld.fractured.size);
+    if (q.town.pool.version !== last) spawned++;
+    last = q.town.pool.version;
+  }
+  const ms = (performance.now() - t0) / steps;
+  const names = [...q.staticWorld.fractured.values()].map((b) => b.def.id);
+  check(peakFractured > 0, 'the quake fractures downtown towers', `${peakFractured} structures (${names.slice(0, 3).join(', ')}…)`);
+  check(q.town.destroyed - destroyed0 > 50, 'shaking knocks blocks out of them', `${q.town.destroyed - destroyed0} blocks destroyed`);
+  check(spawned > 0, 'what they held up comes down as rubble', `${spawned} rubble spawns`);
+  check(peakFractured <= TUNING.maxFracturedStructures, 'within the fracture cap', `${peakFractured}/${TUNING.maxFracturedStructures}`);
+  check(ms < 6, 'step time during the collapse', `avg ${ms.toFixed(2)} ms`);
+  q.resetToRunway();
+  check(q.staticWorld.fractured.size === 0, 'world reset rebuilds them');
+}
 
 function centre(b: { worldCentre(c: { x: number; y: number; z: number }, o: { x: number; y: number; z: number }): { x: number; y: number; z: number } }, block: { x: number; y: number; z: number }): [number, number, number] {
   const p = b.worldCentre(block, { x: 0, y: 0, z: 0 });

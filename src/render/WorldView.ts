@@ -1,7 +1,10 @@
 import * as THREE from 'three/webgpu';
-import { abs, float, fwidth, max, smoothstep, step, uniform, uv, vec2 } from 'three/tsl';
-import { COAST, LAYOUT } from '../sim/layout.ts';
-import { GRID_SKY, NEON, glow, groundGridNode, synthSkyNode, type TslNode } from './neon.ts';
+import { abs, float, fwidth, max, modelWorldMatrix, positionLocal, smoothstep, step, uniform, uv, vec2, vec3, vec4 } from 'three/tsl';
+import { COAST, PLANET, RUNWAYS, type LandingSite } from '../sim/layout.ts';
+import { cityGroundNode, summary } from './cityGround.ts';
+import { terrainHeightNode } from './terrainNode.ts';
+import { flatWorld } from './curvature.ts';
+import { GRID_SKY, NEON, glow, synthSkyNode, type TslNode } from './neon.ts';
 
 const HORIZON = new THREE.Color(GRID_SKY.horizon);
 const ZENITH = new THREE.Color(GRID_SKY.zenith);
@@ -41,6 +44,7 @@ export class WorldView {
   readonly runwayCentre = glow(NEON.magenta, 2.6);
   groundMat!: THREE.MeshBasicNodeMaterial;
   runwayMat!: THREE.MeshBasicNodeMaterial;
+  private readonly ground: THREE.Mesh;
 
   constructor(scene: THREE.Scene, renderer: THREE.WebGPURenderer) {
     void renderer;
@@ -58,6 +62,7 @@ export class WorldView {
     });
     this.sky = new THREE.Mesh(new THREE.SphereGeometry(9500, 48, 24), skyMat);
     this.sky.renderOrder = -1;
+    this.sky.userData.noCurve = true;
     this.sky.frustumCulled = false;
     scene.add(this.sky);
 
@@ -75,25 +80,37 @@ export class WorldView {
       polygonOffsetFactor: 1,
       polygonOffsetUnits: 4,
     });
-    this.groundMat.colorNode = groundGridNode(uniform(this.groundBase), uniform(this.gridColor), {
-      minor: 10,
-      major: 100,
-      fade: 6000,
-    });
-    const landWidth = COAST.x + LAYOUT.groundSize / 2;
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(landWidth, LAYOUT.groundSize), this.groundMat);
-    ground.position.x = (COAST.x - LAYOUT.groundSize / 2) / 2;
-    ground.rotation.x = -Math.PI / 2;
-    scene.add(ground);
+    // Streets everywhere on the seamless block grid, and city lights far away (cityGround.ts).
+    this.groundMat.colorNode = cityGroundNode();
+    // The planet's ground: a disc that follows the camera, its rings widening with distance out
+    // to just short of the antipode, so the curvature bend has vertices to bend. The ocean band
+    // is cut out (the sea surface sits below the land level).
+    const sea: TslNode = wrapX(flatWorld.x);
+    this.groundMat.opacityNode = float(1).sub(step(float(COAST.x), sea).mul(step(sea, float(COAST.x + COAST.width))));
+    this.groundMat.alphaTest = 0.5;
+    // Off-Grid mountains: displace the disc by the same terrain the physics uses.
+    const wp: TslNode = modelWorldMatrix.mul(vec4(positionLocal, 1)).xyz;
+    this.groundMat.positionNode = positionLocal.add(vec3(0, terrainHeightNode(summary(), wp.x, wp.z), 0));
+    this.ground = new THREE.Mesh(groundDisc(PLANET.radius * Math.PI * 0.97), this.groundMat);
+    this.ground.frustumCulled = false;
+    scene.add(this.ground);
 
     // Runway (visual only; physically the ground is flat everywhere): dark strip, neon edge
     // lines, threshold bars and aiming points, dashed magenta centreline.
-    const { length, width, centerZ } = LAYOUT.runway;
-    this.runwayMat = new THREE.MeshBasicNodeMaterial({
+    for (const r of RUNWAYS) scene.add(this.runway(r));
+
+    this.addScenery(scene);
+  }
+
+  /** One runway: dark strip, neon edges, threshold bars, aiming points, dashed magenta centreline. */
+  private runway(r: LandingSite): THREE.Mesh {
+    const { length, width } = r;
+    const mat = new THREE.MeshBasicNodeMaterial({
       polygonOffset: true,
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -4,
     });
+    this.runwayMat ??= mat;
     // Metres across (0..width) and along (0..length) the strip.
     const p = uv().mul(vec2(width, length));
     const x = p.x;
@@ -101,7 +118,6 @@ export class WorldView {
     const edges = band(x, 1.0, 0.45).add(band(x, width - 1.0, 0.45));
     const dash = float(1).sub(step(float(0.6), z.sub(70).div(50).fract())).mul(step(70, z)).mul(step(z, length - 70));
     const centre = band(x, width / 2, 0.45).mul(dash);
-    // Threshold "piano keys" and aiming points at both ends.
     let keys: TslNode = float(0);
     for (let i = 0; i < 6; i++) {
       const xk = 2.5 + i * 1.8 + 0.6;
@@ -109,26 +125,63 @@ export class WorldView {
     }
     const nearEnd = band(z, 21, 15).add(band(z, length - 21, 15));
     const aim = band(x, width / 2 - 7, 2).add(band(x, width / 2 + 7, 2)).mul(band(z, 322.5, 22.5).add(band(z, length - 322.5, 22.5)));
-    const ends = band(z, 1.2, 0.6).add(band(z, length - 1.2, 0.6)); // cross bars at the very ends
+    const ends = band(z, 1.2, 0.6).add(band(z, length - 1.2, 0.6));
     const marks: TslNode = edges.add(keys.mul(nearEnd).mul(0.1)).add(aim.mul(0.14)).add(ends).min(1);
     const surface: TslNode = uniform(this.runwayBase);
-    this.runwayMat.colorNode = surface.add(uniform(this.runwayEdge).mul(marks)).add(uniform(this.runwayCentre).mul(centre));
-    const runway = new THREE.Mesh(new THREE.PlaneGeometry(width, length), this.runwayMat);
-    runway.rotation.x = -Math.PI / 2;
-    runway.position.set(0, 0.03, centerZ);
-    scene.add(runway);
-
-    this.addScenery(scene);
+    mat.colorNode = surface.add(uniform(this.runwayEdge).mul(marks)).add(uniform(this.runwayCentre).mul(centre));
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, length, 1, Math.ceil(length / 40)), mat);
+    mesh.rotation.x = -Math.PI / 2;
+    if (r.axis === 'x') mesh.rotation.z = Math.PI / 2;
+    mesh.position.set(r.x, 0.03, r.z);
+    return mesh;
   }
 
   private addScenery(_scene: THREE.Scene): void {
     // The Grid covers the land: buildings (CityView) replace the old scattered trees.
   }
 
-  /** Keep the sky centred on the camera and the light around the focus point. */
+  /** Keep the sky and the ground disc centred on the camera and the light around the focus point. */
   update(camera: THREE.Camera, focus: THREE.Vector3): void {
     this.sky.position.copy(camera.position);
+    this.ground.position.set(camera.position.x, 0, camera.position.z);
     this.sun.target.position.copy(focus);
     this.sun.position.copy(focus).addScaledVector(SUN_DIR, 300);
   }
+}
+
+/** x wrapped into [-C/2, C/2) in a shader (the ocean band repeats every circumference). */
+function wrapX(x: TslNode): TslNode {
+  const c = PLANET.circumference;
+  return x.sub(x.add(c / 2).div(c).floor().mul(c));
+}
+
+/** A flat disc (y = 0) of exponentially widening rings: dense near the centre, sparse far out. */
+function groundDisc(radius: number): THREE.BufferGeometry {
+  const rings = 120;
+  const segs = 160;
+  const r0 = 2;
+  const k = Math.pow(radius / r0, 1 / (rings - 1));
+  const pos: number[] = [0, 0, 0];
+  for (let i = 0; i < rings; i++) {
+    const r = r0 * Math.pow(k, i);
+    for (let j = 0; j < segs; j++) {
+      const a = (j / segs) * Math.PI * 2;
+      pos.push(Math.cos(a) * r, 0, Math.sin(a) * r);
+    }
+  }
+  const idx: number[] = [];
+  for (let j = 0; j < segs; j++) idx.push(0, 1 + ((j + 1) % segs), 1 + j);
+  for (let i = 0; i < rings - 1; i++) {
+    for (let j = 0; j < segs; j++) {
+      const a = 1 + i * segs + j;
+      const b = 1 + i * segs + ((j + 1) % segs);
+      const c = a + segs;
+      const d = b + segs;
+      idx.push(a, b, c, b, d, c);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  return g;
 }

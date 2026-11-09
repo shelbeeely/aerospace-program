@@ -6,7 +6,7 @@ import { Autopilot } from './autopilot.ts';
 import { LAYOUT } from './layout.ts';
 import { Simulation } from './Simulation.ts';
 import type { Telemetry } from './telemetry.ts';
-import { lighterThanAirCard, rotorcraftCard, vehicleKind, type VehicleKind } from './vehicleTests.ts';
+import { groundCard, lighterThanAirCard, rotorcraftCard, vehicleKind, type VehicleKind } from './vehicleTests.ts';
 
 /** Numbers computed from the design itself, before flying. */
 /** Human-readable failure line (structural overload or impact damage). */
@@ -132,6 +132,9 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
   if (kind === 'airplane' && design.thrustToWeight < 0.25)
     issues.push(`Underpowered: thrust/weight ${design.thrustToWeight}. Aim for 0.35-0.6 for a prop plane.`);
   if (kind === 'airplane' && design.wheels === 0) issues.push('No wheels: the craft cannot take off from the runway.');
+  const strike = sim.craft.tailStrikeAngle();
+  if (kind === 'airplane' && strike !== null && strike < 10)
+    issues.push(`Tail-strike angle only ${r1(strike)}°: the tail drags if the nose rotates past that on take-off or landing (tail-strike protection then limits rotation). Aim for 12-15°: lengthen the main gear, move it aft, or raise the tail.`);
 
   const v = new THREE.Vector3();
   const step = async (pilot: (t: Telemetry) => Parameters<Simulation['step']>[0], seconds: number, until?: (t: Telemetry) => boolean) => {
@@ -172,7 +175,7 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
         return crashed;
       },
     };
-    const card = kind === 'rotorcraft' ? await rotorcraftCard(sim, step, state) : await lighterThanAirCard(sim, step, state);
+    const card = kind === 'rotorcraft' ? await rotorcraftCard(sim, step, state) : kind === 'ground' ? await groundCard(sim, step, state) : await lighterThanAirCard(sim, step, state);
     issues.push(...card.issues);
     log.push(...card.log);
     const failures = sim.failures.map(({ partId, load, strength, cause }) => ({ partId, load, strength, cause }));

@@ -1,5 +1,5 @@
 /** Which control layout fits the craft being flown. */
-export type ControlProfile = 'airplane' | 'rotorcraft' | 'lighter-than-air';
+export type ControlProfile = 'airplane' | 'rotorcraft' | 'lighter-than-air' | 'ground';
 
 /** Raw per-device intent. All devices write into the same shape; axes are summed then clamped. */
 export interface RawInput {
@@ -19,6 +19,7 @@ export interface RawInput {
 
 export type Action =
   | 'reset'
+  | 'resetWorld'
   | 'camera'
   | 'debug'
   | 'help'
@@ -30,7 +31,8 @@ export type Action =
   | 'screenshot'
   | 'record'
   | 'mouseFlight'
-  | 'autopilot';
+  | 'autopilot'
+  | 'trail';
 
 /** What a device may know about the game when it reads. */
 export interface InputContext {

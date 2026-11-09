@@ -30,6 +30,7 @@ export class Hud {
     oat: $('h-oat'),
     wx: $('h-wx'),
     stall: $('stall'),
+    destroyed: $('destroyed'),
     help: $('help'),
     debug: $('debug'),
     stats: $('d-stats'),
@@ -102,6 +103,15 @@ export class Hud {
       .join('  ');
     this.set(this.el.flags, flags);
     this.el.stall.classList.toggle('hidden', !(t.stall > 0.35 && !t.onGround && t.airspeed > 5));
+  }
+
+  /** The craft blew up: show the banner (and hide the stall warning). */
+  setDestroyed(on: boolean, respawnIn = 0): void {
+    this.el.destroyed.classList.toggle('hidden', !on);
+    if (!on) return;
+    this.el.stall.classList.add('hidden');
+    const small = this.el.destroyed.querySelector('small');
+    if (small) this.set(small as HTMLElement, `New plane in ${Math.ceil(respawnIn)}… · Backspace resets the world`);
   }
 
   toggleHelp(): void {

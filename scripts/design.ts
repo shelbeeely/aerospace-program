@@ -1,7 +1,7 @@
 /**
  * Generate a craft from a description, flight-test it, iterate, and save it.
  *
- *   npm run design -- "a stubby twin-boom cargo plane" [--designer id] [--engineer id] [--rounds 3] [--base crafts/x.json]
+ *   npm run design -- "a stubby twin-boom cargo plane" [--designer id] [--engineer id] [--rounds 4] [--drafts 2] [--base crafts/x.json]
  *
  * Needs OPENROUTER_API_KEY in the environment (or a proxy that injects it).
  */
@@ -24,11 +24,12 @@ const opt = (name: string) => {
 const model = opt('designer') ?? opt('model') ?? JOBS.designer.free[0];
 const engineer = opt('engineer') ?? JOBS.engineer.free[0];
 const backups = (list: string[], primary: string) => list.filter((m) => m !== primary).slice(0, 2);
-const rounds = Number(opt('rounds') ?? 3);
+const rounds = Number(opt('rounds') ?? 4);
+const drafts = Number(opt('drafts') ?? 2);
 const basePath = opt('base');
 const prompt = args.join(' ').trim();
 if (!prompt) {
-  console.error('usage: npm run design -- "description" [--designer id] [--engineer id] [--rounds n] [--base file.json]');
+  console.error('usage: npm run design -- "description" [--designer id] [--engineer id] [--rounds n] [--drafts n] [--base file.json]');
   process.exit(1);
 }
 
@@ -48,6 +49,7 @@ const result = await designCraft(client, {
   prompt,
   base,
   maxIterations: rounds,
+  drafts,
   onEvent: (e) => {
     if (e.type === 'status') console.log(`… ${e.message}`);
     else {

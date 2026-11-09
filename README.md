@@ -29,11 +29,18 @@ npm run build          # typecheck + production build
 1. **Design.** In the Studio (N), describe a craft. The **Designer** model drafts it, using
    the full craft format and the sim's physics conventions
    (`src/gen/craftDesigner.ts → DESIGNER_SYSTEM_PROMPT`).
-2. **Validate.** `validateCraft` rejects malformed or out-of-range data.
+   With **parallel drafts** (default 2) the designer writes several independent drafts at
+   once; each is tested and the best one goes on to repair.
+   Designers may use up to 200 parts (the format itself allows 500); replies get up to 64K
+   tokens, clamped to each model's own output limit.
+2. **Validate and auto-fix.** `validateCraft` rejects malformed or out-of-range data.
+   `src/gen/autofix.ts` then fixes the mistakes models make most: control gain signs (checked
+   against the torque each surface makes about the CoM) and wheel springs (sized from the
+   static load on each wheel). The engineer is told what was corrected.
 3. **Flight test.** `src/sim/flightTest.ts` flies the craft headless through a test card: rest
    on the runway, take off, climb to 140 m, turn 90°, then fly hands-off with the elevator
    trimmed. It scores the run out of 100 and writes up actionable issues. About 150 simulated
-   seconds take about half a second.
+   seconds take about 5 s (in a Web Worker in the browser); a 200-part craft about twice that.
 4. **Repair.** The **Engineer** model (a different model) gets the errors or test report and
    fixes the design, until it passes or the round budget runs out.
 5. **Fly.** The best design lands on the runway and in the **hangar** (localStorage). Each
@@ -107,7 +114,8 @@ stick expo, haptics, and touch controls auto/on/off.
 | B or Space | brakes |
 | T / G, Y | trim nose down / up, reset trim |
 | , / . (or F6 / F7) | flaps up / down a notch (3 notches, 10° each) |
-| R | reset to runway |
+| R | new plane on the runway (the world, wreckage and weather stay) |
+| Backspace | reset the whole world |
 | C | chase / orbit camera |
 | [ / ] | previous / next craft |
 | F3 | debug: force vectors, CoM/CoL/CoT, stats, CoM slider, weather |
@@ -128,7 +136,7 @@ The layout follows the craft:
 | LB / RB | yaw | |
 | D-pad ↑ / ↓ | trim | |
 
-Common to both: A (hold) brakes, Y resets, B toggles the camera, X or D-pad ←/→ change
+Common to both: A (hold) brakes, Y new plane, LB+Y resets the world, B toggles the camera, X or D-pad ←/→ change
 craft, Start opens the Studio, Back/View opens help, L3 resets trim, R3 toggles debug.
 Sticks have a radial deadzone and adjustable expo. Pads rumble on crashes, broken parts and
 stall onset, and a toast announces connect/disconnect.
@@ -140,7 +148,7 @@ stall onset, and a toast announces connect/disconnect.
 - **Right thumb:** a floating stick that centres where you touch. Drag down for nose up, sideways
   to roll. It springs back.
 - **BRAKE** (hold). The top bar has **Hangar**, **Camera**, **Controls**, and **More**.
-  **More** contains reset, craft selection, weather, flaps, sound, photos and fullscreen.
+  **More** contains New plane, Reset world, craft selection, weather, flaps, sound, photos and fullscreen.
 - **Create / Studio:** in the hangar, tap **Create**, type in **Describe your aircraft**, then
   tap **Generate aircraft**. GitHub Pages requires your OpenRouter key under **Key & spend**.
   Model choices are under **Models & generation settings**. Studio stays closed on mobile
@@ -344,6 +352,25 @@ wind, surge, rain, scheduler lifecycle and actual Rapier ground motion.
 4. Rotor module: multirotor drones (blade element rotors + PID flight controllers) ✅
 5. Missions: deliveries between generated points of interest
 6. Helicopters ✅, blimps ✅, VTOL (next: tilt-rotors from the same Rotor module)
+7. **The Grid as a planet** (in progress): R 8 km, wraps around, real orbits ✅, curved
+   rendering ✅; next: dense procedural city over the whole globe (streamed in chunks),
+   neon terrain and oceans, airports and helipads in every region.
+8. **Ground vehicles**: wheel-based craft built from the same parts and Wheel module, with
+   steering, drive and brakes from the controls. Light cycles first: two-wheel neon bikes that
+   lean into turns and leave solid light walls behind them on the data highways (a jet wall
+   you crash into, destructible like everything else). Then cars, trucks and tanks.
+9. **Multiplayer** (needs a backend server):
+   - A small authoritative relay (WebSocket, later WebTransport) that holds rooms, assigns a
+     host, and fans out state. Static hosting (GitHub Pages) stays for the client; the server
+     is a separate deploy (e.g. a Node or Cloudflare Durable Object service).
+   - Each player simulates their own craft (the sim is deterministic per step) and sends
+     inputs plus periodic state snapshots at 20-30 Hz; others are interpolated, with
+     dead-reckoning between snapshots.
+   - Shared world state: destruction events (which structure fractured, crater, quake seed)
+     replicate as events, not as block positions, so everyone's Grid breaks the same way.
+   - Modes: free flight, races (the LLM racing work becomes "humans vs models"), light-cycle
+     arenas, and co-op deliveries. Room codes and share links; craft travel as JSON.
+   - Later: accounts, persistent hangars and leaderboards (needs storage on the server).
 
 Generation roadmap, using more of OpenRouter's model types:
 
@@ -391,6 +418,31 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
   Blocks around the impact die, a BFS anchor check from the ground-level blocks finds what is
   still supported, and everything else falls as rigid-body rubble that shatters on landing.
   Aircraft break apart too: a wing that hits a tower detaches and the lift goes asymmetric.
+- **Aircraft voxels and explosions.** Every part is a 0.25 m voxel grid. Hard contacts bite
+  voxels out at the contact point and throw glowing chips (buildings chip too); a damaged part
+  is drawn voxel by voxel, keeps mass, lift and thrust in proportion to what is left, and
+  breaks off below 35%. A crash that changes the craft's velocity by more than 30 m/s in
+  0.15 s blows it up: fireball, shockwave, boom, the parts thrown clear and nearby buildings
+  cratered. Four seconds later a new plane appears on the runway, the wreckage left where it
+  is (R does the same any time); Backspace rebuilds the whole world.
+- **Earthquakes** bring the city down: intact structures within 1.2 km of the craft whose tops
+  would shake past their strength (tall, slender towers and raised highways first) fracture,
+  then the shaking knocks blocks out and whatever they held up falls as rubble.
+- **The Off-Grid.** Wasteland between the cities (~25% of the land): geometric solids
+  (pyramids and flat-topped mesas, planar faces, straight ridgelines) lit in the contrasting
+  palette, amber contours and orange-to-red ridges over an electric-blue survey grid. Physics
+  uses one convex hull per solid, so you hit exactly what you see.
+- **Light cycles and trails (Rule 4: movement produces visible information).** The Light Cycle
+  (built-ins) drives on the streets: W go, S brake, A/D steer; a gyro stabiliser keeps it
+  upright, leaning into turns. **L** cycles its trail: **jetwall** (solid light: ride into
+  one and you derez) → **light ribbon** (fades ~90 m behind, solid only while lit, so it never
+  permanently blocks open ground) → **off**. When a cycle derezzes or respawns, its trails
+  derez with it. **Every vehicle has light ribbons**: craft without their own trail get them
+  automatically, from the outermost points on each side for aircraft (wingtips, rotor arms, a
+  blimp's flanks; light only, dissolving a speed-scaled distance behind) or a rear jetwall for
+  ground vehicles. Check: `npm run trails`.
+- **Reinforcement (hangar → craft card → Reinforce):** levels 0-3 per part, each +15% part
+  mass, +60% strength and +80% impact HP. Saved with the craft; designers can set it too.
 - **Airport:** taxiway, apron, terminal with jet bridges and parked airliners, control tower and
   beacon, runway/approach/taxi lights with sequenced flashers, working PAPIs, a windsock that
   follows the real wind.
@@ -398,7 +450,7 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
   heading and forward speed on rotorcraft), takes off by itself from the runway, and climbs to
   clear buildings ahead. While engaged, stick pitch/roll and the throttle adjust its targets.
 
-Checks: `npm run city`, `npm run autopilot`.
+Checks: `npm run city`, `npm run autopilot`, `npm run destruction`, `npm run design-pipeline`.
 
 ### Credits
 

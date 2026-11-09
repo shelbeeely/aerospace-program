@@ -50,7 +50,7 @@ export function flightShapes(sim: Simulation, position: Vector3, rotation: Quate
     { kind: 'plane', position: new Vector3((COAST.x - half) / 2, 0, 0).add(motion), rotation: new Quaternion(), size: new Vector3((COAST.x + half) / 2, 0, half), color: tint('#00eaff'), emission: 1.8 },
     box(new Vector3(0, 0.02, LAYOUT.runway.centerZ).add(motion), new Vector3(LAYOUT.runway.width / 2, 0.01, LAYOUT.runway.length / 2), '#ff2bd6', 3),
     // Mean ocean surface only; the raster view carries the full Gerstner-wave detail.
-    { kind: 'plane', position: new Vector3((COAST.x + half) / 2, sim.ocean.height(Math.max(COAST.x, camera.x), camera.z, sim.time), 0), rotation: new Quaternion(), size: new Vector3((half - COAST.x) / 2, 0, half), color: tint('#0088ff'), emission: 2.5 },
+    { kind: 'plane', position: new Vector3(COAST.x + COAST.width / 2, sim.ocean.height(Math.max(COAST.x, camera.x), camera.z, sim.time), 0), rotation: new Quaternion(), size: new Vector3(COAST.width / 2, 0, half), color: tint('#0088ff'), emission: 2.5 },
   ];
   for (const d of sim.debris.slice(-64)) {
     out.push(debrisShape(d.part.shape, new Vector3().copy(d.body.translation()), new Quaternion().copy(d.body.rotation()), d.part.color));

@@ -145,6 +145,8 @@ export class Wheel implements ForceModule {
     const muLat = TUNING.tyreLateralFriction * grip;
 
     let fLong = THREE.MathUtils.clamp(-vLong * gain, -muLong * load, muLong * load);
+    // Driven wheel (ground vehicles): the throttle pushes along the ground, within the grip circle.
+    if (def.drive) fLong += ctx.controls.throttle * def.drive * grip * (1 - ctx.controls.brake);
     let fLat = THREE.MathUtils.clamp(-vLat * gain, -muLat * load, muLat * load);
     // Friction circle
     const total = Math.hypot(fLong, fLat);

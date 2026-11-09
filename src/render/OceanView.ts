@@ -17,7 +17,7 @@ export class OceanView {
   private readonly initialSurge: Ocean['surge'];
   constructor(scene: THREE.Scene, private readonly ocean: Ocean, private readonly events?: WorldEvents) {
     this.initialSurge = ocean.surge;
-    const width = LAYOUT.groundSize / 2 - COAST.x;
+    const width = COAST.width;
     const geometry = new THREE.PlaneGeometry(width, LAYOUT.groundSize, 180, 300);
     geometry.rotateX(-Math.PI / 2);
     geometry.translate(COAST.x + width / 2, 0, 0);

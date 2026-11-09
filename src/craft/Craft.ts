@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { PartVoxels } from './voxels.ts';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../tuning.ts';
 import { AeroSurface } from '../modules/AeroSurface.ts';
@@ -31,6 +32,8 @@ export class Craft {
   readonly comOffset = new THREE.Vector3();
   /** Parts still attached. */
   parts: PartDef[];
+  /** Each part as 0.25 m voxels: impacts bite them away (see PartVoxels). */
+  readonly voxels = new Map<string, PartVoxels>();
   /** Ids of parts that broke off. */
   readonly detached = new Set<string>();
   /** Structural strength per part id (N). Infinity = unbreakable. */
@@ -52,6 +55,7 @@ export class Craft {
   ) {
     this.def = def;
     this.parts = [...def.parts];
+    for (const p of this.parts) this.voxels.set(p.id, new PartVoxels(p.shape));
 
     for (const part of def.parts) {
       const partPos = v3(part.position);
@@ -211,7 +215,8 @@ export class Craft {
     }
     for (const s of this.aeroSurfaces) if (s.iceMass > 0.01) extra.push(point(`ice:${s.partId}`, s.iceMass, s.localPosition));
     for (const r of this.rotors) if (r.iceMass > 0.001) extra.push(point(`ice:${r.partId}`, r.iceMass, r.localPosition));
-    return computeMassProperties([...this.parts, ...fuelMasses, ...extra], this.comOffset);
+    const parts = this.parts.map((p) => ({ ...p, mass: this.effectiveMass(p) }));
+    return computeMassProperties([...parts, ...fuelMasses, ...extra], this.comOffset);
   }
 
   private applyMass(): void {
@@ -250,7 +255,20 @@ export class Craft {
   }
 
   private massPartsOnly(): number {
-    return this.parts.reduce((s, p) => s + p.mass, 0);
+    return this.parts.reduce((s, p) => s + this.effectiveMass(p), 0);
+  }
+
+  /** Part mass after reinforcement (+15% per level) and voxel loss. */
+  effectiveMass(p: PartDef): number {
+    return p.mass * (1 + 0.15 * reinforceLevel(p)) * Math.max(0.1, this.voxels.get(p.id)?.integrity ?? 1);
+  }
+
+  /** Voxels were bitten off a part: update its modules and, if it matters, the mass. */
+  voxelsChanged(partId: string): void {
+    const v = this.voxels.get(partId);
+    if (!v) return;
+    for (const m of this.modules) if (m.partId === partId) (m as { integrity?: number }).integrity = v.integrity;
+    if (Math.abs(this.massAtLastUpdate - (this.massPartsOnly() + this.fuel + this.water)) > 0.5) this.applyMass();
   }
 
   /** Shift the centre of mass (debug slider). Inertia is kept; only the CoM moves. */
@@ -267,8 +285,9 @@ export class Craft {
     for (const s of this.aeroSurfaces) totalArea += s.area;
     const wheels = this.wheels.length || 1;
     for (const part of this.parts) {
+      const k = 1 + 0.6 * reinforceLevel(part);
       if (part.strength !== undefined) {
-        this.strength.set(part.id, part.strength > 0 ? part.strength : Infinity);
+        this.strength.set(part.id, part.strength > 0 ? part.strength * k : Infinity);
         continue;
       }
       const mods = this.modules.filter((m) => m.partId === part.id);
@@ -286,7 +305,7 @@ export class Craft {
       const rotors = mods.filter((m): m is Rotor => m instanceof Rotor);
       if (rotors.length) s = Math.min(s, 3 * rotors.reduce((a, r) => a + Math.abs(r.staticThrust()), 0) + weight);
       // Never let a bad estimate make a part fall off at rest.
-      this.strength.set(part.id, Number.isFinite(s) ? Math.max(s, 0.5 * weight) : Infinity);
+      this.strength.set(part.id, Number.isFinite(s) ? Math.max(s, 0.5 * weight) * k : Infinity);
     }
   }
 
@@ -317,6 +336,7 @@ export class Craft {
     }
     this.colliders.delete(partId);
     this.parts = this.parts.filter((p) => p.id !== partId);
+    this.voxels.delete(partId);
     this.modules = this.modules.filter((m) => m.partId !== partId);
     this.detached.add(partId);
     if (this.parts.length) this.applyMass();
@@ -430,6 +450,45 @@ export class Craft {
     return -lowest + 0.05;
   }
 
+  /**
+   * Nose-up pitch (deg) at which the airframe first touches the ground when the craft rotates
+   * about its main wheels (null: no wheels behind the CoM, e.g. skids or a tail-dragger).
+   * Every collider part's box corners behind the main wheels are checked.
+   */
+  tailStrikeAngle(): number | null {
+    if (this._tailStrike !== undefined) return this._tailStrike;
+    const com = this.massProps.com;
+    let zMain = -Infinity;
+    let yContact = 0;
+    for (const w of this.wheels) {
+      if (w.localPosition.z <= com.z) continue; // main wheels sit behind the CoM
+      if (w.localPosition.z > zMain) {
+        zMain = w.localPosition.z;
+        yContact = w.localPosition.y - w.def.restLength * 0.75 - w.def.radius; // ~static compression
+      }
+    }
+    if (!Number.isFinite(zMain)) return (this._tailStrike = null);
+    let best = Infinity;
+    const q = new THREE.Quaternion();
+    const v = new THREE.Vector3();
+    for (const p of this.parts) {
+      if (p.collider === false) continue;
+      const s = p.shape;
+      const e = s.type === 'box' ? [s.size[0] / 2, s.size[1] / 2, s.size[2] / 2]
+        : s.type === 'sphere' ? [s.radius, s.radius, s.radius]
+        : s.axis === 'x' ? [s.length / 2, s.radius, s.radius] : s.axis === 'y' ? [s.radius, s.length / 2, s.radius] : [s.radius, s.radius, s.length / 2];
+      partQuaternion(p, q);
+      for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+        v.set(sx * e[0], sy * e[1], sz * e[2]).applyQuaternion(q).add(new THREE.Vector3(...p.position));
+        const back = v.z - zMain;
+        if (back < 0.3) continue;
+        best = Math.min(best, (Math.atan2(v.y - yContact, back) * 180) / Math.PI);
+      }
+    }
+    return (this._tailStrike = Number.isFinite(best) ? best : null);
+  }
+  private _tailStrike: number | null | undefined;
+
   /** Teleport and zero all motion and module state. */
   reset(position: THREE.Vector3, rotation: THREE.Quaternion): void {
     this.body.setTranslation(position, true);
@@ -441,8 +500,15 @@ export class Craft {
     for (const m of this.modules) m.reset();
     this.electrical?.reset();
     this.water = 0;
+    for (const p of this.parts) this.voxels.set(p.id, new PartVoxels(p.shape));
+    for (const m of this.modules) (m as { integrity?: number }).integrity = 1;
     this.applyMass();
   }
+}
+
+/** Reinforcement level 0..3 of a part. */
+export function reinforceLevel(p: PartDef): number {
+  return Math.min(3, Math.max(0, Math.round(p.reinforce ?? 0)));
 }
 
 function halfHeight(p: PartDef): number {

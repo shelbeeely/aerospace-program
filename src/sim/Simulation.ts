@@ -9,10 +9,13 @@ import { Atmosphere, calmWeather, densityAltitude, type CloudSample, type Precip
 import { DamageModel, type ContactForceHandler, type ContactForceInfo } from './damage.ts';
 import { neutralControls, sanitizeControls, type ControlInputs } from './controls.ts';
 import { Ocean } from './ocean.ts';
-import { COAST, LAYOUT } from './layout.ts';
+import { COAST, isSea, LAYOUT, PLANET } from './layout.ts';
+import { terrainHeight } from './terrain.ts';
+import { TrailSystem } from './trails.ts';
 import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
+import { ChipEmitter } from './chips.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
 import type { Telemetry } from './telemetry.ts';
 
@@ -45,6 +48,9 @@ export interface Debris {
  * in the browser and in Node (see scripts/headless.ts): the basis for AI pilots and
  * faster-than-real-time races.
  */
+const _fwd = new THREE.Vector3();
+const _right = new THREE.Vector3();
+
 export class Simulation {
   readonly dt = 1 / TUNING.physicsHz;
   readonly world: RAPIER.World;
@@ -68,6 +74,18 @@ export class Simulation {
   damage: DamageModel;
   /** Breakable block buildings and their rubble (src/world). */
   readonly town: Town;
+  /** Visual voxel chips knocked off buildings and aircraft (the renderer flies them). */
+  readonly chips = new ChipEmitter();
+  /** Explosions (renderer: fireball and shockwave; audio: boom). Newest last. */
+  readonly explosions: Array<{ x: number; y: number; z: number; time: number; radius: number }> = [];
+  /** The craft blew up (controls dead until a new plane is spawned). */
+  exploded = false;
+  /** Sum of craft contact impulses this step (N·s): decides explosions. */
+  private stepImpact = 0;
+  /** Craft velocity over the last ~0.15 s (ring buffer) and steps left since the last hard contact. */
+  private readonly velHistory = Array.from({ length: 18 }, () => new THREE.Vector3());
+  private velHead = 0;
+  private contactWindow = 0;
   /** Solid neon city and airport structures (static colliders). */
   readonly staticWorld: StaticWorld;
   readonly fire = new FireSystem();
@@ -98,6 +116,12 @@ export class Simulation {
 
   controls: ControlInputs = neutralControls();
   private readonly groundCollider: RAPIER.Collider;
+  private readonly groundColliders: RAPIER.Collider[] = [];
+  /** Times the craft crossed a wrap edge, and the last shift applied (renderers follow it). */
+  wrapCount = 0;
+  /** Light walls, light ribbons and contrails (Rule 4). */
+  readonly trails: TrailSystem;
+  readonly wrapShift = new THREE.Vector3();
   private readonly groundBody: RAPIER.RigidBody;
   private readonly groundMotion = new THREE.Vector3();
   private readonly groundOrigin = new THREE.Vector3();
@@ -128,19 +152,27 @@ export class Simulation {
     const atmosphere = this.atmosphere as Atmosphere & { windContributors?: Array<(point: THREE.Vector3, time: number, out: THREE.Vector3) => void> };
     atmosphere.windContributors?.push(this.smokeWind);
 
-    const half = LAYOUT.groundSize / 2;
-    const landWidth = COAST.x + half;
-    const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation((COAST.x - half) / 2, -5, 0));
+    // The planet's land: everything but the ocean band, on one (quake-movable) body. A strip
+    // past each wrap edge overlaps so nothing falls through at the seam.
+    const half = LAYOUT.groundSize / 2 + 600;
+    const seaEnd = COAST.x + COAST.width;
+    const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -5, 0));
     this.groundBody = ground;
     this.groundOrigin.copy(ground.translation());
     this.groundCollider = this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(landWidth / 2, 5, half).setFriction(0.8).setRestitution(0.1),
+      RAPIER.ColliderDesc.cuboid((COAST.x + half) / 2, 5, half).setTranslation((COAST.x - half) / 2, 0, 0).setFriction(0.8).setRestitution(0.1),
       ground,
     );
-    // Deep seabed replaces the old solid ground east of the coast.
-    const seabed = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation((COAST.x + half) / 2, -COAST.depth - 5, 0));
-    this.world.createCollider(RAPIER.ColliderDesc.cuboid((half - COAST.x) / 2, 5, half), seabed);
+    this.groundColliders.push(this.groundCollider, this.world.createCollider(
+      RAPIER.ColliderDesc.cuboid((half - seaEnd) / 2, 5, half).setTranslation((seaEnd + half) / 2, 0, 0).setFriction(0.8).setRestitution(0.1),
+      ground,
+    ));
+    // Deep seabed under the ocean band.
+    const seabed = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(COAST.x + COAST.width / 2, -COAST.depth - 5, 0));
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid(COAST.width / 2, 5, half), seabed);
+    this.trails = new TrailSystem(this.world);
     this.town = new Town(this.world);
+    this.town.chips = this.chips;
     this.staticWorld = new StaticWorld(this.world, this.town);
 
     const { position, rotation } = this.spawnPose(null);
@@ -154,6 +186,7 @@ export class Simulation {
     });
     this.onContactForce((e) => this.town.onContact(e));
     this.onContactForce((e) => this.staticWorld.onContact(e));
+    this.onContactForce((e) => this.voxelHit(e));
 
     const self = this;
     this.ctx = {
@@ -173,7 +206,7 @@ export class Simulation {
       cloud: (p) => this.atmosphere.cloudAt(p, 0, this.cloudSample),
       groundWetness: 0,
       hasFuelSystem: false,
-      groundHeight: (x) => x > COAST.x + self.groundMotion.x ? -COAST.depth : self.groundMotion.y,
+      groundHeight: (x, z) => isSea(x - self.groundMotion.x) ? -COAST.depth : terrainHeight(x, z) + self.groundMotion.y,
       pointVelocity(p, out) {
         _tmp.copy(p).sub(self.com);
         return out.crossVectors(self.angvel, _tmp).add(self.linvel);
@@ -266,7 +299,7 @@ export class Simulation {
     assertValidCraft(def);
     this.rebuildCraft(def);
     this.explosionResets = 0;
-    this.resetToRunway();
+    this.respawn(); // a different craft; the world stays as it is
   }
 
   private rebuildCraft(def: CraftDef): void {
@@ -284,7 +317,7 @@ export class Simulation {
     let touching = false;
     const n = this.craft.body.numColliders();
     for (let i = 0; i < n && !touching; i++) {
-      this.world.contactPair(this.groundCollider, this.craft.body.collider(i), (m) => {
+      for (const gc of this.groundColliders) this.world.contactPair(gc, this.craft.body.collider(i), (m) => {
         // Ignore speculative (predicted, not yet touching) contacts from soft CCD.
         for (let j = 0; j < m.numContacts() && !touching; j++) if (m.contactDist(j) < 0.02) touching = true;
       });
@@ -292,34 +325,65 @@ export class Simulation {
     return touching;
   }
 
+  /** Reset the WHOLE world: every structure rebuilt, weather and events restarted, a fresh craft on the runway. */
   resetToRunway(): void {
-    // Broken craft are rebuilt from their definition; debris is cleared away.
-    for (const d of this.debris) this.world.removeRigidBody(d.body);
-    this.debris = [];
-    this.debrisSpawn.clear();
+    this.trails.clear();
     this.staticWorld.reset();
     this.town.reset();
-    this.staticWorld.stream(this.position.x, this.position.z, true);
-    if (this.craft.detached.size) this.rebuildCraft(this.craft.def);
-    this.failures.length = 0;
-    this.filteredLoads.clear();
-    this.damage.reset(this.craft);
+    this.chips.reset();
+    this.explosions.length = 0;
     this.lightning.reset(this.atmosphere.settings.seed);
-    const { position, rotation } = this.spawnPose(this.craft);
-    this.craft.reset(position, rotation);
-    this.fire.reset(this.craft.parts, this.tankFuel());
     this.atmosphere.restart();
     this.groundMotion.set(0, 0, 0);
     this.groundBody.setBodyType(RAPIER.RigidBodyType.Fixed, true);
     this.groundBody.setTranslation(this.groundOrigin, true);
     this.groundMoving = false;
     this.settleGroundWater();
+    this.respawnCraft();
+    this.staticWorld.stream(this.position.x, this.position.z, true);
+  }
+
+  /**
+   * A fresh craft on the runway, keeping the world as it is: wrecked buildings stay wrecked,
+   * rubble stays where it fell and the weather carries on. Only the craft's own debris is cleared.
+   */
+  respawn(): void {
+    if (this.groundMoving) {
+      // Mid-earthquake: settle the runway back to its origin so the craft spawns on it.
+      this.groundMotion.set(0, 0, 0);
+      this.groundBody.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+      this.groundBody.setTranslation(this.groundOrigin, true);
+      this.groundMoving = false;
+    }
+    this.respawnCraft();
+    this.staticWorld.stream(this.position.x, this.position.z, true);
+  }
+
+  private respawnCraft(): void {
+    // Broken craft are rebuilt from their definition; debris is cleared away.
+    for (const d of this.debris) this.world.removeRigidBody(d.body);
+    this.debris = [];
+    this.debrisSpawn.clear();
+    if (this.craft.detached.size || this.exploded) this.rebuildCraft(this.craft.def);
+    this.exploded = false;
+    this.stepImpact = 0;
+    this.contactWindow = 0;
+    this.failures.length = 0;
+    this.filteredLoads.clear();
+    this.damage.reset(this.craft);
+    const { position, rotation } = this.spawnPose(this.craft);
+    this.craft.reset(position, rotation);
+    this.fire.reset(this.craft.parts, this.tankFuel());
     this.controls = neutralControls();
+    // The old vehicle's trails derez; the new one starts its own.
+    this.trails.derez(this.time);
+    this.trails.start(this.craft, this.isAirplane());
     this.prevVelocity.set(0, 0, 0);
     this.gForceFiltered = 1;
     this.readBodyState();
     this.prevPosition.copy(this.position);
     this.prevRotation.copy(this.rotation);
+    for (const v of this.velHistory) v.copy(this.linvel);
   }
 
   private readBodyState(): void {
@@ -347,7 +411,8 @@ export class Simulation {
   /** Advance one fixed physics step with the given controls. */
   step(controls: ControlInputs): void {
     const t0 = performance.now();
-    this.controls = sanitizeControls(controls);
+    // A wreck flies no more: engines out, surfaces slack (brakes stay on so it settles).
+    this.controls = this.exploded ? { ...neutralControls(), brake: 1 } : this.tailStrikeGuard(sanitizeControls(controls));
     (this.ctx as { controls: ControlInputs }).controls = this.controls;
 
     this.prevPosition.copy(this.position);
@@ -364,6 +429,7 @@ export class Simulation {
     this.readBodyState();
     this.loadsThisStep.clear();
     this.craft.stepElectrical(this.dt, this.atmosphere.air(this.com.y).temperature - 273.15);
+    this.stepImpact = 0;
     this.staticWorld.stream(this.position.x, this.position.z);
     for (const m of this.craft.modules) m.step(this.ctx);
     this.ocean.apply(this.craft, this.time, this.dt, ({ partId, force }) => {
@@ -376,14 +442,30 @@ export class Simulation {
       }
     });
     this.craft.updateSoftCcd(this.dt);
+    this.planetForces();
 
     this.world.step(this.events);
     this.readBodyState();
+    this.wrapAround();
+    this.trails.step(this.time, this.craft, this.rotation, this.position, this.linvel.length(), this.craft.wheels.some((w) => w.grounded));
     const resets = this.explosionResets;
     this.guardAgainstExplosion();
     // After an explosion reset the step's contacts belong to a craft that's gone: drop them.
     this.dispatchContactForces(resets === this.explosionResets);
-    if (this.groundMoving) this.town.shake(this.atmosphere.events.groundAcceleration(_tmp));
+    if (this.groundMoving) {
+      const accel = this.atmosphere.events.groundAcceleration(_tmp);
+      this.staticWorld.shake(accel, this.position.x, this.position.z, this.time);
+      this.town.shake(accel);
+    }
+    // Explode when a hard contact stops (or flings) the craft by more than explodeSpeed within
+    // ~0.15 s: velocity change is robust where single-step contact impulses spike.
+    if (this.stepImpact > 0) this.contactWindow = this.velHistory.length;
+    else if (this.contactWindow > 0) this.contactWindow--;
+    const oldest = this.velHistory[this.velHead];
+    const dv = Math.hypot(this.linvel.x - oldest.x, this.linvel.y - oldest.y, this.linvel.z - oldest.z);
+    oldest.copy(this.linvel);
+    this.velHead = (this.velHead + 1) % this.velHistory.length;
+    if (!this.exploded && this.contactWindow > 0 && dv > this.explodeSpeed()) this.explode();
     this.staticWorld.update(this.time);
     this.town.update(this.time);
     this.stepHazards();
@@ -564,6 +646,167 @@ export class Simulation {
   }
 
   /** Break a part off: debris body, failure record, structure version bump. */
+  /**
+   * The planet in a flat frame: the world's gravity is the surface value, so add back what
+   * altitude takes away ((R / (R + h))²) plus the centripetal lift v_h² / (R + h) of flying
+   * around a sphere. At ~280 m/s near the ground (less higher up) the craft is in orbit.
+   */
+  private planetForces(): void {
+    const R = PLANET.radius;
+    const lift = (y: number, vx: number, vz: number) => {
+      const r = R + Math.max(0, y);
+      return PLANET.gravity - PLANET.gravity * (R / r) ** 2 + (vx * vx + vz * vz) / r;
+    };
+    const b = this.craft.body;
+    b.addForce({ x: 0, y: b.mass() * lift(this.position.y, this.linvel.x, this.linvel.z), z: 0 }, true);
+    for (const d of this.debris) {
+      const t = d.body.translation();
+      const v = d.body.linvel();
+      d.body.applyImpulse({ x: 0, y: d.body.mass() * lift(t.y, v.x, v.z) * this.dt, z: 0 }, true);
+    }
+  }
+
+  /** Fixed-wing (contrails from the wingtips): lifting surfaces, no rotors, no driven wheels. */
+  isAirplane(): boolean {
+    return this.craft.aeroSurfaces.length > 0 && this.craft.rotors.length === 0 && !this.craft.wheels.some((w) => (w.def.drive ?? 0) > 0);
+  }
+
+  /** Crossing a wrap edge: shift the craft and its debris by one circumference. */
+  private wrapAround(): void {
+    const half = PLANET.circumference / 2;
+    const sx = this.position.x > half ? -PLANET.circumference : this.position.x < -half ? PLANET.circumference : 0;
+    const sz = this.position.z > half ? -PLANET.circumference : this.position.z < -half ? PLANET.circumference : 0;
+    if (!sx && !sz) return;
+    const shift = (b: RAPIER.RigidBody) => {
+      const t = b.translation();
+      b.setTranslation({ x: t.x + sx, y: t.y, z: t.z + sz }, true);
+    };
+    shift(this.craft.body);
+    for (const d of this.debris) shift(d.body);
+    this.prevPosition.x += sx;
+    this.prevPosition.z += sz;
+    this.wrapShift.set(sx, 0, sz);
+    this.wrapCount++;
+    this.readBodyState();
+    this.staticWorld.stream(this.position.x, this.position.z, true);
+  }
+
+  /**
+   * Tail-strike protection (as on fly-by-wire airliners): while the main wheels are on the
+   * ground, nose-up elevator fades out as the pitch (plus 0.3 s of pitch rate) nears the
+   * craft's tail-strike angle less a 2° margin, and turns nose-down past it.
+   */
+  private lastWheelContact = -Infinity;
+  private tailStrikeGuard(c: ControlInputs): ControlInputs {
+    if (c.pitch <= 0 || !TUNING.tailStrikeProtection) return c;
+    const strike = this.craft.tailStrikeAngle();
+    if (strike === null) return c;
+    // Also just after lift-off: an over-rotated craft that settles back drags its tail.
+    if (this.craft.wheels.some((w) => w.grounded)) this.lastWheelContact = this.time;
+    else if (this.time - this.lastWheelContact > 10 || this.position.y - this.craft.restingHeight() > 3) return c;
+    const fwd = _fwd.set(0, 0, -1).applyQuaternion(this.rotation);
+    const pitch = (Math.asin(Math.max(-1, Math.min(1, fwd.y))) * 180) / Math.PI;
+    const right = _right.set(1, 0, 0).applyQuaternion(this.rotation);
+    const pitchRate = (this.angvel.dot(right) * 180) / Math.PI; // + = nose up
+    const limit = strike - 2;
+    const predicted = pitch + Math.max(0, pitchRate) * 0.3;
+    const room = (limit - predicted) / 3; // fade over the last 3°
+    if (room >= 1) return c;
+    return { ...c, pitch: room > 0 ? c.pitch * room : Math.max(-0.4, room * 0.4) };
+  }
+
+  /** Speed lost in a crash that blows the craft up (m/s): ~30, more if reinforced. */
+  private explodeSpeed(): number {
+    const parts = this.craft.parts;
+    const avg = parts.length ? parts.reduce((a, p) => a + Math.min(3, Math.max(0, p.reinforce ?? 0)), 0) / parts.length : 0;
+    return TUNING.explodeSpeed * (1 + 0.3 * avg);
+  }
+
+  /**
+   * Voxel damage: a craft collider struck hard bites 0.25 m voxels out of its part at the actual
+   * contact point; the bitten voxels fly off as chips. Integrity (voxels left) scales the part's
+   * mass, lift, thrust; below `TUNING.voxelBreakIntegrity` the part breaks off.
+   */
+  private voxelHit(e: ContactForceInfo): void {
+    if (this.isFreshDebris(e.collider1) || this.isFreshDebris(e.collider2)) return;
+    if (this.town.isFreshDebris(e.collider1, this.time) || this.town.isFreshDebris(e.collider2, this.time)) return;
+    const craft = this.craft;
+    const impulse = e.totalForceMagnitude * e.dt;
+    for (const [mine, other] of [[e.collider1, e.collider2], [e.collider2, e.collider1]] as const) {
+      const partId = craft.partIdForCollider(mine);
+      if (!partId) continue;
+      const part = craft.parts.find((p) => p.id === partId);
+      const vox = craft.voxels.get(partId);
+      if (!part || !vox) continue;
+      this.stepImpact += impulse;
+      const level = Math.min(3, Math.max(0, Math.round(part.reinforce ?? 0)));
+      const gear = !!part.modules?.some((m) => m.type === 'wheel') || /^(gear|skid)/.test(part.kind);
+      const tol = craft.massProps.mass * (gear ? TUNING.gearSinkLimit : TUNING.impactSafeSpeed) * (1 + 0.5 * level);
+      if (impulse <= tol) continue;
+      // Where on the part: the first solver contact point, in the part's frame.
+      const c1 = this.world.getCollider(mine);
+      const c2 = this.world.getCollider(other);
+      const wp = { ok: false, x: 0, y: 0, z: 0 };
+      if (c1 && c2) this.world.contactPair(c1, c2, (m) => {
+        if (wp.ok || m.numSolverContacts() === 0) return;
+        const p = m.solverContactPoint(0);
+        if (p) { wp.ok = true; wp.x = p.x; wp.y = p.y; wp.z = p.z; }
+      });
+      const pq = new THREE.Quaternion().setFromEuler(new THREE.Euler(...((part.rotationDeg ?? [0, 0, 0]).map((d) => (d * Math.PI) / 180) as [number, number, number])));
+      const worldQ = this.rotation.clone().multiply(pq);
+      const partPos = new THREE.Vector3(...part.position).applyQuaternion(this.rotation).add(this.position);
+      const hitW = wp.ok ? new THREE.Vector3(wp.x, wp.y, wp.z) : partPos.clone();
+      const local = hitW.clone().sub(partPos).applyQuaternion(worldQ.clone().invert());
+      const at = vox.nearestAlive(local.x, local.y, local.z);
+      if (!at) continue;
+      const radius = Math.min(4, Math.max(vox.cell * 0.6, (vox.cell * (1 + 1.8 * Math.log2(impulse / tol))) / (1 + 0.5 * level)));
+      const removed = vox.bite(at[0], at[1], at[2], radius);
+      if (!removed.length) continue;
+      // Chips: up to ~40 bursts' worth, flying with the craft and outward from the hit.
+      const lv = this.linvel;
+      const every = Math.max(1, Math.ceil(removed.length / 40));
+      for (let i = 0; i < removed.length; i += every) {
+        const w = new THREE.Vector3(...removed[i]).applyQuaternion(worldQ).add(partPos);
+        this.chips.emit({ x: w.x, y: w.y, z: w.z, radius: vox.cell, vx: lv.x * 0.7, vy: lv.y * 0.7 + 1, vz: lv.z * 0.7, speed: 3 + Math.min(12, impulse / tol), count: Math.min(every, 6), size: vox.cell, color: part.color });
+      }
+      craft.voxelsChanged(partId);
+      if (vox.integrity < TUNING.voxelBreakIntegrity) this.breakPart(partId, impulse / e.dt, craft.strength.get(partId) ?? Infinity, 'impact');
+    }
+  }
+
+  /**
+   * The craft blows up: every part but the heaviest is thrown off outward, its voxels burst
+   * into chips, and the blast craters the nearest structures.
+   */
+  explode(): void {
+    if (this.exploded) return;
+    this.exploded = true;
+    this.trails.derez(this.time); // a derezzed vehicle's trails go with it
+    const c = this.position.clone();
+    const radius = 10 + Math.min(20, this.craft.fuel * 0.15);
+    this.explosions.push({ x: c.x, y: c.y, z: c.z, time: this.time, radius });
+    if (this.explosions.length > 32) this.explosions.splice(0, this.explosions.length - 32);
+    const parts = [...this.craft.parts].sort((a, b) => b.mass - a.mass);
+    const before = this.debris.length;
+    for (const p of parts.slice(1)) this.breakPart(p.id, Infinity, this.craft.strength.get(p.id) ?? Infinity, 'impact');
+    if (parts[0]) this.fire.ignite(parts[0].id); // the wreck burns
+    // Throw the pieces outward and burst their voxels.
+    for (const d of this.debris.slice(before)) {
+      const t = d.body.translation();
+      const dir = new THREE.Vector3(t.x - c.x, t.y - c.y + 0.5, t.z - c.z).normalize();
+      const v = d.body.linvel();
+      const kick = 12 + Math.random() * 18;
+      d.body.setLinvel({ x: v.x * 0.5 + dir.x * kick, y: v.y * 0.5 + Math.abs(dir.y) * kick + 6, z: v.z * 0.5 + dir.z * kick }, true);
+      d.body.setAngvel({ x: (Math.random() - 0.5) * 12, y: (Math.random() - 0.5) * 12, z: (Math.random() - 0.5) * 12 }, true);
+      this.chips.emit({ x: t.x, y: t.y, z: t.z, radius: 1.5, vx: dir.x * kick * 0.6, vy: 6, vz: dir.z * kick * 0.6, speed: 14, count: 40, size: 0.25, color: d.part.color });
+    }
+    this.chips.emit({ x: c.x, y: c.y, z: c.z, radius: 2, vx: 0, vy: 8, vz: 0, speed: 22, count: 220, size: 0.35, color: '#ff8a1f' });
+    // Blast: crater whatever stands within the radius.
+    this.staticWorld.blastAt(c.x, c.y, c.z, radius, this.time);
+    for (const b of this.town.buildings) this.town.blast(b, c.x, c.y, c.z, radius * 0.6, this.time);
+    this.version++;
+  }
+
   private breakPart(partId: string, load: number, strength: number, cause: 'load' | 'impact' | 'lightning' | 'fire'): void {
     if (this.craft.parts.length <= 1) return; // never detach the last piece
     const part = this.craft.parts.find((p) => p.id === partId);
@@ -655,7 +898,7 @@ export class Simulation {
       airspeed: r(speed),
       groundSpeed: r(Math.hypot(ground.x, ground.z)),
       wind: [r(wind.x), r(wind.y), r(wind.z)],
-      altitude: r(this.position.y - craft.restingHeight() + 0.05),
+      altitude: r(this.position.y - terrainHeight(this.position.x, this.position.z) - craft.restingHeight() + 0.05),
       verticalSpeed: r(ground.y),
       heading: r(heading, 1),
       pitch: r(pitch, 1),

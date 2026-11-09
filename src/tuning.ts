@@ -129,6 +129,14 @@ export const TUNING = {
   impactSafeSpeed: 4,
   /** Wheels, gear legs and skids take no impact damage up to the impulse of the craft arriving at this sink rate (m/s). */
   gearSinkLimit: 5,
+  /** The craft explodes when a hard contact changes its velocity by more than this within 0.15 s (m/s; ~110 km/h). */
+  explodeSpeed: 30,
+  /** Limit nose-up elevator on the ground so rotating can't drag the tail (fly-by-wire style). */
+  tailStrikeProtection: true,
+  /** Seconds after an explosion before a new plane appears on the runway (browser). */
+  respawnDelay: 4,
+  /** A part whose voxels drop below this fraction breaks off. */
+  voxelBreakIntegrity: 0.35,
   /** Contact impulses on a collider pair are summed over this window (s) into one impact. */
   impactWindow: 0.05,
   /** Contact force events start at this many times the craft's weight (per collider pair). */
@@ -182,7 +190,7 @@ export const TUNING = {
   /** Block budget when a structure fractures (block size grows with the structure). */
   maxFractureBlocks: 1400,
   /** Most structures fractured at once (each adds up to ~2,000 block colliders). */
-  maxFracturedStructures: 10,
+  maxFracturedStructures: 20,
   /**
    * A falling chunk shatters (its blocks are destroyed) when one of its blocks takes an impulse
    * above blockMass × this speed (m/s) in one step: about a 2 m drop onto something hard.

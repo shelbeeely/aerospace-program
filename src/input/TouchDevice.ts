@@ -85,7 +85,8 @@ export class TouchDevice implements InputDevice {
     more.type = 'button'; more.setAttribute('aria-expanded', 'false');
     more.setAttribute('aria-controls', 'touch-more');
     const menu = el('div', 'tmore hidden',
-      button('Reset', 'Reset to runway', 'reset'),
+      button('New plane', 'New plane on the runway (world unchanged)', 'reset'),
+      button('Reset world', 'Reset the whole world', 'resetWorld'),
       button('Previous craft', 'Previous craft', 'prevVehicle'),
       button('Next craft', 'Next craft', 'nextVehicle'),
       button('Autopilot', 'Autopilot on / off', 'autopilot'),

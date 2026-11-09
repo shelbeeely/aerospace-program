@@ -1,12 +1,14 @@
 import * as THREE from 'three/webgpu';
+import { abs, float, max, min, positionLocal, smoothstep } from 'three/tsl';
 import type { Craft } from '../craft/Craft.ts';
 import { partQuaternion } from '../craft/massProperties.ts';
 import type { ShapeDef } from '../craft/types.ts';
+import type { PartVoxels } from '../craft/voxels.ts';
 import { AeroSurface } from '../modules/AeroSurface.ts';
 import { Engine } from '../modules/Engine.ts';
 import { Rotor } from '../modules/Rotor.ts';
 import { Wheel } from '../modules/Wheel.ts';
-import { NEON, glow, neonFillMaterial, neonize, neonTint } from './neon.ts';
+import { NEON, glow, neonFillMaterial, neonize, neonTint, type TslNode } from './neon.ts';
 
 export function geometryFor(shape: ShapeDef): THREE.BufferGeometry {
   switch (shape.type) {
@@ -34,6 +36,27 @@ interface Animated {
   update(): void;
 }
 
+/** Voxel cubes with glowing edges (×instance colour): damaged parts are drawn voxel by voxel. */
+function voxelMaterial(): THREE.MeshBasicNodeMaterial {
+  const mat = new THREE.MeshBasicNodeMaterial();
+  const p: TslNode = abs(positionLocal).mul(2);
+  const a: TslNode = smoothstep(0.8, 0.98, p.x);
+  const b: TslNode = smoothstep(0.8, 0.98, p.y);
+  const c: TslNode = smoothstep(0.8, 0.98, p.z);
+  mat.colorNode = float(0.05).add(max(max(min(a, b), min(b, c)), min(a, c)).mul(2.2)) as TslNode;
+  return mat;
+}
+
+/** A part drawn as its surviving voxels once it has taken damage. */
+interface VoxelPart {
+  partId: string;
+  voxels: PartVoxels;
+  solid: THREE.Mesh;
+  mesh: THREE.InstancedMesh | null;
+  seen: number;
+  color: THREE.Color;
+}
+
 /**
  * Visual representation of a Craft built from the same data: one primitive per part, plus
  * moving bits driven by module state (flaps, prop, wheels/suspension). Neon style: near-black
@@ -49,6 +72,9 @@ export class CraftView {
   private readonly partObjects = new Map<string, THREE.Object3D[]>();
   /** The craft this view was built for. */
   readonly craft: Craft;
+  private readonly voxelParts: VoxelPart[] = [];
+  private voxelMat: THREE.MeshBasicNodeMaterial | null = null;
+  private static readonly cube = new THREE.BoxGeometry(1, 1, 1);
 
   constructor(craft: Craft) {
     this.craft = craft;
@@ -58,6 +84,8 @@ export class CraftView {
       mesh.quaternion.copy(partQuaternion(part));
       this.root.add(mesh);
       this.track(part.id, mesh);
+      const voxels = craft.voxels.get(part.id);
+      if (voxels) this.voxelParts.push({ partId: part.id, voxels, solid: mesh, mesh: null, seen: 0, color: neonTint(part.color).multiplyScalar(1.3) });
     }
     for (const m of craft.modules) {
       if (m instanceof AeroSurface && m.def.control) this.addFlap(m);
@@ -248,6 +276,7 @@ export class CraftView {
     });
     for (const m of this.materials.values()) m.dispose();
     for (const m of this.discMats) m.dispose();
+    this.voxelMat?.dispose();
     this.livery?.dispose();
   }
 
@@ -256,5 +285,46 @@ export class CraftView {
     this.root.position.copy(position);
     this.root.quaternion.copy(rotation);
     for (const a of this.animated) a.update();
+    for (const v of this.voxelParts) if (v.voxels.version !== v.seen) this.rebuildVoxels(v);
+  }
+
+  /**
+   * A part took a bite: swap its smooth mesh for its surviving voxels (surface voxels only;
+   * the inside can't be seen). Rebuilt only when the part's voxels change.
+   */
+  private rebuildVoxels(v: VoxelPart): void {
+    v.seen = v.voxels.version;
+    if (this.craft.detached.has(v.partId)) return;
+    const vox = v.voxels;
+    if (!v.mesh) {
+      this.voxelMat ??= voxelMaterial();
+      v.mesh = new THREE.InstancedMesh(CraftView.cube, this.voxelMat, Math.max(1, vox.aliveCount));
+      v.mesh.position.copy(v.solid.position);
+      v.mesh.quaternion.copy(v.solid.quaternion);
+      v.mesh.frustumCulled = false;
+      this.root.add(v.mesh);
+      this.track(v.partId, v.mesh);
+    }
+    v.solid.visible = false;
+    const [W, H, D] = vox.grid;
+    const alive = (x: number, y: number, z: number) =>
+      x >= 0 && y >= 0 && z >= 0 && x < W && y < H && z < D && vox.alive[(y * D + z) * W + x] === 1;
+    const m = new THREE.Matrix4();
+    const s = vox.cell * 0.97;
+    let n = 0;
+    const cap = v.mesh.instanceMatrix.count;
+    for (let y = 0; y < H; y++) for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) {
+      if (!alive(x, y, z)) continue;
+      if (alive(x - 1, y, z) && alive(x + 1, y, z) && alive(x, y - 1, z) && alive(x, y + 1, z) && alive(x, y, z - 1) && alive(x, y, z + 1)) continue;
+      if (n >= cap) break;
+      const [px, py, pz] = vox.centre(x, y, z);
+      m.makeScale(s, s, s).setPosition(px, py, pz);
+      v.mesh.setMatrixAt(n, m);
+      v.mesh.setColorAt(n, v.color);
+      n++;
+    }
+    v.mesh.count = n;
+    v.mesh.instanceMatrix.needsUpdate = true;
+    if (v.mesh.instanceColor) v.mesh.instanceColor.needsUpdate = true;
   }
 }

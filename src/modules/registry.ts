@@ -13,6 +13,8 @@ import { FuelTank } from './FuelTank.ts';
 import { Generator } from './Generator.ts';
 import { Motor } from './Motor.ts';
 import { Rotor } from './Rotor.ts';
+import { Stabilizer } from './Stabilizer.ts';
+import { TrailEmitter } from './TrailEmitter.ts';
 import { Wheel } from './Wheel.ts';
 
 /**
@@ -56,6 +58,10 @@ export function createModule(
       return new Generator(part.id, def, position);
     case 'avionics':
       return new Avionics(part.id, def, position);
+    case 'stabilizer':
+      return new Stabilizer(part.id, def, position);
+    case 'trail':
+      return new TrailEmitter(part.id, def, position);
     default: {
       const unknown: never = def;
       throw new Error(`Unknown module type: ${(unknown as { type: string }).type}`);

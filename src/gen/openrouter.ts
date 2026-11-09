@@ -9,6 +9,8 @@ export interface ModelInfo {
   name: string;
   description: string;
   contextLength: number;
+  /** Largest reply the model's top provider allows (tokens; 0 = unknown). */
+  maxCompletionTokens: number;
   inputModalities: string[];
   outputModalities: string[];
   /** USD per token (prompt / completion), per image for image output when known. */
@@ -165,20 +167,44 @@ export class OpenRouter {
     if (req.format === 'json') body.response_format = { type: 'json_object' };
     if (req.modalities) body.modalities = req.modalities;
     if (req.temperature !== undefined) body.temperature = req.temperature;
-    if (req.maxTokens !== undefined) body.max_tokens = req.maxTokens;
+    if (req.maxTokens !== undefined) body.max_tokens = await this.clampMaxTokens(req.maxTokens, [req.model, ...fallbacks]);
     if (req.reasoningEffort) body.reasoning = { effort: req.reasoningEffort };
 
     let attempt = 0;
+    let shrunk = false;
     for (;;) {
       try {
         return await this.chatOnce(body, req.model, req.signal);
       } catch (e) {
+        // A provider that rejects the reply budget gets one retry with the old safe default.
+        if (!shrunk && e instanceof OpenRouterError && e.status === 400 && typeof body.max_tokens === 'number'
+          && body.max_tokens > 16000 && /max[_ ]?(completion[_ ]?)?tokens|maximum.*tokens|too (many|large)/i.test(e.message)) {
+          shrunk = true;
+          body.max_tokens = 16000;
+          continue;
+        }
         const retryable = e instanceof OpenRouterError && e.retryable;
         if (!retryable || attempt >= this.cfg.maxRetries) throw e;
         attempt++;
         await sleep(1500 * 2 ** (attempt - 1), req.signal);
       }
     }
+  }
+
+  /** Keep a requested reply budget within every listed model's known output limit. */
+  private async clampMaxTokens(want: number, models: string[]): Promise<number> {
+    let list: ModelInfo[];
+    try {
+      list = await this.models();
+    } catch {
+      return want;
+    }
+    let out = want;
+    for (const id of models) {
+      const m = list.find((x) => x.id === id);
+      if (m?.maxCompletionTokens) out = Math.min(out, m.maxCompletionTokens);
+    }
+    return Math.max(1000, out);
   }
 
   private async chatOnce(body: Record<string, unknown>, model: string, signal?: AbortSignal): Promise<ChatResult> {
@@ -249,6 +275,7 @@ function parseModel(m: Record<string, any>): ModelInfo {
     name: m.name ?? m.id,
     description: m.description ?? '',
     contextLength: num(m.context_length),
+    maxCompletionTokens: num(m.top_provider?.max_completion_tokens),
     inputModalities: m.architecture?.input_modalities ?? ['text'],
     outputModalities: m.architecture?.output_modalities ?? ['text'],
     pricing: {

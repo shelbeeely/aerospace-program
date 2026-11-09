@@ -4,7 +4,7 @@ import { defaultModel, fallbacksFor, isFree, JOBS, modelsForJob, priceLabel, typ
 import { designCraft, type DesignResult } from '../gen/craftDesigner.ts';
 import { fromImportJson, toExportJson, type Library, type LibraryEntry } from '../gen/library.ts';
 import { paintLivery } from '../gen/livery.ts';
-import { composeMusic } from '../gen/music.ts';
+import { composeMusic, MUSIC_STYLES } from '../gen/music.ts';
 import {
   DIRECT_BASE_URL,
   OpenRouter,
@@ -95,10 +95,12 @@ export class Studio {
     settings: HTMLDetailsElement;
     prompt: HTMLTextAreaElement;
     rounds: HTMLSelectElement;
+    drafts: HTMLSelectElement;
     log: HTMLOListElement;
     result: HTMLElement;
     liveryPrompt: HTMLInputElement;
     musicPrompt: HTMLInputElement;
+    musicStyle: HTMLSelectElement;
     musicInfo: HTMLElement;
     hangar: HTMLElement;
     buttons: HTMLButtonElement[];
@@ -138,14 +140,20 @@ export class Studio {
     });
     const rounds = h('select', { title: 'Model calls allowed: 1 designer draft, then engineer repair rounds' });
     for (const n of [1, 2, 3, 4, 5]) rounds.append(h('option', { value: String(n) }, `${n} round${n > 1 ? 's' : ''}`));
-    rounds.value = '3';
+    rounds.value = '4';
+    const drafts = h('select', { title: 'Independent first drafts, flight-tested in parallel; the best one goes on to repair' });
+    for (const n of [1, 2, 3]) drafts.append(h('option', { value: String(n) }, `${n} draft${n > 1 ? 's' : ''}`));
+    drafts.value = '2';
     const designBtn = h('button', { class: 'primary', onclick: () => this.design(false) }, 'Generate aircraft');
     const refineBtn = h('button', { onclick: () => this.design(true), title: 'Modify the craft you are flying, using your flight as feedback' }, 'Refine current');
     const cancel = h('button', { class: 'hidden', onclick: () => this.busy?.abort() }, 'Cancel');
     const liveryPrompt = h('input', { type: 'text', placeholder: 'e.g. racing stripes, red and cream' });
     const paintBtn = h('button', { onclick: () => this.paint() }, 'Paint');
     const unpaintBtn = h('button', { title: 'Remove livery', onclick: () => this.unpaint() }, '✕');
-    const musicPrompt = h('input', { type: 'text', placeholder: 'e.g. breezy 70s adventure theme' });
+    const musicPrompt = h('input', { type: 'text', placeholder: 'extra direction, e.g. slower, with a guitar solo' });
+    const musicStyle = h('select', { title: 'Genre', 'aria-label': 'Music genre' });
+    for (const [id, s] of Object.entries(MUSIC_STYLES)) musicStyle.append(h('option', { value: id }, s.label));
+    musicStyle.value = 'synthwave';
     const composeBtn = h('button', { onclick: () => this.compose() }, 'Compose');
     this.audioEl = h('audio', { controls: '', loop: '', class: 'hidden' });
     const importInput = h('input', { type: 'file', accept: '.json,application/json', class: 'hidden', onchange: () => this.importFile(importInput) });
@@ -167,10 +175,12 @@ export class Studio {
       settings,
       prompt,
       rounds,
+      drafts,
       log: h('ol', { class: 'studio-log' }),
       result: h('div', { class: 'studio-result hidden' }),
       liveryPrompt,
       musicPrompt,
+      musicStyle,
       musicInfo: h('div', { class: 'muted small' }),
       hangar: h('div', { class: 'studio-hangar' }),
       buttons: [designBtn, refineBtn, paintBtn, composeBtn],
@@ -202,12 +212,12 @@ export class Studio {
       h('details', { class: 'settings crew-settings' },
         h('summary', {}, 'Models & generation settings'),
         h('div', { class: 'row spread' }, h('h4', {}, 'Crew'), h('label', { class: 'inline' }, freeOnly, ' Free only')),
-        crew, h('label', {}, 'Design and repair rounds', rounds),
+        crew, h('label', {}, 'Design and repair rounds', rounds), h('label', {}, 'Parallel first drafts (best one kept)', drafts),
       ),
       h('section', {}, h('h4', {}, 'Livery'), h('div', { class: 'row' }, liveryPrompt, paintBtn, unpaintBtn)),
       h('section', {},
         h('h4', {}, 'Music'),
-        h('div', { class: 'row' }, musicPrompt, composeBtn),
+        h('div', { class: 'row' }, musicStyle, musicPrompt, composeBtn),
         this.audioEl,
         this.el.musicInfo,
       ),
@@ -413,6 +423,7 @@ export class Studio {
         base: refine ? cur.craft : undefined,
         feedback: refine ? this.host.flightNotes() : undefined,
         maxIterations: Number(this.el.rounds.value),
+        drafts: refine ? 1 : Number(this.el.drafts.value),
         tester: runFlightTest,
         signal,
         onEvent: (e) => {
@@ -422,7 +433,10 @@ export class Studio {
             const who = `${a.role === 'designer' ? 'Designer' : 'Engineer'}${a.model ? ` (${shortName(a.model)})` : ''}`;
             if (a.error) this.logLine(`${who}: ${a.error}`, 'bad');
             else if (a.validationErrors) this.logLine(`${who}: ${a.validationErrors.length} format errors → engineer`, 'warn');
-            else if (a.report) this.logLine(`${who}: "${a.craft?.name}" scored ${a.report.score}/100`, a.report.passed ? 'good' : 'warn');
+            else if (a.report) {
+              const fixed = a.fixes?.length ? ` (${a.fixes.length} auto-fix${a.fixes.length > 1 ? 'es' : ''})` : '';
+              this.logLine(`${who}: "${a.craft?.name}" scored ${a.report.score}/100${fixed}`, a.report.passed ? 'good' : 'warn');
+            }
           }
           this.updateSpend();
         },
@@ -506,13 +520,16 @@ export class Studio {
   private async compose(): Promise<void> {
     const composer = this.guard('composer');
     if (!composer) return;
-    const style = this.el.musicPrompt.value.trim() || 'breezy, optimistic flying adventure theme';
+    const extra = this.el.musicPrompt.value.trim();
+    const genre = this.el.musicStyle.value;
+    const style = `${MUSIC_STYLES[genre]?.label ?? 'Music'}${extra ? ` · ${extra}` : ''}`;
     this.setStatus(`Composer (${shortName(composer.model)}) writing…`);
     await this.run('Composing', async (signal) => {
       const res = await composeMusic(this.host.client, {
         model: composer.model,
         fallbacks: composer.fallbacks,
-        prompt: style,
+        prompt: extra,
+        style: genre,
         craftName: this.host.current().craft.name,
         signal,
       });

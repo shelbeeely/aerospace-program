@@ -16,10 +16,13 @@
     "import-towers": "node --experimental-transform-types --no-warnings scripts/importTowers.ts",
     "autopilot": "node --experimental-transform-types --no-warnings scripts/autopilot.ts",
     "design": "node --experimental-transform-types --no-warnings scripts/design.ts",
+    "design-pipeline": "node --experimental-transform-types --no-warnings scripts/designPipeline.ts",
     "raytrace": "node --experimental-transform-types --no-warnings scripts/raytrace.ts",
     "events": "node --experimental-transform-types --no-warnings scripts/events.ts",
     "ocean": "node --experimental-transform-types --no-warnings scripts/ocean.ts",
     "hazards": "node --experimental-transform-types --no-warnings scripts/hazards.ts",
+    "trails": "node --experimental-transform-types --no-warnings scripts/trails.ts",
+    "planet": "node --experimental-transform-types --no-warnings scripts/planet.ts",
     "raymode": "node --experimental-transform-types --no-warnings scripts/raymode.ts"
   },
   "repository": {
