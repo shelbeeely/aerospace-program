@@ -199,16 +199,19 @@ const { calmWeather, WEATHER_PRESETS } = await import('../src/sim/atmosphere.ts'
 const moderate = { ...calmWeather(), ...WEATHER_PRESETS.moderate.settings };
 const cards = [
   ...BUILTINS.flatMap((b) => [
-    { label: `${b.label} [calm]`, craft: b.craft, weather: calmWeather() },
+    { label: `${b.label} [calm]`, craft: b.craft, weather: calmWeather(), gusty: true },
     { label: `${b.label} [moderate]`, craft: b.craft, weather: moderate },
   ]),
   { label: 'Kestrel H-2 (helicopter, regression) [calm]', craft: HELICOPTER, weather: calmWeather() },
   { label: 'Skyship B-1 (blimp, regression) [calm]', craft: BLIMP, weather: calmWeather() },
 ];
 for (const c of cards) {
-  const r = await flightTest(c.craft, { weather: c.weather });
+  const gusty = 'gusty' in c && c.gusty;
+  const r = await flightTest(c.craft, { weather: c.weather, gusty });
   console.log(`${r.passed ? 'PASS' : 'FAIL'} ${c.label}: ${r.score}/100 (${r.vehicle})${r.issues.length ? ` - ${r.issues[0]}` : ''}`);
   if (!r.passed) failed++;
+  // Advisory only: a gusty crosswind score never changes PASS/FAIL.
+  if (r.gusty) console.log(`     advisory ${c.label.replace(' [calm]', '')} [gusty crosswind]: ${r.gusty.score}/100${r.gusty.issues.length ? ` - ${r.gusty.issues[0]}` : ''}`);
 }
 if (failed) {
   console.error(`${failed} check(s) failed`);
