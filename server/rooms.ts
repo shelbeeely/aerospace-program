@@ -98,7 +98,7 @@ export class Lobby {
         state: new RateLimiter(30, 60, now),
         event: new RateLimiter(20, 60, now),
         chat: new RateLimiter(1, 5, now),
-        craft: new RateLimiter(1, 3, now),
+        craft: new RateLimiter(2, 5, now),
       },
     };
     this.sessions.add(s);

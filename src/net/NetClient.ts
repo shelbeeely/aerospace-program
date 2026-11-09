@@ -39,7 +39,18 @@ const WALL_SOLID_RADIUS = 350;
 const WALL_DROP_RADIUS = 450;
 const MAX_REMOTE_COLLIDERS = 4000;
 const WALL_THICKNESS = 0.18;
+/** After a (re)spawn, remote walls through the craft stay hollow this long (ms). */
+const SPAWN_GRACE_MS = 2000;
+/** Craft changes go out at most this often (s); cycling through vehicles sends the last one. */
+const CRAFT_INTERVAL = 0.5;
 const C = PLANET.circumference;
+/** Horizontal distance from `p` to the segment a-b. */
+function segmentDistance(a: { x: number; z: number }, b: { x: number; z: number }, p: { x: number; z: number }): number {
+  const dx = b.x - a.x, dz = b.z - a.z;
+  const l2 = dx * dx + dz * dz;
+  const k = l2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.z - a.z) * dz) / l2)) : 0;
+  return Math.hypot(a.x + dx * k - p.x, a.z + dz * k - p.z);
+}
 /** Shift that brings `v` to the image nearest `ref`. */
 const imageShift = (v: number, ref: number) => C * Math.round((ref - v) / C);
 
@@ -106,6 +117,7 @@ export class NetClient {
   private retries = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private sendClock = 0;
+  private craftClock = 0;
   private sentArc = new Map<number, number>();
   private lastCraft: CraftDef | null = null;
   private applyingRemote = false;
@@ -115,6 +127,9 @@ export class NetClient {
   private wallBody: RAPIER.RigidBody | null = null;
   private colliderCount = 0;
   private wallTick = 0;
+  private spawnGraceUntil = 0;
+  private radiusFor: CraftDef | null = null;
+  private craftRadius = 2;
   /** All remote trails in one list, drawn by one TrailView. */
   private readonly trailSet = { trails: [] as Trail[], mode: 'wall' as TrailMode, version: 0 };
   private readonly trailView: TrailView;
@@ -245,6 +260,8 @@ export class NetClient {
         this.room = m.room;
         this.retries = 0;
         this.sentArc.clear(); // everyone gets our trails from the start
+        this.craftClock = CRAFT_INTERVAL;
+        this.spawnGraceUntil = performance.now() + SPAWN_GRACE_MS; // we may be sitting in someone's wall
         for (const p of m.players) this.addPlayer(p);
         this.setStatus('connected', `Room ${m.room} · ${m.players.length + 1} on the Grid`);
         break;
@@ -344,8 +361,10 @@ export class NetClient {
       p.buffer.push({ t: s.t, p: pos, q: new THREE.Quaternion(...s.q).normalize(), v: new THREE.Vector3(...s.v), c: s.c });
       if (p.buffer.length > 40) p.buffer.shift();
     }
+    const roster = !p.latest || p.latest.m !== s.m || p.latest.x !== s.x;
     p.latest = s;
     p.trailMode = s.tm;
+    if (roster) this.onChange?.(); // hangar / derezzed shows in the player list
     this.applyTrails(p, s.tr);
   }
 
@@ -390,7 +409,7 @@ export class NetClient {
         pts.push({ x: x + t.ox, z: z + t.oz, y0, y1, arc, time });
         changed = true;
       }
-      while (pts.length && pts[0].arc < nt.tail - 1e-3) {
+      while (pts.length && pts[0].arc < nt.tail - 0.011) {
         this.dropCollider(pts[0]);
         pts.shift();
         changed = true;
@@ -523,6 +542,8 @@ export class NetClient {
     const derez = sim.trails.derez.bind(sim.trails);
     sim.trails.derez = (time) => {
       derez(time);
+      // Respawn (not a crash: explode() marks the wreck before it derezzes).
+      if (!sim.exploded) this.spawnGraceUntil = performance.now() + SPAWN_GRACE_MS;
       this.sendEvent({ k: 'derez' });
     };
   }
@@ -537,7 +558,9 @@ export class NetClient {
         this.seenExplosions.add(e);
         this.sendEvent({ k: 'explosion', x: r2(e.x), y: r2(e.y), z: r2(e.z), radius: r2(e.radius) });
       }
-      if (sim.craft.def !== this.lastCraft) {
+      this.craftClock += dt;
+      if (sim.craft.def !== this.lastCraft && this.craftClock >= CRAFT_INTERVAL) {
+        this.craftClock = 0;
         this.lastCraft = sim.craft.def;
         this.send({ t: 'craft', craft: this.lastCraft });
       }
@@ -584,7 +607,7 @@ export class NetClient {
       else if (!head) this.sentArc.delete(t.id);
       tr.push({
         id: t.id, kind: t.kind === 'wall' ? 'wall' : 'contrail', color: /^#[0-9a-fA-F]{6}$/.test(t.color) ? t.color : '#00eaff',
-        height: r2(Math.min(100, t.height)), pts, tail: t.points.length ? r2(t.points[0].arc) - 0.01 : -1,
+        height: r2(Math.min(100, t.height)), pts, tail: t.points.length ? r2(t.points[0].arc) : -1,
         active: t.active, derez: t.derezAt !== null,
       });
     }
@@ -663,16 +686,23 @@ export class NetClient {
   private updateWallColliders(): void {
     const sim = this.game.sim;
     const ref = sim.position;
+    // Everyone spawns on the same runway: for a moment after a (re)spawn, remote walls through
+    // the local craft are cleared and not rebuilt there. Otherwise every wall near you is solid.
+    if (this.radiusFor !== sim.craft.def) {
+      this.radiusFor = sim.craft.def;
+      this.craftRadius = sim.craft.boundingRadius();
+    }
+    const keepOut = performance.now() < this.spawnGraceUntil ? this.craftRadius + 1.5 : -1;
     for (const p of this.players.values()) {
       for (const t of p.trails.values()) {
         if (t.kind !== 'wall' || t.derezAt !== null) continue;
         const pts = t.points;
         for (let i = 1; i < pts.length; i++) {
           const a = pts[i - 1], b = pts[i];
-          const d = Math.hypot((a.x + b.x) / 2 - ref.x, (a.z + b.z) / 2 - ref.z);
+          const d = segmentDistance(a, b, ref);
           if (b.collider) {
-            if (d > WALL_DROP_RADIUS) this.dropCollider(b);
-          } else if (d < WALL_SOLID_RADIUS && this.colliderCount < MAX_REMOTE_COLLIDERS) this.solidify(a, b);
+            if (d > WALL_DROP_RADIUS || d < keepOut) this.dropCollider(b);
+          } else if (d < WALL_SOLID_RADIUS && d >= keepOut && this.colliderCount < MAX_REMOTE_COLLIDERS) this.solidify(a, b);
         }
       }
     }

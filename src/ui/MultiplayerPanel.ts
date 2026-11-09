@@ -145,7 +145,7 @@ export class MultiplayerPanel {
 
       const online = el('div', 'mp-online-only');
       const list = el('ul', 'mp-players');
-      list.append(playerRow(this.name + ' (you)', this.color, ''));
+      list.append(playerRow(this.name, this.color, 'you'));
       for (const p of net.players.values()) list.append(playerRow(p.name, p.color, `${p.craft.name}${p.latest?.m === 'hangar' ? ' · hangar' : p.latest?.x ? ' · derezzed' : ''}`));
       online.append(el('h4', '', `ON THE GRID · ${net.players.size + 1}/16`), list);
       const log = el('div', 'mp-chat');

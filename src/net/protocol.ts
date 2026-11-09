@@ -40,7 +40,7 @@ export interface NetTrail {
   height: number;
   /** New points (arc ascending; receivers ignore any at or below the arc they already have). */
   pts: NetTrailPoint[];
-  /** Arc of the sender's oldest surviving point: receivers drop older ones (ribbons fade). */
+  /** Arc of the sender's oldest surviving point (receivers drop older ones: ribbons fade); -1 = the trail is empty. */
   tail: number;
   /** Still attached to its emitter. */
   active: boolean;
