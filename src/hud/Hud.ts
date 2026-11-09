@@ -34,6 +34,14 @@ export class Hud {
     help: $('help'),
     debug: $('debug'),
     stats: $('d-stats'),
+    appr: $('h-appr'),
+    apprSite: $('h-appr-site'),
+    apprDist: $('h-appr-dist'),
+    apprEta: $('h-appr-eta'),
+    apprGs: $('h-appr-gs'),
+    apprLoc: $('h-appr-loc'),
+    apprSpd: $('h-appr-spd'),
+    apprUnit: $('h-appr-unit'),
   };
   private readonly cache = new Map<HTMLElement, string>();
 
@@ -122,21 +130,46 @@ export class Hud {
     this.el.debug.classList.toggle('hidden', !v);
   }
 
-  /** Autopilot readout: null = off. */
-  setAutopilot(s: { kind: 'airplane' | 'rotorcraft'; heading: number; altitude: number; commanded: number; speed: number } | null): void {
+  /** Autopilot readout: null = off. Shows the mode and phase, plus approach guidance while landing. */
+  setAutopilot(s: {
+    kind: 'airplane' | 'rotorcraft'; heading: number; altitude: number; commanded: number; speed: number;
+    mode?: string; phase?: string; vs?: number | null;
+    guidance?: { distance: number; glideslopeDev: number | null; localizerDev: number | null; targetSpeed: number; eta: number; siteName: string } | null;
+  } | null): void {
     const ap = document.getElementById('h-ap');
     const tgt = document.getElementById('h-ap-t');
     const row = document.getElementById('h-ap-row');
     if (!ap || !tgt || !row) return;
     row.classList.toggle('ap-on', !!s);
+    const g = s?.guidance ?? null;
+    const landing = !!s && s.mode === 'land' && !!g;
+    this.el.appr.classList.toggle('hidden', !landing);
     if (!s) {
       this.set(ap, 'OFF');
       this.set(tgt, '');
       return;
     }
-    const climb = s.commanded > s.altitude + 1 ? ` ↑${s.commanded.toFixed(0)}` : '';
-    this.set(ap, `${Math.round(s.heading).toString().padStart(3, '0')}° ${s.altitude.toFixed(0)}m`);
-    this.set(tgt, s.kind === 'airplane' ? `${(s.speed * MS_TO_KT).toFixed(0)}kt${climb}` : `${s.speed.toFixed(0)}m/s${climb}`);
+    if (s.mode && s.mode !== 'hold') {
+      this.set(ap, s.mode === 'goto' ? 'GO TO' : s.mode.toUpperCase());
+      this.set(tgt, (s.phase ?? '').toUpperCase());
+    } else {
+      const climb = s.commanded > s.altitude + 1 ? ` ↑${s.commanded.toFixed(0)}` : '';
+      const vert = s.vs !== null && s.vs !== undefined ? `${s.vs >= 0 ? '+' : ''}${s.vs.toFixed(1)}m/s` : `${s.altitude.toFixed(0)}m`;
+      this.set(ap, `${Math.round(s.heading).toString().padStart(3, '0')}° ${vert}`);
+      this.set(tgt, s.kind === 'airplane' ? `${(s.speed * MS_TO_KT).toFixed(0)}kt${climb}` : `${s.speed.toFixed(0)}m/s${climb}`);
+    }
+    if (!landing || !g) return;
+    const e = this.el;
+    this.set(e.apprSite, `${g.siteName} · ${(s.phase ?? '').toUpperCase()}`);
+    this.set(e.apprDist, g.distance >= 1000 ? `${(g.distance / 1000).toFixed(1)}km` : `${g.distance.toFixed(0)}m`);
+    this.set(e.apprEta, g.eta > 0 && g.eta < 36000 ? `${Math.floor(g.eta / 60)}:${Math.round(g.eta % 60).toString().padStart(2, '0')}` : '');
+    this.set(e.apprGs, g.glideslopeDev === null ? '--' : `${g.glideslopeDev > 0 ? '▲' : '▼'}${Math.abs(g.glideslopeDev).toFixed(0)}`);
+    this.set(e.apprLoc, g.localizerDev === null ? '--' : `${g.localizerDev > 0 ? '▶' : '◀'}${Math.abs(g.localizerDev).toFixed(0)}`);
+    const air = s.kind === 'airplane';
+    this.set(e.apprSpd, g.targetSpeed > 0 ? (air ? (g.targetSpeed * MS_TO_KT).toFixed(0) : g.targetSpeed.toFixed(0)) : '--');
+    this.set(e.apprUnit, air ? 'kt' : 'm/s');
+    e.apprGs.classList.toggle('appr-warn', g.glideslopeDev !== null && Math.abs(g.glideslopeDev) > 15);
+    e.apprLoc.classList.toggle('appr-warn', g.localizerDev !== null && Math.abs(g.localizerDev) > 30);
   }
 
   setStats(text: string): void {

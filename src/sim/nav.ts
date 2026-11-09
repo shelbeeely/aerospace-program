@@ -112,7 +112,7 @@ export function landingDistanceNeeded(vapp: number): number {
 }
 
 /** Usable now? Rooftop pads are gone while their tower is fractured. */
-export function siteUsable(s: LandingSite, fractured?: ReadonlySet<number>): boolean {
+export function siteUsable(s: LandingSite, fractured?: { has(group: number): boolean }): boolean {
   return s.group === undefined || !fractured || !fractured.has(s.group);
 }
 
@@ -133,7 +133,7 @@ export function nearestRunway(x: number, z: number, vapp: number): LandingSite |
 }
 
 /** Nearest usable helipad (street-level or rooftop), or null. */
-export function nearestPad(x: number, z: number, fractured?: ReadonlySet<number>): LandingSite | null {
+export function nearestPad(x: number, z: number, fractured?: { has(group: number): boolean }): LandingSite | null {
   let best: LandingSite | null = null;
   let bestD = Infinity;
   for (const s of landingSites()) {

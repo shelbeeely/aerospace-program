@@ -14,6 +14,7 @@ const KEYBOARD: Array<[string, string]> = [
   ['Backspace', 'reset the whole world'],
   ['L', 'light cycle trail: jetwall → light ribbon → off'],
   ['U', 'autopilot on / off (then W/S altitude, A/D heading, Shift/Ctrl speed)'],
+  ['J', 'flight computer: hold, takeoff, land, go to, orbit, level (a firm stick input takes over)'],
   ['C', 'chase / orbit camera'],
   ['[ / ]', 'previous / next craft'],
   ['N', 'Hangar / flight'],
@@ -28,7 +29,7 @@ const TOUCH: Array<[string, string]> = [
   ['BRAKE', 'hold to brake'],
   ['Hangar', 'choose a craft or open Create / Studio'],
   ['Camera', 'switch chase / orbit view'],
-  ['More', 'new plane, reset world, craft selection, weather, flaps, sound and photos'],
+  ['More', 'new plane, reset world, craft selection, autopilot, flight computer (land, go to, orbit), weather, flaps, sound and photos'],
 ];
 
 const PROFILE_TIPS: Record<string, string> = {

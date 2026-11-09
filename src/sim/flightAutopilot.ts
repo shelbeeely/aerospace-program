@@ -104,7 +104,8 @@ const r0 = (x: number) => Math.round(x);
 const FLARE_PITCH = 4;
 /** Extra elevator per degree of pitch error in the flare. */
 const FLARE_GAIN = 0.1;
-const LANDING_FLAPS = Number((globalThis as any).process?.env?.LF ?? 1);
+/** Flap setting on final, in the flare and on the ground. */
+const LANDING_FLAPS = 1;
 const hdg3 = (h: number) => r0(wrap360(h)).toString().padStart(3, '0');
 const km = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${r0(m)} m`);
 /** Runway designator for a landing heading: 0 → "36", 90 → "09". */
@@ -148,7 +149,7 @@ export class FlightAutopilot implements ControlSource {
   private orbitFloor = 0;
   private padHeading = 0;
   /** Fractured structure groups (rooftop pads on them are unusable). */
-  fractured: ReadonlySet<number> | null = null;
+  fractured: { has(group: number): boolean } | null = null;
   /** Called when the autopilot disengages itself (to sync the human throttle lever). */
   onDisengage: ((throttle: number) => void) | null = null;
 

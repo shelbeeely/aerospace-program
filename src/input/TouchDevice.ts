@@ -90,6 +90,7 @@ export class TouchDevice implements InputDevice {
       button('Previous craft', 'Previous craft', 'prevVehicle'),
       button('Next craft', 'Next craft', 'nextVehicle'),
       button('Autopilot', 'Autopilot on / off', 'autopilot'),
+      button('Flight computer', 'Flight computer: land, go to, orbit', 'apPanel'),
       button('Weather', 'Debug & weather', 'debug'),
       button('Flaps', 'Flaps: next detent', () => (this.flapCycle = true)),
       button('Sound', 'Sound on/off', 'mute'),
