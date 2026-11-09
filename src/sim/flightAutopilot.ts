@@ -681,9 +681,20 @@ export class FlightAutopilot implements ControlSource {
 
   // ---------------------------------------------------------------- helpers
 
-  /** Tallest obstacle along a heading (absolute m), excluding the ground right under a landing site. */
+  private clearanceCache = new Map<string, { time: number; value: number }>();
+
+  /**
+   * Tallest obstacle along a heading (absolute m). Scanning is costly at 120 Hz, so a result
+   * is reused for a tenth of a second for the same heading, reach and width.
+   */
   private clearance(t: Telemetry, heading: number, reach: number, halfWidth: number): number {
-    return obstacleAhead(t.position[0], t.position[2], heading, reach, halfWidth);
+    const key = `${Math.round(heading)}|${Math.round(reach / 25)}|${halfWidth}`;
+    const hit = this.clearanceCache.get(key);
+    if (hit && t.time >= hit.time && t.time - hit.time < 0.1) return hit.value;
+    if (this.clearanceCache.size > 64) this.clearanceCache.clear();
+    const value = obstacleAhead(t.position[0], t.position[2], heading, reach, halfWidth);
+    this.clearanceCache.set(key, { time: t.time, value });
+    return value;
   }
 
   /** Height (absolute m) that clears everything within an orbit ring by 70 m. */

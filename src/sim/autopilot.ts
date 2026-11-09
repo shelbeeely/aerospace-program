@@ -39,6 +39,7 @@ export class Autopilot implements ControlSource {
 
   /** Smoothed crab angle (heading minus ground track), deg. */
   private crab = 0;
+  private prevHeading: number | null = null;
 
   /**
    * Lower-level flying for navigation modes: hold a vertical speed, a ground track (or a bank)
@@ -59,10 +60,14 @@ export class Autopilot implements ControlSource {
       throttle = clamp(0.5 + speedErr * 0.08 + this.speedIntegral * 0.02, 0, 1);
     }
 
+    const yawRate = this.prevHeading === null ? 0 : wrap180(t.heading - this.prevHeading) / dt;
+    this.prevHeading = t.heading;
     if (cmd.rollout && t.onGround) {
       this.vsIntegral = 0;
       this.pitchIntegral = 0;
-      const steer = clamp(wrap180(cmd.rollout.heading - t.heading) * 0.12, -1, 1);
+      // Rudder and nose wheel: softer at speed (they bite hard), with yaw-rate damping.
+      const k = 0.12 * clamp(15 / Math.max(1, t.groundSpeed), 0.15, 1);
+      const steer = clamp(wrap180(cmd.rollout.heading - t.heading) * k - yawRate * 0.04, -1, 1);
       return { pitch: -0.3, roll: 0, yaw: steer, throttle: cmd.throttle ?? 0, brake: cmd.rollout.brake, flaps: cmd.flaps };
     }
 
