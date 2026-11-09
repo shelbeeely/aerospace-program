@@ -1,7 +1,8 @@
 import { CITY } from '../sim/layout.ts';
 import { TUNING } from '../tuning.ts';
 import { airportPlan } from './Airport.ts';
-import { cityPlan } from './City.ts';
+import { cityPlan, type CityPlan } from './City.ts';
+import { planetObstacleTop } from './planetCity.ts';
 import { KIT, kitBlockFactor, kitSolid, rotate, rotatedGrid, unrotate } from './kit.ts';
 
 /**
@@ -40,34 +41,46 @@ export interface StructureGroup {
   x0: number;
   z0: number;
   size: [number, number, number];
-  /** Imported kit tower: its voxel grid is the block grid (merged k×k×k). */
-  kit?: { index: number; type: number; rot: number; scale: number; k: number };
+  /** Imported kit tower: its voxel grid is the block grid (merged k×k×k). x, z: its centre. */
+  kit?: { index: number; type: number; rot: number; scale: number; k: number; x: number; z: number };
 }
 
-let cached: { list: Structure[]; groups: StructureGroup[] } | null = null;
+export interface Structures {
+  list: Structure[];
+  groups: StructureGroup[];
+}
 
-export function worldStructures(): { list: Structure[]; groups: StructureGroup[] } {
-  if (cached) return cached;
+let cached: Structures | null = null;
+
+/** The hand-built central Grid: its city, airport and kit towers. */
+export function worldStructures(): Structures {
+  return (cached ??= planStructures(cityPlan(), true));
+}
+
+/**
+ * A city plan (the centre, or one chunk of the planet) as structures. Group names get
+ * `prefix` so chunks never collide.
+ */
+export function planStructures(city: CityPlan, withAirport: boolean, prefix = ''): Structures {
   const list: Structure[] = [];
   const groups: StructureGroup[] = [];
   const byName = new Map<string, StructureGroup>();
   const groupFor = (name: string, color: string): StructureGroup => {
     let g = byName.get(name);
     if (!g) {
-      g = { id: groups.length, name, pieces: [], color, blockSize: 0, x0: 0, z0: 0, size: [1, 1, 1] };
+      g = { id: groups.length, name: prefix + name, pieces: [], color, blockSize: 0, x0: 0, z0: 0, size: [1, 1, 1] };
       groups.push(g);
       byName.set(name, g);
     }
     return g;
   };
-  const city = cityPlan();
   city.pieces.forEach((p, i) => {
     const color = CITY.colors[p.color];
     const g = groupFor(p.building >= 0 ? `city:${p.building}` : `highway:${i}`, color);
     g.pieces.push(list.length);
     list.push({ shape: p.shape, x: p.x, y: p.y, z: p.z, sx: p.sx, sy: p.sy, sz: p.sz, taper: p.taper, color, windows: p.windows, group: g.id });
   });
-  for (const p of airportPlan().pieces) {
+  if (withAirport) for (const p of airportPlan().pieces) {
     if (!p.solid) continue;
     const g = groupFor(`airport:${p.group}`, p.color);
     g.pieces.push(list.length);
@@ -82,7 +95,7 @@ export function worldStructures(): { list: Structure[]; groups: StructureGroup[]
     const c = t.cell * inst.scale;
     const x0 = inst.x - (Wr * c) / 2;
     const z0 = inst.z - (Dr * c) / 2;
-    g.kit = { index, type: inst.type, rot: inst.rot, scale: inst.scale, k };
+    g.kit = { index, type: inst.type, rot: inst.rot, scale: inst.scale, k, x: inst.x, z: inst.z };
     g.blockSize = c * k;
     g.x0 = x0;
     g.z0 = z0;
@@ -99,7 +112,7 @@ export function worldStructures(): { list: Structure[]; groups: StructureGroup[]
     }
   });
   for (const g of groups) if (!g.kit) gridFor(g, list);
-  return (cached = { list, groups });
+  return { list, groups };
 }
 
 /** Choose each structure's block grid: as fine as the block budget allows. */
@@ -168,5 +181,6 @@ export function obstacleTop(x: number, z: number): number {
     }
     heights = { cell, map };
   }
-  return heights.map.get(`${Math.floor(x / heights.cell)},${Math.floor(z / heights.cell)}`) ?? 0;
+  const central = heights.map.get(`${Math.floor(x / heights.cell)},${Math.floor(z / heights.cell)}`) ?? 0;
+  return Math.max(central, planetObstacleTop(x, z));
 }

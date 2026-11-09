@@ -240,7 +240,7 @@ function buildCity(def = CITY): CityPlan {
 }
 
 /** Tower builder in the 1980s computer-world style (see the styles below). */
-function makeTowerBuilder(plan: CityPlan, rnd: () => number, pickColor: () => number) {
+export function makeTowerBuilder(plan: CityPlan, rnd: () => number, pickColor: () => number) {
   return (cx: number, cz: number, foot: number, height: number) => {
     const id = plan.buildings.length;
     const color = pickColor();

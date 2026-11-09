@@ -36,6 +36,16 @@ function unitGeometry(key: string): THREE.BufferGeometry {
   const taper = Number(key.slice(4));
   return new THREE.CylinderGeometry(0.5 * taper, 0.5, 1, 16);
 }
+/** Shared across views (planet chunks stream in and out without recompiling shaders). */
+const SHARED_MATERIALS = new Map<string, THREE.Material>();
+const SHARED_LINES = new Map<string, THREE.Material>();
+const SHARED_UNITS = new Map<string, THREE.BufferGeometry>();
+function sharedUnit(key: string): THREE.BufferGeometry {
+  let g = SHARED_UNITS.get(key);
+  if (!g) SHARED_UNITS.set(key, (g = unitGeometry(key)));
+  return g;
+}
+
 const shapeKey = (p: StructurePiece) =>
   p.shape === 'cone' ? `cone${nearestTaper(p.taper)}` : p.shape === 'box' && Math.max(p.sx, p.sz) > 200 ? 'boxlong' : p.shape;
 /** Edge key: a long box has the same edges as a box (the subdivision is only in the faces). */
@@ -105,7 +115,7 @@ export class StructuresView {
       if (!list) buckets.set(key, (list = []));
       list.push(p);
     }
-    const materials = new Map<string, THREE.Material>();
+    const materials = SHARED_MATERIALS;
     const geos = new Map<string, THREE.BufferGeometry>();
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
@@ -114,7 +124,7 @@ export class StructuresView {
     for (const [key, list] of buckets) {
       const [shape, col, win] = key.split('|');
       let geo = geos.get(shape);
-      if (!geo) geos.set(shape, (geo = unitGeometry(shape)));
+      if (!geo) geos.set(shape, (geo = sharedUnit(shape)));
       const matKey = `${col}|${win}`;
       let mat = materials.get(matKey);
       if (!mat) materials.set(matKey, (mat = facadeMaterial(col, win === '1')));
@@ -135,7 +145,7 @@ export class StructuresView {
 
     // --- Merged neon edges, one LineSegments per colour, with per-group vertex ranges
     const edgeUnits = new Map<string, Float32Array>();
-    if (!geos.has('box')) geos.set('box', unitGeometry('box'));
+    if (!geos.has('box')) geos.set('box', sharedUnit('box'));
     for (const shape of geos.keys()) {
       if (shape === 'boxlong') continue;
       const e = new THREE.EdgesGeometry(geos.get(shape)!, 10);
@@ -174,7 +184,10 @@ export class StructuresView {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', attr);
       geo.computeBoundingSphere();
-      const lines = new THREE.LineSegments(geo, neonLineMaterial(col, opts.lineIntensity ?? 2.6));
+      const lk = `${col}|${opts.lineIntensity ?? 2.6}`;
+      let lm = SHARED_LINES.get(lk);
+      if (!lm) SHARED_LINES.set(lk, (lm = neonLineMaterial(col, opts.lineIntensity ?? 2.6)));
+      const lines = new THREE.LineSegments(geo, lm);
       this.root.add(lines);
       for (const r of ranges) {
         let g = this.lineRanges.get(r.group);
@@ -182,7 +195,16 @@ export class StructuresView {
         g.push({ attr, start: r.start, count: r.count, saved: arr.slice(r.start, r.start + r.count) });
       }
     }
-    for (const g of geos.values()) void g;
+
+  }
+
+  /** Free this view's GPU buffers (shared unit geometries and materials stay). */
+  dispose(): void {
+    this.root.removeFromParent();
+    this.root.traverse((o) => {
+      if (o instanceof THREE.InstancedMesh) o.dispose();
+      else if (o instanceof THREE.LineSegments) o.geometry.dispose();
+    });
   }
 
   /** Hide a group (its building fractured into breakable blocks drawn elsewhere). */

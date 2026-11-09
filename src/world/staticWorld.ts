@@ -4,7 +4,9 @@ import { TUNING } from '../tuning.ts';
 import { airportPlan } from './Airport.ts';
 import type { BlockBuilding } from './BlockBuilding.ts';
 import { cityPlan } from './City.ts';
-import { structureMask, worldStructures } from './structures.ts';
+import { PLANET } from '../sim/layout.ts';
+import { chunkAt, GRID, imageOffset, planetChunk } from './planetCity.ts';
+import { structureMask, worldStructures, type Structures } from './structures.ts';
 import type { Town } from './Town.ts';
 
 /**
@@ -31,6 +33,12 @@ export class StaticWorld {
   version = 0;
 
   private readonly pieceColliders: Array<RAPIER.Collider | null>;
+  /** Planet chunks appended to the structure lists (key includes the image offset). */
+  readonly outerChunks = new Map<string, { ci: number; cj: number; ox: number; oz: number; pieceStart: number; pieceEnd: number; groupStart: number; groupEnd: number }>();
+  /** Bumped whenever outer chunks are registered (renderers rebuild their chunk views). */
+  contentVersion = 0;
+  private lastChunkKey = '';
+  private chunksPending = false;
   /** Streaming: pieces bucketed by 250 m cells; only cells near the craft (and near fractured
    *  structures) carry colliders. Rapier walks every collider each step, so 23,000 static ones
    *  would cost ~3 ms a step; a 1 km bubble costs a few hundred µs. */
@@ -39,7 +47,11 @@ export class StaticWorld {
   private centreCell = '';
   private readonly owner = new Map<number, number>();
   private readonly pending = new Map<number, { impulse: number; x: number; y: number; z: number }>();
-  private readonly structures = worldStructures();
+  /** The central Grid's structures, then every planet chunk registered so far (append-only). */
+  readonly structures: Structures = (() => {
+    const w = worldStructures();
+    return { list: [...w.list], groups: [...w.groups] };
+  })();
 
   constructor(
     private readonly world: RAPIER.World,
@@ -66,6 +78,7 @@ export class StaticWorld {
    * structure. Cheap when the craft stays in its cell; otherwise only changed cells are touched.
    */
   stream(x: number, z: number, force = false): void {
+    this.registerChunks(x, z, force);
     const cx = Math.floor(x / CELL);
     const cz = Math.floor(z / CELL);
     const key = cellKey(cx, cz);
@@ -94,6 +107,59 @@ export class StaticWorld {
       if (this.loaded.has(k)) continue;
       for (const i of this.cells.get(k)!) if (!this.fractured.has(this.structures.list[i].group)) this.addCollider(i);
       this.loaded.add(k);
+    }
+  }
+
+  /**
+   * Bring the planet chunks within REGISTER_RADIUS of (x, z) into the structure lists (at most
+   * a few per call so streaming never hitches), placed at the image nearest the craft.
+   */
+  private registerChunks(x: number, z: number, force: boolean): void {
+    const [ci, cj] = chunkAt(x, z);
+    const key = `${ci},${cj},${Math.round(x / PLANET.circumference)},${Math.round(z / PLANET.circumference)}`;
+    if (!force && key === this.lastChunkKey && !this.chunksPending) return;
+    this.lastChunkKey = key;
+    this.chunksPending = false;
+    let budget = 3;
+    const S = GRID.chunkSize;
+    for (let di = -2; di <= 2; di++) for (let dj = -2; dj <= 2; dj++) {
+      const c = planetChunk(ci + di, cj + dj);
+      const ox = imageOffset(c.x + S / 2, x);
+      const oz = imageOffset(c.z + S / 2, z);
+      const dx = Math.max(c.x + ox - x, 0, x - (c.x + ox + S));
+      const dz = Math.max(c.z + oz - z, 0, z - (c.z + oz + S));
+      if (dx * dx + dz * dz > REGISTER_RADIUS * REGISTER_RADIUS) continue;
+      const k = `${c.key}@${ox},${oz}`;
+      if (this.outerChunks.has(k)) continue;
+      if (budget-- <= 0) {
+        this.chunksPending = true;
+        continue;
+      }
+      const L = this.structures.list;
+      const G = this.structures.groups;
+      const pieceStart = L.length;
+      const groupStart = G.length;
+      for (const g of c.structures.groups) {
+        const id = G.length;
+        G.push({
+          ...g, id, name: `${g.name}@${ox},${oz}`, x0: g.x0 + ox, z0: g.z0 + oz,
+          pieces: g.pieces.map((i) => pieceStart + i),
+          kit: g.kit ? { ...g.kit, x: g.kit.x + ox, z: g.kit.z + oz } : undefined,
+        });
+      }
+      for (const p of c.structures.list) {
+        const i = L.length;
+        L.push({ ...p, x: p.x + ox, z: p.z + oz, group: groupStart + p.group });
+        this.pieceColliders.push(null);
+        const ck = cellKey(Math.floor((p.x + ox) / CELL), Math.floor((p.z + oz) / CELL));
+        let list = this.cells.get(ck);
+        if (!list) this.cells.set(ck, (list = []));
+        list.push(i);
+        if (this.loaded.has(ck)) this.addCollider(i);
+      }
+      this.outerChunks.set(k, { ci: c.ci, cj: c.cj, ox, oz, pieceStart, pieceEnd: L.length, groupStart, groupEnd: G.length });
+      this.centreCell = ''; // new cells may need loading
+      this.contentVersion++;
     }
   }
 
@@ -251,6 +317,8 @@ export class StaticWorld {
 /** Streaming cell size and radius (m). */
 const CELL = 250;
 const STREAM_RADIUS = 1000;
+/** Planet chunks within this distance of the craft are registered (physics + near render). */
+const REGISTER_RADIUS = 2000;
 /** Earthquakes bring down structures this close to the craft (m). */
 const QUAKE_RADIUS = 1200;
 /** Per-structure build quality for earthquakes: 0.8-1.4 × (some stand, some fall). */
