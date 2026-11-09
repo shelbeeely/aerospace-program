@@ -157,6 +157,7 @@ const settle = (sim: Simulation, s = 3) => run(sim, s, hold({ brake: 1 }));
 }
 for (const [name, def] of VEHICLES) {
   const sim = new Simulation(def);
+  sim.traffic.enabled = false; // spawn placement checks, not traffic (riders would collide at random)
   const pad = landingSite('pad-apron')!;
   sim.spawnSite = pad;
   sim.respawn();
