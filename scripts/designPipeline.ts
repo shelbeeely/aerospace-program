@@ -6,6 +6,8 @@
  * 2. Parallel drafts: the best draft is kept, and a draft with flipped control signs is
  *    auto-fixed and still passes its flight test.
  * 3. An engineer round gets the flight report plus the list of automatic corrections.
+ * 4. The advisory gusty-crosswind flight: report.gusty is attached, the headline score stays the
+ *    calm one, formatReport shows the advisory section, and a gusty tester reaches the engineer.
  */
 import { BLIMP, BUILTINS, HELICOPTER } from '../src/craft/builtins.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
@@ -13,6 +15,7 @@ import type { CraftDef } from '../src/craft/types.ts';
 import { autoFix } from '../src/gen/autofix.ts';
 import { designCraft } from '../src/gen/craftDesigner.ts';
 import type { ChatMessage, OpenRouter } from '../src/gen/openrouter.ts';
+import { flightTest, formatReport } from '../src/sim/flightTest.ts';
 import { initPhysics } from '../src/sim/Simulation.ts';
 
 await initPhysics();
@@ -78,6 +81,27 @@ console.log('\n--- engineer round');
   const second = typeof last === 'string' ? last : JSON.stringify(last ?? '');
   check(log.length === 2 && r.report.passed, 'the engineer round fixes it', `${log.length} calls, score ${r.report.score}`);
   check(second.includes('Automated flight test results') && second.includes('automatic corrections'), 'the engineer sees the report and the auto-fixes');
+}
+
+// ---------------------------------------------------------------- 4. gusty advisory
+console.log('\n--- gusty crosswind (advisory)');
+{
+  const calm = await flightTest(TEST_PLANE);
+  const both = await flightTest(TEST_PLANE, { gusty: true });
+  check(calm.gusty === undefined, 'no gusty result unless asked for');
+  check(typeof both.gusty?.score === 'number' && Array.isArray(both.gusty.issues) && Array.isArray(both.gusty.log), 'report.gusty has score, issues and log', `gusty ${both.gusty?.score}`);
+  check(both.score === calm.score && both.passed === calm.passed, 'headline score and pass stay the calm ones', `${calm.score} vs ${both.score}`);
+  check(formatReport(both).includes('Gusty crosswind (advisory)') && !formatReport(calm).includes('Gusty crosswind'), 'formatReport adds the advisory section only with gusty');
+
+  // A weak trainer scores badly calm and in gusts; the engineer sees the advisory section.
+  const weak = structuredClone(TEST_PLANE);
+  for (const p of weak.parts) for (const m of p.modules ?? []) if (m.type === 'engine') m.maxThrust *= 0.15;
+  const { client, log } = fakeClient((m) => (m.length <= 2 ? reply(weak) : reply(TEST_PLANE)));
+  const r = await designCraft(client, { model: 'fake/designer', engineerModel: 'fake/engineer', prompt: 'a trainer', drafts: 1, maxIterations: 3, tester: (c) => flightTest(c, { gusty: true }) });
+  const last = log[1]?.at(-1)?.content;
+  const second = typeof last === 'string' ? last : JSON.stringify(last ?? '');
+  check(second.includes('Gusty crosswind (advisory)'), 'the engineer sees the gusty advisory');
+  check(r.report.passed && typeof r.report.gusty?.score === 'number', 'the final report keeps its gusty result', `score ${r.report.score}, gusty ${r.report.gusty?.score}`);
 }
 
 if (failed) {
