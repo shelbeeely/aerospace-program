@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { CraftDef } from '../craft/types.ts';
 import { TUNING } from '../tuning.ts';
-import type { WeatherSettings } from './atmosphere.ts';
+import { calmWeather, WEATHER_PRESETS, type WeatherSettings } from './atmosphere.ts';
 import { Autopilot } from './autopilot.ts';
 import { LAYOUT } from './layout.ts';
 import { Simulation } from './Simulation.ts';
@@ -52,6 +52,15 @@ export interface FlightReport {
   issues: string[];
   /** Short timeline of what happened. */
   log: string[];
+  /** Advisory re-fly of the same card in a gusty crosswind (only with `gusty: true`). Never affects score/passed. */
+  gusty?: GustyResult;
+}
+
+/** Outcome of the advisory gusty-crosswind flight (WEATHER_PRESETS.breezy). */
+export interface GustyResult {
+  score: number;
+  issues: string[];
+  log: string[];
 }
 
 export interface FlightTestOptions {
@@ -59,6 +68,23 @@ export interface FlightTestOptions {
   yieldEvery?: number;
   /** Weather to fly the card in (default: calm). */
   weather?: WeatherSettings;
+  /** Also fly the card in a gusty crosswind and attach `report.gusty` (advisory: score/passed stay the calm ones). */
+  gusty?: boolean;
+}
+
+/** The weather the advisory gusty flight uses: calm defaults plus the 'breezy' preset (9 m/s from 090, gusts 6). */
+export function gustyWeather(): WeatherSettings {
+  return { ...calmWeather(), ...WEATHER_PRESETS.breezy.settings };
+}
+
+function gustyConditions(): string {
+  const w = gustyWeather();
+  return `a ${w.windSpeed} m/s wind from ${String(Math.round(w.windFromDeg)).padStart(3, '0')} with ${w.gustStrength} m/s gusts`;
+}
+
+/** Attaches the gusty flight's result to a calm report as advisory data; the headline score is untouched. */
+export function withGusty(calm: FlightReport, gusty: FlightReport): FlightReport {
+  return { ...calm, gusty: { score: gusty.score, issues: gusty.issues, log: gusty.log } };
 }
 
 const r1 = (x: number) => Math.round(x * 10) / 10;
@@ -108,6 +134,12 @@ export function analyzeDesign(sim: Simulation): DesignMetrics {
  * Runs headless, ~150 simulated seconds in well under a second.
  */
 export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): Promise<FlightReport> {
+  const calm = await flyCard(def, opts);
+  if (!opts.gusty) return calm;
+  return withGusty(calm, await flyCard(def, { yieldEvery: opts.yieldEvery, weather: gustyWeather() }));
+}
+
+async function flyCard(def: CraftDef, opts: FlightTestOptions): Promise<FlightReport> {
   const sim = new Simulation(def, opts.weather);
   const design = analyzeDesign(sim);
   const kind = vehicleKind(sim);
@@ -351,5 +383,11 @@ export function formatReport(r: FlightReport): string {
     r.vehicle !== 'airplane' ? `Design: mass ${d.mass} kg` : `Design: mass ${d.mass} kg, wing area ${d.wingArea} m², loading ${d.wingLoading} kg/m², T/W ${d.thrustToWeight}, static margin ${d.staticMargin} chords, est. stall ${d.stallSpeed} m/s`,
     ...r.log.map((l) => `- ${l}`),
     ...(r.issues.length ? ['Issues:', ...r.issues.map((i) => `* ${i}`)] : ['No issues found.']),
+    ...(r.gusty
+      ? [
+          `Gusty crosswind (advisory): score ${r.gusty.score}/100 in ${gustyConditions()}. Does not affect the score above; worth improving if cheap.`,
+          ...(r.gusty.issues.length ? r.gusty.issues.map((i) => `* ${i}`) : ['No issues in gusts.']),
+        ]
+      : []),
   ].join('\n');
 }
