@@ -24,7 +24,9 @@
     "trails": "node --experimental-transform-types --no-warnings scripts/trails.ts",
     "planet": "node --experimental-transform-types --no-warnings scripts/planet.ts",
     "raymode": "node --experimental-transform-types --no-warnings scripts/raymode.ts",
-    "traffic": "node --experimental-transform-types --no-warnings scripts/traffic.ts"
+    "traffic": "node --experimental-transform-types --no-warnings scripts/traffic.ts",
+    "server": "bun server/index.ts",
+    "test:server": "bun test server"
   },
   "repository": {
     "type": "git",
