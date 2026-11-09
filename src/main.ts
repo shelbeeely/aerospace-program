@@ -29,6 +29,7 @@ import { AirportView } from './render/AirportView.ts';
 import { KitTowersView } from './render/KitTowersView.ts';
 import { LandingSitesView } from './render/LandingSitesView.ts';
 import { PlanetCityView } from './render/PlanetCityView.ts';
+import { TrailView } from './render/TrailView.ts';
 import { ExplosionView } from './render/ExplosionView.ts';
 import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
 import { updateSkyPlanet } from './render/neon.ts';
@@ -150,6 +151,7 @@ async function start() {
   const kitView = new KitTowersView(scene, sim.staticWorld, import.meta.env.BASE_URL);
   const sitesView = new LandingSitesView(scene, sim.staticWorld);
   const planetView = new PlanetCityView(scene, sim.staticWorld, kitView);
+  const trailView = new TrailView(scene, sim.trails);
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
   let explosionHeardAt = -Infinity;
@@ -657,13 +659,17 @@ async function start() {
           toast('Autopilot off');
         } else {
           const kind = vehicleKind(sim);
-          if (kind === 'lighter-than-air') toast('No autopilot for this craft');
+          if (kind === 'lighter-than-air' || kind === 'ground') toast('No autopilot for this craft');
           else {
             autopilot.engage(telemetry, kind);
             const st = autopilot.state;
             toast(`Autopilot on · HDG ${Math.round(st.heading).toString().padStart(3, '0')} · ${st.altitude.toFixed(0)} m${kind === 'airplane' ? ` · ${(st.speed * 1.944).toFixed(0)} kt` : ''} — stick and throttle adjust it`);
           }
         }
+      }
+      else if (a === 'trail') {
+        const m = sim.trails.cycleMode(sim.craft, sim.isAirplane(), sim.time);
+        toast(m === 'wall' ? 'Jetwall: solid light' : m === 'ribbon' ? 'Light ribbon: fades behind you' : 'Trail off');
       }
       else if (a === 'screenshot') void takePhoto();
       else if (a === 'nextVehicle') cycleCraft(1);
@@ -721,6 +727,7 @@ async function start() {
     kitView.update(camera.position);
     sitesView.update();
     planetView.update(camera.position);
+    trailView.update(sim.time);
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
     if (!sim.explosions.length) explosionHeardAt = -Infinity;

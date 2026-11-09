@@ -6,7 +6,7 @@ import { Autopilot } from './autopilot.ts';
 import { LAYOUT } from './layout.ts';
 import { Simulation } from './Simulation.ts';
 import type { Telemetry } from './telemetry.ts';
-import { lighterThanAirCard, rotorcraftCard, vehicleKind, type VehicleKind } from './vehicleTests.ts';
+import { groundCard, lighterThanAirCard, rotorcraftCard, vehicleKind, type VehicleKind } from './vehicleTests.ts';
 
 /** Numbers computed from the design itself, before flying. */
 /** Human-readable failure line (structural overload or impact damage). */
@@ -175,7 +175,7 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
         return crashed;
       },
     };
-    const card = kind === 'rotorcraft' ? await rotorcraftCard(sim, step, state) : await lighterThanAirCard(sim, step, state);
+    const card = kind === 'rotorcraft' ? await rotorcraftCard(sim, step, state) : kind === 'ground' ? await groundCard(sim, step, state) : await lighterThanAirCard(sim, step, state);
     issues.push(...card.issues);
     log.push(...card.log);
     const failures = sim.failures.map(({ partId, load, strength, cause }) => ({ partId, load, strength, cause }));

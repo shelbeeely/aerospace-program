@@ -11,6 +11,7 @@ import { neutralControls, sanitizeControls, type ControlInputs } from './control
 import { Ocean } from './ocean.ts';
 import { COAST, isSea, LAYOUT, PLANET } from './layout.ts';
 import { terrainHeight } from './terrain.ts';
+import { TrailSystem } from './trails.ts';
 import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
@@ -118,6 +119,8 @@ export class Simulation {
   private readonly groundColliders: RAPIER.Collider[] = [];
   /** Times the craft crossed a wrap edge, and the last shift applied (renderers follow it). */
   wrapCount = 0;
+  /** Light walls, light ribbons and contrails (Rule 4). */
+  readonly trails: TrailSystem;
   readonly wrapShift = new THREE.Vector3();
   private readonly groundBody: RAPIER.RigidBody;
   private readonly groundMotion = new THREE.Vector3();
@@ -167,6 +170,7 @@ export class Simulation {
     // Deep seabed under the ocean band.
     const seabed = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(COAST.x + COAST.width / 2, -COAST.depth - 5, 0));
     this.world.createCollider(RAPIER.ColliderDesc.cuboid(COAST.width / 2, 5, half), seabed);
+    this.trails = new TrailSystem(this.world);
     this.town = new Town(this.world);
     this.town.chips = this.chips;
     this.staticWorld = new StaticWorld(this.world, this.town);
@@ -323,6 +327,7 @@ export class Simulation {
 
   /** Reset the WHOLE world: every structure rebuilt, weather and events restarted, a fresh craft on the runway. */
   resetToRunway(): void {
+    this.trails.clear();
     this.staticWorld.reset();
     this.town.reset();
     this.chips.reset();
@@ -370,6 +375,9 @@ export class Simulation {
     this.craft.reset(position, rotation);
     this.fire.reset(this.craft.parts, this.tankFuel());
     this.controls = neutralControls();
+    // The old vehicle's trails derez; the new one starts its own.
+    this.trails.derez(this.time);
+    this.trails.start(this.craft, this.isAirplane());
     this.prevVelocity.set(0, 0, 0);
     this.gForceFiltered = 1;
     this.readBodyState();
@@ -439,6 +447,7 @@ export class Simulation {
     this.world.step(this.events);
     this.readBodyState();
     this.wrapAround();
+    this.trails.step(this.time, this.craft, this.rotation, this.position, this.linvel.length(), this.craft.wheels.some((w) => w.grounded));
     const resets = this.explosionResets;
     this.guardAgainstExplosion();
     // After an explosion reset the step's contacts belong to a craft that's gone: drop them.
@@ -657,6 +666,11 @@ export class Simulation {
     }
   }
 
+  /** Fixed-wing (contrails from the wingtips): lifting surfaces, no rotors, no driven wheels. */
+  isAirplane(): boolean {
+    return this.craft.aeroSurfaces.length > 0 && this.craft.rotors.length === 0 && !this.craft.wheels.some((w) => (w.def.drive ?? 0) > 0);
+  }
+
   /** Crossing a wrap edge: shift the craft and its debris by one circumference. */
   private wrapAround(): void {
     const half = PLANET.circumference / 2;
@@ -767,6 +781,7 @@ export class Simulation {
   explode(): void {
     if (this.exploded) return;
     this.exploded = true;
+    this.trails.derez(this.time); // a derezzed vehicle's trails go with it
     const c = this.position.clone();
     const radius = 10 + Math.min(20, this.craft.fuel * 0.15);
     this.explosions.push({ x: c.x, y: c.y, z: c.z, time: this.time, radius });

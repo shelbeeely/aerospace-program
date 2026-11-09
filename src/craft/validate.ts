@@ -117,6 +117,7 @@ export function validateCraft(input: unknown): string[] {
       case 'wheel':
         if (!isNum(m.radius, 0.01, 10) || !isNum(m.restLength, 0, 10)) e.push(`${at}: wheel dims invalid`);
         if (!isNum(m.stiffness, 0, 1e8) || !isNum(m.damping, 0, 1e7)) e.push(`${at}: spring invalid`);
+        if (m.drive !== undefined && !isNum(m.drive, 0, 1e6)) e.push(`${at}: wheel drive 0..1e6 N`);
         break;
       case 'drag':
         if (!isNum(m.cdA, 0, 1000)) e.push(`${at}: cdA invalid`);
@@ -167,6 +168,14 @@ export function validateCraft(input: unknown): string[] {
       case 'avionics':
         if (!isNum(m.loadW, 0, 1e6)) e.push(`${at}: avionics loadW 0..1e6 W`);
         if (m.essential !== undefined && typeof m.essential !== 'boolean') e.push(`${at}: essential must be true or false`);
+        break;
+      case 'stabilizer':
+        if (!isNum(m.strength, 0, 1e8)) e.push(`${at}: stabilizer strength 0..1e8 N·m/rad`);
+        break;
+      case 'trail':
+        if (m.kind !== 'wall' && m.kind !== 'contrail') e.push(`${at}: trail kind must be "wall" or "contrail"`);
+        if (!isNum(m.height, 0.05, 20)) e.push(`${at}: trail height 0.05..20 m`);
+        if (typeof m.color !== 'string') e.push(`${at}: trail color must be a CSS colour`);
         break;
       case 'flightController':
         if (m.mode !== 'multirotor' && m.mode !== 'helicopter') e.push(`${at}: mode must be "multirotor" or "helicopter"`);

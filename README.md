@@ -428,6 +428,17 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
 - **Earthquakes** bring the city down: intact structures within 1.2 km of the craft whose tops
   would shake past their strength (tall, slender towers and raised highways first) fracture,
   then the shaking knocks blocks out and whatever they held up falls as rubble.
+- **The Off-Grid.** Wasteland between the cities (~25% of the land): geometric solids
+  (pyramids and flat-topped mesas, planar faces, straight ridgelines) lit in the contrasting
+  palette, amber contours and orange-to-red ridges over an electric-blue survey grid. Physics
+  uses one convex hull per solid, so you hit exactly what you see.
+- **Light cycles and trails (Rule 4: movement produces visible information).** The Light Cycle
+  (built-ins) drives on the streets: W go, S brake, A/D steer; a gyro stabiliser keeps it
+  upright, leaning into turns. **L** cycles its trail: **jetwall** (solid light: ride into
+  one and you derez) → **light ribbon** (fades ~90 m behind, solid only while lit, so it never
+  permanently blocks open ground) → **off**. When a cycle derezzes or respawns, its trails
+  derez with it. Aircraft draw thin wingtip **contrails** (energy paths, visual only) above
+  35 m/s. Check: `npm run trails`.
 - **Reinforcement (hangar → craft card → Reinforce):** levels 0-3 per part, each +15% part
   mass, +60% strength and +80% impact HP. Saved with the craft; designers can set it too.
 - **Airport:** taxiway, apron, terminal with jet bridges and parked airliners, control tower and

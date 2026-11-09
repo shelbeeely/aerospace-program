@@ -12,6 +12,7 @@ const KEYBOARD: Array<[string, string]> = [
   [', / . (F6 / F7)', 'flaps up / down a notch'],
   ['R', 'new plane on the runway (wreckage stays)'],
   ['Backspace', 'reset the whole world'],
+  ['L', 'light cycle trail: jetwall → light ribbon → off'],
   ['U', 'autopilot on / off (then W/S altitude, A/D heading, Shift/Ctrl speed)'],
   ['C', 'chase / orbit camera'],
   ['[ / ]', 'previous / next craft'],

@@ -1,4 +1,5 @@
 import { JET } from './jet.ts';
+import { LIGHT_CYCLE } from './lightCycle.ts';
 import { TEST_PLANE } from './testPlane.ts';
 import { TWIN_PLANE } from './twinPlane.ts';
 import type { CraftDef, ModuleDef, RotorDef } from './types.ts';
@@ -270,4 +271,5 @@ export const BUILTINS: BuiltinCraft[] = [
   { id: 'twin', label: 'Twinstar B-2 (twin prop)', craft: TWIN_PLANE, hint: 'Counter-rotating props: no swing. Z for full throttle, rotate with S at ~85 kt.' },
   { id: 'jet', label: 'Hawkeye J-3 (jet trainer)', craft: JET, hint: 'Throttle above 95% lights the afterburner (thirsty). Rotate at ~145 kt; throttle back below 95% to cruise.' },
   { id: 'quad', label: 'Lifter Q-4 (quadcopter)', craft: QUADCOPTER, hint: 'Throttle 50% ≈ hover. W/S/A/D tilt, Q/E yaw.' },
+  { id: 'cycle', label: 'Light Cycle', craft: LIGHT_CYCLE, hint: 'W to go, S to brake, A/D to steer. L: jetwall → light ribbon → off. Its trail derezzes with it.' },
 ];
