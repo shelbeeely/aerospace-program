@@ -686,13 +686,16 @@ export class NetClient {
   private updateWallColliders(): void {
     const sim = this.game.sim;
     const ref = sim.position;
-    // Everyone spawns on the same runway: for a moment after a (re)spawn, remote walls through
-    // the local craft are cleared and not rebuilt there. Otherwise every wall near you is solid.
+    // A segment laid through the local craft (everyone spawns on the same runway; someone may
+    // set off from right beside you) is not built while it overlaps you: it would embed the
+    // craft, not stop it. For a moment after a (re)spawn, walls you landed in are cleared too.
     if (this.radiusFor !== sim.craft.def) {
       this.radiusFor = sim.craft.def;
       this.craftRadius = sim.craft.boundingRadius();
     }
-    const keepOut = performance.now() < this.spawnGraceUntil ? this.craftRadius + 1.5 : -1;
+    const grace = performance.now() < this.spawnGraceUntil;
+    const keepOut = grace ? this.craftRadius + 1.5 : this.craftRadius + 0.3;
+    const clearOut = grace ? keepOut : -1;
     for (const p of this.players.values()) {
       for (const t of p.trails.values()) {
         if (t.kind !== 'wall' || t.derezAt !== null) continue;
@@ -701,7 +704,7 @@ export class NetClient {
           const a = pts[i - 1], b = pts[i];
           const d = segmentDistance(a, b, ref);
           if (b.collider) {
-            if (d > WALL_DROP_RADIUS || d < keepOut) this.dropCollider(b);
+            if (d > WALL_DROP_RADIUS || d < clearOut) this.dropCollider(b);
           } else if (d < WALL_SOLID_RADIUS && d >= keepOut && this.colliderCount < MAX_REMOTE_COLLIDERS) this.solidify(a, b);
         }
       }
