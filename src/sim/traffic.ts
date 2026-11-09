@@ -98,11 +98,9 @@ const mod = (v: number, m: number) => ((v % m) + m) % m;
 export const lineX = (i: number) => GRID.x0 + i * P;
 export const lineZ = (j: number) => GRID.z0 + j * P;
 
-let kinds: Uint8Array | null = null;
 /** Block kind byte (0 city, 64 Off-Grid, 128 open, 192 airfield, 255 sea), from blockSummary. */
 export function blockKind(gi: number, gj: number): number {
-  kinds ??= blockSummary();
-  return kinds[(mod(gj, N) * N + mod(gi, N)) * 4 + 2];
+  return blockSummary()[(mod(gj, N) * N + mod(gi, N)) * 4 + 2];
 }
 /** Blocks with streets around them (the ground shader draws none on airfields, sea, Off-Grid). */
 export const roadBlock = (gi: number, gj: number) => {
@@ -191,7 +189,7 @@ export class TrafficSystem {
   private readonly byWall = new Map<number, Rider>();
   private lastManage: { x: number; z: number } | null = null;
   private readonly buckets = new Map<number, WallSeg[]>();
-  private bucketVersion = -1;
+  private bucketVersion = '';
   private bucketStep = -Infinity;
   private player = { x: 0, y: 0, z: 0 };
 
@@ -234,7 +232,7 @@ export class TrafficSystem {
     this.spawnCount.clear();
     this.lastManage = null;
     this.buckets.clear();
-    this.bucketVersion = -1;
+    this.bucketVersion = '';
   }
 
   /**
@@ -268,11 +266,11 @@ export class TrafficSystem {
     // Gone riders, wrap images, the stream.
     for (let i = this.riders.length - 1; i >= 0; i--) {
       const r = this.riders[i];
+      this.reimage(r);
       if (r.derezAt !== null) {
         if (time - r.derezAt > DEREZ_TIME) this.riders.splice(i, 1);
         continue;
       }
-      this.reimage(r);
       if (Math.hypot(r.x - player.x, r.z - player.z) > TRAFFIC.despawn) {
         this.dropPhysics(r);
         this.riders.splice(i, 1);
@@ -505,7 +503,7 @@ export class TrafficSystem {
     }
     // Nearest cells first, so a fresh disc fills from the middle out.
     cand.sort((u, v) => u[2] - v[2] || u[0] - v[0] || u[1] - v[1]);
-    let n = this.active;
+    let n = this.riders.length; // derezzing riders count too (the renderer draws them all)
     for (const [ci, cj] of cand) {
       const cci = mod(ci, CELLS), ccj = mod(cj, CELLS);
       const info = this.cellInfo(cci, ccj);
@@ -550,17 +548,23 @@ export class TrafficSystem {
 
   // --- The player's jetwall.
 
-  /** Spatial buckets of the player's jetwall segments (rebuilt as it grows, at most every 4 steps). */
+  /**
+   * Spatial buckets of the player's solid jetwall segments near the streamed disc (rebuilt when
+   * it grows or a segment turns solid, at most every 4 steps).
+   */
   private bucketWalls(trails: TrailSystem): void {
-    if (trails.version === this.bucketVersion || this.steps - this.bucketStep < 4) return;
-    this.bucketVersion = trails.version;
+    const signature = `${trails.version}:${trails.colliderCount}`;
+    if (signature === this.bucketVersion || this.steps - this.bucketStep < 4) return;
+    this.bucketVersion = signature;
+    const reach = TRAFFIC.despawn + 100;
+    const p = this.player;
     this.bucketStep = this.steps;
     this.buckets.clear();
     for (const t of trails.trails) {
       if (t.kind !== 'wall' || t.derezAt !== null) continue;
       for (let k = 1; k < t.points.length; k++) {
         const a = t.points[k - 1], b = t.points[k];
-        if (!b.collider) continue;
+        if (!b.collider || Math.abs(b.x - p.x) > reach || Math.abs(b.z - p.z) > reach) continue;
         const ix0 = Math.floor(Math.min(a.x, b.x) / BUCKET), ix1 = Math.floor(Math.max(a.x, b.x) / BUCKET);
         const iz0 = Math.floor(Math.min(a.z, b.z) / BUCKET), iz1 = Math.floor(Math.max(a.z, b.z) / BUCKET);
         for (let ix = ix0; ix <= ix1; ix++) for (let iz = iz0; iz <= iz1; iz++) {
