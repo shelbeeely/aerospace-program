@@ -37,7 +37,7 @@ export class WeatherView {
   private readonly drops: THREE.LineSegments;
   private readonly dropPos: Float32Array;
   private readonly seeds: Float32Array;
-  private readonly dropMat: THREE.LineBasicMaterial;
+  private readonly dropMat: THREE.LineBasicNodeMaterial;
   private readonly cloudTex: THREE.DataTexture;
   private readonly cloudBase: THREE.Mesh;
   private readonly cloudTop: THREE.Mesh;
@@ -63,7 +63,7 @@ export class WeatherView {
     g.setAttribute('position', new THREE.BufferAttribute(this.dropPos, 3).setUsage(THREE.DynamicDrawUsage));
     g.setDrawRange(0, 0);
     // Bright HDR streaks (they bloom); additive so they glow over the dark scene.
-    this.dropMat = new THREE.LineBasicMaterial({ color: RAIN.clone(), transparent: true, opacity: 0.35, depthWrite: false, fog: false, blending: THREE.AdditiveBlending });
+    this.dropMat = new THREE.LineBasicNodeMaterial({ color: RAIN.clone(), transparent: true, opacity: 0.35, depthWrite: false, fog: false, blending: THREE.AdditiveBlending });
     this.drops = new THREE.LineSegments(g, this.dropMat);
     this.drops.frustumCulled = false;
     this.drops.renderOrder = 2;

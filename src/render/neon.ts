@@ -62,25 +62,26 @@ export function neonTint(c: THREE.ColorRepresentation): THREE.Color {
   return out;
 }
 
-const lineMats = new Map<string, THREE.LineBasicMaterial>();
+const lineMats = new Map<string, THREE.LineBasicNodeMaterial>();
 /**
  * Shared glowing line material for one colour / intensity. Fog applies, so distant lines fade
  * into the purple haze.
  */
-export function neonLineMaterial(c: THREE.ColorRepresentation, intensity = GLOW, opts: { fog?: boolean } = {}): THREE.LineBasicMaterial {
+export function neonLineMaterial(c: THREE.ColorRepresentation, intensity = GLOW, opts: { fog?: boolean } = {}): THREE.LineBasicNodeMaterial {
   const base = new THREE.Color(c);
   const key = `${base.r},${base.g},${base.b}|${intensity}|${opts.fog ?? true}`;
   let m = lineMats.get(key);
   if (!m) {
-    m = new THREE.LineBasicMaterial({ color: base.multiplyScalar(intensity), fog: opts.fog ?? true, toneMapped: true });
+    // A node material, so the planet-curvature bend (curvature.ts) applies to the edges too.
+    m = new THREE.LineBasicNodeMaterial({ color: base.multiplyScalar(intensity), fog: opts.fog ?? true, toneMapped: true });
     lineMats.set(key, m);
   }
   return m;
 }
 
 /** Near-black solid fill, pushed back in depth so the edge lines drawn on it always win. */
-export function neonFillMaterial(c: THREE.ColorRepresentation = NEON.fill, opts: THREE.MeshStandardMaterialParameters = {}): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
+export function neonFillMaterial(c: THREE.ColorRepresentation = NEON.fill, opts: THREE.MeshStandardMaterialParameters = {}): THREE.MeshStandardNodeMaterial {
+  return new THREE.MeshStandardNodeMaterial({
     color: c,
     roughness: 0.4,
     metalness: 0.6,

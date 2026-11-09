@@ -6,10 +6,10 @@ import { glow, NEON } from './neon.ts';
 /** Neon lightning leader and violet St. Elmo coronas on exposed aircraft extremities. */
 export class LightningView {
   private readonly boltGeometry = new THREE.BufferGeometry();
-  private readonly boltMaterial = new THREE.LineBasicMaterial({ color: glow('#d6f6ff', 6), transparent: true, fog: false });
+  private readonly boltMaterial = new THREE.LineBasicNodeMaterial({ color: glow('#d6f6ff', 6), transparent: true, fog: false });
   private readonly bolt = new THREE.Line(this.boltGeometry, this.boltMaterial);
   private readonly coronaGeometry = new THREE.BufferGeometry();
-  private readonly coronaMaterial = new THREE.LineBasicMaterial({ color: glow(NEON.purple, 3), transparent: true, depthWrite: false });
+  private readonly coronaMaterial = new THREE.LineBasicNodeMaterial({ color: glow(NEON.purple, 3), transparent: true, depthWrite: false });
   private readonly corona = new THREE.LineSegments(this.coronaGeometry, this.coronaMaterial);
   private lastStrike = -1;
   constructor(scene: THREE.Scene) {
