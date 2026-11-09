@@ -410,11 +410,11 @@ body.touch-ui .lever-label { top: -46px; }
 #ap-panel .ap-fields { display: grid; gap: 5px; margin: 6px 0; }
 #ap-panel .ap-field { display: flex; align-items: center; gap: 6px; }
 #ap-panel .ap-field span { width: 92px; color: #9fb2c2; font-size: 11px; letter-spacing: 0.06em; }
-#ap-panel .ap-field input, #ap-panel .ap-field select { flex: 1; min-width: 0; background: rgba(0, 0, 0, 0.4); color: #eaf2f8; border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 4px; padding: 3px 5px; font: inherit; }
+#ap-panel .ap-field input, #ap-panel .ap-field select { flex: 1; min-width: 0; width: 0; background: rgba(0, 0, 0, 0.4); color: #eaf2f8; border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 4px; padding: 3px 5px; font: inherit; }
 #ap-panel .ap-field small { width: 26px; color: #9fb2c2; }
 #ap-panel .ap-buttons { display: flex; gap: 6px; margin: 8px 0; }
 #ap-panel .ap-engage { flex: 1; background: rgba(0, 234, 255, 0.16); color: #fff; font-weight: bold; letter-spacing: 0.08em; }
-#ap-panel .ap-status { color: #9fb2c2; min-height: 2.6em; }
+#ap-panel .ap-status { color: #9fb2c2; min-height: 2.6em; white-space: pre-line; }
 #ap-panel .ap-status.on { color: #3dffb0; }
 #ap-panel .ap-guidance td { padding: 1px 10px 1px 0; }
 #ap-panel .ap-guidance td:first-child { color: #9fb2c2; }

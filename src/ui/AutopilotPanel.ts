@@ -273,7 +273,7 @@ export class AutopilotPanel {
     }
     this.engageBtn.disabled = false;
     this.engageBtn.textContent = st.engaged ? `Switch to ${MODE_LABELS[this.mode]}` : 'Engage';
-    this.status.textContent = st.engaged ? `${MODE_LABELS[st.mode]} · ${st.phase.toUpperCase()} — ${st.status}` : st.status && st.status !== 'Off' ? `Off — ${st.status}` : 'Off';
+    this.status.textContent = st.engaged ? `${MODE_LABELS[st.mode]} · ${st.phase.toUpperCase()}${st.notice ? ` — ${st.notice}` : ''}\n${st.status}` : st.status && st.status !== 'Off' ? `Off — ${st.status}` : 'Off';
     this.status.classList.toggle('on', st.engaged);
     const g = st.engaged ? st.guidance : null;
     if (!g) {

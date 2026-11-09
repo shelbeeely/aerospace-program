@@ -81,6 +81,8 @@ export interface AutopilotState {
   guidance: AutopilotGuidance | null;
   /** One line describing what the computer is doing. */
   status: string;
+  /** Why the last request could not be flown as asked (e.g. no runway long enough), else ''. */
+  notice: string;
 }
 
 /** What the panel (or a script) asks for when engaging. */
@@ -129,7 +131,7 @@ export const runwayNumber = (h: number) => (r0(wrap360(h) / 10) || 36).toString(
 export class FlightAutopilot implements ControlSource {
   readonly state: AutopilotState = {
     engaged: false, kind: 'airplane', mode: 'hold', phase: 'hold', heading: 0, altitude: 300, commanded: 300, speed: 50,
-    vs: null, destination: null, orbitRadius: 500, guidance: null, status: 'Off',
+    vs: null, destination: null, orbitRadius: 500, guidance: null, status: 'Off', notice: '',
   };
   private plane = new Autopilot({ heading: 0, altitude: 300, airspeed: 50 });
   private hover = new HoverPilot({ altitude: 30, heading: 0, forwardSpeed: 0 });
@@ -201,6 +203,7 @@ export class FlightAutopilot implements ControlSource {
     if (opts.orbitRadius !== undefined) s.orbitRadius = clamp(opts.orbitRadius, 150, 5000);
     s.commanded = s.altitude;
     s.guidance = null;
+    s.notice = '';
     this.dest = null;
     this.approach = null;
     this.touchdownAt = -1;
@@ -249,7 +252,7 @@ export class FlightAutopilot implements ControlSource {
         if (!d) {
           s.mode = 'hold';
           s.phase = grounded ? 'takeoff' : 'hold';
-          s.status = 'Go to: no destination selected';
+          s.notice = s.status = 'Go to: no destination selected';
           return;
         }
         this.dest = d;
@@ -275,7 +278,7 @@ export class FlightAutopilot implements ControlSource {
     if (!site) {
       s.mode = 'hold';
       s.phase = 'hold';
-      s.status = `Land: no runway long enough (needs ${r0(landingDistanceNeeded(vapp))} m)`;
+      s.notice = s.status = `Land: no runway long enough (needs ${r0(landingDistanceNeeded(vapp))} m)`;
       return;
     }
     if (t.onGround && t.groundSpeed < 1) {
@@ -302,7 +305,7 @@ export class FlightAutopilot implements ControlSource {
     if (!site) {
       s.mode = 'hold';
       s.phase = 'hold';
-      s.status = 'Land: no usable helipad';
+      s.notice = s.status = 'Land: no usable helipad';
       return;
     }
     this.dest = { id: site.id, name: site.name, kind: site.kind, x: site.x, z: site.z, y: site.y, site };
