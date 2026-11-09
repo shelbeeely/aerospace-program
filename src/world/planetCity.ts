@@ -169,10 +169,16 @@ export function planetObstacleTop(x: number, z: number): number {
 
 /**
  * Far-LOD summary of every block on the planet (no geometry): RGBA per block, R = skyline
- * height / 400, G = colour index, B = kind (0 city, 128 open/zoned, 192 airfield, 255 sea).
+ * height / 400, G = colour index, B = kind (0 city, 64 Off-Grid, 128 open/zoned, 192 airfield,
+ * 255 sea), A = Off-Grid mask.
  * Drawn by the ground shader as city lights beyond the box LOD, and seen from orbit.
  */
 export function blockSummary(): Uint8Array {
+  return (summaryCache ??= buildSummary()); // shared by the ground shader and the traffic (read-only)
+}
+let summaryCache: Uint8Array | null = null;
+
+function buildSummary(): Uint8Array {
   const n = GRID.blocks;
   const out = new Uint8Array(n * n * 4);
   for (let gj = 0; gj < n; gj++) for (let gi = 0; gi < n; gi++) {

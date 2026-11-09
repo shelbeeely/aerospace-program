@@ -30,6 +30,7 @@ import { KitTowersView } from './render/KitTowersView.ts';
 import { LandingSitesView } from './render/LandingSitesView.ts';
 import { PlanetCityView } from './render/PlanetCityView.ts';
 import { TrailView } from './render/TrailView.ts';
+import { TrafficView } from './render/TrafficView.ts';
 import { ExplosionView } from './render/ExplosionView.ts';
 import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
 import { updateSkyPlanet } from './render/neon.ts';
@@ -154,6 +155,7 @@ async function start() {
   const sitesView = new LandingSitesView(scene, sim.staticWorld);
   const planetView = new PlanetCityView(scene, sim.staticWorld, kitView);
   const trailView = new TrailView(scene, sim.trails);
+  const trafficView = new TrafficView(scene, sim.traffic);
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
   let explosionHeardAt = -Infinity;
@@ -737,6 +739,7 @@ async function start() {
     sitesView.update();
     planetView.update(camera.position);
     trailView.update(sim.time);
+    trafficView.update(sim.time);
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
     if (!sim.explosions.length) explosionHeardAt = -Infinity;
