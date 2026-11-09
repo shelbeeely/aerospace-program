@@ -701,9 +701,18 @@ export class TrafficSystem {
     r.derezAt = time;
     this.derezzed++;
     this.dropPhysics(r);
+    // Derez: the rider shatters into voxels of its circuit colour that stay on the Grid; at
+    // speed the energy rises as a liquid-like splash first.
+    const color = TRAFFIC.colors[r.team];
     this.chips?.emit({
       x: r.x, y: 0.8, z: r.z, radius: 1, vx: HX[r.heading] * r.speed * 0.4, vy: 2, vz: HZ[r.heading] * r.speed * 0.4,
-      speed: 6, count: 24, size: 0.25, color: TRAFFIC.colors[r.team],
+      speed: 6, count: 220, size: 0.2, color, persist: true,
     });
+    if (r.speed > 20) {
+      this.chips?.emit({
+        x: r.x, y: 0.5, z: r.z, radius: 0.6, vx: HX[r.heading] * r.speed, vy: 0, vz: HZ[r.heading] * r.speed,
+        speed: Math.min(30, 8 + r.speed * 0.3), count: 160, size: 0.15, color, splash: true,
+      });
+    }
   }
 }
