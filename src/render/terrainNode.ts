@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { abs, float, floor, fwidth, max, min, mix, mod, smoothstep, step, texture, uint, vec2 } from 'three/tsl';
+import { abs, float, floor, fwidth, length, max, min, mix, mod, smoothstep, step, texture, uint, vec2 } from 'three/tsl';
 import { CITY, PLANET } from '../sim/layout.ts';
 import { TERRAIN } from '../sim/terrain.ts';
 import type { TslNode } from './neon.ts';
@@ -21,8 +21,20 @@ function hashLattice(ix: TslNode, iz: TslNode, seed: number): TslNode {
   return h.shiftRight(uint(8)).toFloat().div(16777216);
 }
 
+/**
+ * Solids drawn elsewhere as real geometry (render/OffGridView.ts): cells whose centre lies
+ * nearer than `radius` to the canonical `anchor` (x, z) are left out of the height.
+ */
+export interface TerrainExclusion {
+  anchor: TslNode;
+  radius: TslNode;
+}
+
+/** x wrapped into [-C/2, C/2). */
+const wrapC = (x: TslNode): TslNode => x.sub(x.add(C / 2).div(C).floor().mul(C));
+
 /** One lattice of geometric solids (pyramids / mesas): same as terrain.ts solid(). */
-function solid(x: TslNode, z: TslNode, n: number, seed: number, summary: THREE.DataTexture | null = null): { h: TslNode; u: TslNode; v: TslNode; present: TslNode } {
+function solid(x: TslNode, z: TslNode, n: number, seed: number, summary: THREE.DataTexture | null = null, near: TerrainExclusion | null = null): { h: TslNode; u: TslNode; v: TslNode; present: TslNode } {
   const cell = C / n;
   const fx: TslNode = mod(x, C).div(cell);
   const fz: TslNode = mod(z, C).div(cell);
@@ -39,7 +51,12 @@ function solid(x: TslNode, z: TslNode, n: number, seed: number, summary: THREE.D
     const w: TslNode = wasteland(summary, cx.toFloat().add(0.5).mul(cell), cz.toFloat().add(0.5).mul(cell));
     scale = w.mul(w);
   }
-  const h: TslNode = min(shape, mesa).div(mesa).mul(hh.sub(0.3).div(0.7)).mul(present).mul(scale);
+  let h: TslNode = min(shape, mesa).div(mesa).mul(hh.sub(0.3).div(0.7)).mul(present).mul(scale);
+  if (near) {
+    // Cell centre (this vertex's image) to the anchor, across the wrap.
+    const d: TslNode = vec2(wrapC(x.sub(u.mul(cell)).sub(near.anchor.x)), wrapC(z.sub(v.mul(cell)).sub(near.anchor.y)));
+    h = h.mul(step(near.radius, length(d)));
+  }
   return { h, u, v, present: present.mul(step(float(0.0001), scale)) };
 }
 
@@ -57,10 +74,14 @@ function wasteland(summary: THREE.DataTexture, x: TslNode, z: TslNode): TslNode 
   return mix(top, bot, tv);
 }
 
-/** Terrain height (m) at flat world (x, z): same formula as terrain.ts terrainHeight. */
-export function terrainHeightNode(summary: THREE.DataTexture, x: TslNode, z: TslNode): TslNode {
-  const big = solid(x, z, TERRAIN.bigCells, 101, summary);
-  const small = solid(x, z, TERRAIN.smallCells, 211, summary);
+/**
+ * Terrain height (m) at flat world (x, z): same formula as terrain.ts terrainHeight. With
+ * `near`, the solids drawn as instances near the camera are left out (the ground stays flat
+ * under them).
+ */
+export function terrainHeightNode(summary: THREE.DataTexture, x: TslNode, z: TslNode, near: TerrainExclusion | null = null): TslNode {
+  const big = solid(x, z, TERRAIN.bigCells, 101, summary, near);
+  const small = solid(x, z, TERRAIN.smallCells, 211, summary, near);
   return max(big.h, small.h.mul(0.3)).mul(TERRAIN.peak);
 }
 
