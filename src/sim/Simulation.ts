@@ -9,9 +9,10 @@ import { Atmosphere, calmWeather, densityAltitude, type CloudSample, type Precip
 import { DamageModel, type ContactForceHandler, type ContactForceInfo } from './damage.ts';
 import { neutralControls, sanitizeControls, type ControlInputs } from './controls.ts';
 import { Ocean } from './ocean.ts';
-import { COAST, isSea, LAYOUT, PLANET } from './layout.ts';
+import { CITY, COAST, isSea, LAYOUT, PLANET } from './layout.ts';
 import { terrainHeight } from './terrain.ts';
 import { TrailSystem } from './trails.ts';
+import { TrafficSystem } from './traffic.ts';
 import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
@@ -121,6 +122,8 @@ export class Simulation {
   wrapCount = 0;
   /** Light walls, light ribbons and contrails (Rule 4). */
   readonly trails: TrailSystem;
+  /** AI light-cycle traffic on the street grid (kinematic; colliders near the player). */
+  readonly traffic: TrafficSystem;
   readonly wrapShift = new THREE.Vector3();
   private readonly groundBody: RAPIER.RigidBody;
   private readonly groundMotion = new THREE.Vector3();
@@ -171,6 +174,7 @@ export class Simulation {
     const seabed = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(COAST.x + COAST.width / 2, -COAST.depth - 5, 0));
     this.world.createCollider(RAPIER.ColliderDesc.cuboid(COAST.width / 2, 5, half), seabed);
     this.trails = new TrailSystem(this.world);
+    this.traffic = new TrafficSystem(this.world, CITY.seed, this.chips);
     this.town = new Town(this.world);
     this.town.chips = this.chips;
     this.staticWorld = new StaticWorld(this.world, this.town);
@@ -187,6 +191,7 @@ export class Simulation {
     this.onContactForce((e) => this.town.onContact(e));
     this.onContactForce((e) => this.staticWorld.onContact(e));
     this.onContactForce((e) => this.voxelHit(e));
+    this.onContactForce((e) => this.traffic.onContact(e));
 
     const self = this;
     this.ctx = {
@@ -328,6 +333,7 @@ export class Simulation {
   /** Reset the WHOLE world: every structure rebuilt, weather and events restarted, a fresh craft on the runway. */
   resetToRunway(): void {
     this.trails.clear();
+    this.traffic.clear();
     this.staticWorld.reset();
     this.town.reset();
     this.chips.reset();
@@ -443,6 +449,7 @@ export class Simulation {
     });
     this.craft.updateSoftCcd(this.dt);
     this.planetForces();
+    this.traffic.step(this.dt, this.time, this.position, this.trails);
 
     this.world.step(this.events);
     this.readBodyState();
