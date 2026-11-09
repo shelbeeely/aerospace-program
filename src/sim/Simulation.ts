@@ -12,6 +12,7 @@ import { Ocean } from './ocean.ts';
 import { COAST, isSea, LAYOUT, PLANET } from './layout.ts';
 import { terrainHeight } from './terrain.ts';
 import { TrailSystem } from './trails.ts';
+import { TrailEmitter } from '../modules/TrailEmitter.ts';
 import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
@@ -77,7 +78,8 @@ export class Simulation {
   /** Visual voxel chips knocked off buildings and aircraft (the renderer flies them). */
   readonly chips = new ChipEmitter();
   /** Explosions (renderer: fireball and shockwave; audio: boom). Newest last. */
-  readonly explosions: Array<{ x: number; y: number; z: number; time: number; radius: number }> = [];
+  /** Derezzes (vehicle destructions): where, how big, the vehicle's circuit colour and its speed at the moment. */
+  readonly explosions: Array<{ x: number; y: number; z: number; time: number; radius: number; color?: string; speed?: number }> = [];
   /** The craft blew up (controls dead until a new plane is spawned). */
   exploded = false;
   /** Sum of craft contact impulses this step (N·s): decides explosions. */
@@ -171,6 +173,7 @@ export class Simulation {
     const seabed = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(COAST.x + COAST.width / 2, -COAST.depth - 5, 0));
     this.world.createCollider(RAPIER.ColliderDesc.cuboid(COAST.width / 2, 5, half), seabed);
     this.trails = new TrailSystem(this.world);
+    this.trails.chips = this.chips;
     this.town = new Town(this.world);
     this.town.chips = this.chips;
     this.staticWorld = new StaticWorld(this.world, this.town);
@@ -666,6 +669,13 @@ export class Simulation {
     }
   }
 
+  /** The vehicle's circuit colour: its trail's light, else the colour of its heaviest part. */
+  circuitColor(): string {
+    for (const m of this.craft.modules) if (m instanceof TrailEmitter) return m.def.color;
+    const heaviest = [...this.craft.parts].sort((a, b) => b.mass - a.mass)[0];
+    return heaviest?.color ?? '#00eaff';
+  }
+
   /** Fixed-wing (contrails from the wingtips): lifting surfaces, no rotors, no driven wheels. */
   isAirplane(): boolean {
     return this.craft.aeroSurfaces.length > 0 && this.craft.rotors.length === 0 && !this.craft.wheels.some((w) => (w.def.drive ?? 0) > 0);
@@ -784,7 +794,10 @@ export class Simulation {
     this.trails.derez(this.time); // a derezzed vehicle's trails go with it
     const c = this.position.clone();
     const radius = 10 + Math.min(20, this.craft.fuel * 0.15);
-    this.explosions.push({ x: c.x, y: c.y, z: c.z, time: this.time, radius });
+    // Speed going in (the step before the crash), and the vehicle's circuit colour.
+    const speed = this.prevVelocity.length();
+    const circuit = this.circuitColor();
+    this.explosions.push({ x: c.x, y: c.y, z: c.z, time: this.time, radius, color: circuit, speed });
     if (this.explosions.length > 32) this.explosions.splice(0, this.explosions.length - 32);
     const parts = [...this.craft.parts].sort((a, b) => b.mass - a.mass);
     const before = this.debris.length;
@@ -798,9 +811,16 @@ export class Simulation {
       const kick = 12 + Math.random() * 18;
       d.body.setLinvel({ x: v.x * 0.5 + dir.x * kick, y: v.y * 0.5 + Math.abs(dir.y) * kick + 6, z: v.z * 0.5 + dir.z * kick }, true);
       d.body.setAngvel({ x: (Math.random() - 0.5) * 12, y: (Math.random() - 0.5) * 12, z: (Math.random() - 0.5) * 12 }, true);
-      this.chips.emit({ x: t.x, y: t.y, z: t.z, radius: 1.5, vx: dir.x * kick * 0.6, vy: 6, vz: dir.z * kick * 0.6, speed: 14, count: 40, size: 0.25, color: d.part.color });
+      this.chips.emit({ x: t.x, y: t.y, z: t.z, radius: 1.5, vx: dir.x * kick * 0.6, vy: 6, vz: dir.z * kick * 0.6, speed: 14, count: 120, size: 0.25, color: d.part.color, persist: true });
     }
-    this.chips.emit({ x: c.x, y: c.y, z: c.z, radius: 2, vx: 0, vy: 8, vz: 0, speed: 22, count: 220, size: 0.35, color: '#ff8a1f' });
+    // Derez: the vehicle shatters into thousands of cubical voxels in its circuit colour, which
+    // scatter on the Grid like broken glass and stay there.
+    const lv = this.prevVelocity;
+    this.chips.emit({ x: c.x, y: c.y, z: c.z, radius: 2, vx: lv.x * 0.35, vy: 5, vz: lv.z * 0.35, speed: 16, count: 1400, size: 0.3, color: circuit, persist: true });
+    // A fast vehicle's derez carries so much energy it rises like a liquid splash, then dissipates.
+    if (speed > 20) {
+      this.chips.emit({ x: c.x, y: c.y, z: c.z, radius: 1.2, vx: lv.x, vy: 0, vz: lv.z, speed: Math.min(45, 10 + speed * 0.35), count: Math.min(900, 300 + Math.round(speed * 6)), size: 0.18, color: circuit, splash: true });
+    }
     // Blast: crater whatever stands within the radius.
     this.staticWorld.blastAt(c.x, c.y, c.z, radius, this.time);
     for (const b of this.town.buildings) this.town.blast(b, c.x, c.y, c.z, radius * 0.6, this.time);

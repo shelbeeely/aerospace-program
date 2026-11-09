@@ -3,7 +3,7 @@ import { abs, float, max, min, positionLocal, smoothstep } from 'three/tsl';
 import type { ChipEmitter } from '../sim/chips.ts';
 import type { TslNode } from './neon.ts';
 
-const MAX = 6000;
+const MAX = 12000;
 
 /**
  * Flying voxel chips (visual only): every burst from the simulation's ChipEmitter becomes small
@@ -19,6 +19,8 @@ export class ChipsView {
   private readonly size = new Float32Array(MAX);
   private readonly life = new Float32Array(MAX);
   private readonly age = new Float32Array(MAX);
+  /** 1 = derez voxel that stays on the Grid once it lands. */
+  private readonly keep = new Uint8Array(MAX);
   private next = 0;
   private live = 0;
   private seenSeq = 0;
@@ -77,14 +79,26 @@ export class ChipsView {
         this.pos[i * 3 + 1] = b.y + (dy / len) * b.radius * Math.random();
         this.pos[i * 3 + 2] = b.z + (dz / len) * b.radius * Math.random();
         const sp = b.speed * (0.4 + Math.random() * 0.8);
-        this.vel[i * 3] = b.vx + (dx / len) * sp;
-        this.vel[i * 3 + 1] = b.vy + Math.abs(dy / len) * sp * 0.7 + 1;
-        this.vel[i * 3 + 2] = b.vz + (dz / len) * sp;
+        if (b.splash) {
+          // Liquid-like splash: a fountain rising from the impact, narrow at first, spreading.
+          const up = b.speed * (0.7 + Math.random() * 0.7);
+          const side = b.speed * 0.28 * Math.random();
+          this.vel[i * 3] = b.vx * 0.15 + (dx / len) * side;
+          this.vel[i * 3 + 1] = up;
+          this.vel[i * 3 + 2] = b.vz * 0.15 + (dz / len) * side;
+        } else {
+          this.vel[i * 3] = b.vx + (dx / len) * sp;
+          this.vel[i * 3 + 1] = b.vy + Math.abs(dy / len) * sp * 0.7 + 1;
+          this.vel[i * 3 + 2] = b.vz + (dz / len) * sp;
+        }
         this.spin[i * 3] = (Math.random() - 0.5) * 14;
         this.spin[i * 3 + 1] = (Math.random() - 0.5) * 14;
         this.spin[i * 3 + 2] = (Math.random() - 0.5) * 14;
         this.size[i] = b.size * (0.6 + Math.random() * 0.7);
-        this.life[i] = 5 + Math.random() * 5;
+        this.keep[i] = b.persist ? 1 : 0;
+        // Derez voxels remain on the Grid (until the pool recycles them or the world resets);
+        // splash energy dissipates within a couple of seconds; impact chips fade in 5-10 s.
+        this.life[i] = b.persist ? 150 + Math.random() * 60 : b.splash ? 1.4 + Math.random() * 1.2 : 5 + Math.random() * 5;
         this.age[i] = 0;
         this.mesh.setColorAt(i, this._c);
       }
@@ -119,11 +133,18 @@ export class ChipsView {
         this.spin[o] *= 0.7;
         this.spin[o + 1] *= 0.7;
         this.spin[o + 2] *= 0.7;
+        if (this.keep[i] && Math.abs(this.vel[o + 1]) < 0.6) {
+          // Settled: lie flat on the Grid like broken glass, and stay.
+          this.vel[o] = this.vel[o + 1] = this.vel[o + 2] = 0;
+          this.spin[o] = this.spin[o + 1] = this.spin[o + 2] = 0;
+          this.rot[o] = Math.round(this.rot[o] / (Math.PI / 2)) * (Math.PI / 2);
+          this.rot[o + 2] = Math.round(this.rot[o + 2] / (Math.PI / 2)) * (Math.PI / 2);
+        }
       }
       this.rot[o] += this.spin[o] * dt;
       this.rot[o + 1] += this.spin[o + 1] * dt;
       this.rot[o + 2] += this.spin[o + 2] * dt;
-      const fade = Math.min(1, (this.life[i] - this.age[i]) / 1.2);
+      const fade = Math.min(1, (this.life[i] - this.age[i]) / (this.keep[i] ? 4 : 1.2));
       this._q.setFromEuler(this._e.set(this.rot[o], this.rot[o + 1], this.rot[o + 2]));
       this._m.compose(this._p.set(this.pos[o], this.pos[o + 1], this.pos[o + 2]), this._q, this._s.setScalar(s * fade));
       this.mesh.setMatrixAt(i, this._m);
