@@ -3,7 +3,7 @@ import { color } from 'three/tsl';
 import { cityPlan } from '../world/City.ts';
 import { KIT, KIT_INDEX_BYTES, KIT_POSITION_BYTES } from '../world/kit.ts';
 import type { StaticWorld } from '../world/staticWorld.ts';
-import { worldStructures } from '../world/structures.ts';
+import { worldStructures, type StructureGroup } from '../world/structures.ts';
 import { facadeMaterial } from './StructuresView.ts';
 
 /**
@@ -55,6 +55,9 @@ export class KitTowersView {
     };
     const roleNames = Object.keys(roles);
     const materials = roleNames.map((r) => roles[r]);
+    this.materials = materials;
+    this.positions = positions;
+    this.roleNames = roleNames;
 
     const plan = cityPlan();
     const ws = worldStructures();
@@ -88,10 +91,8 @@ export class KitTowersView {
     const up = new THREE.Vector3(0, 1, 0);
     for (const [type, list] of byType) {
       const t = KIT[type];
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(positions.slice(t.vertexStart * 3, (t.vertexStart + t.vertexCount) * 3), 3));
-      geo.computeVertexNormals();
-      for (const g of t.groups) geo.addGroup(g.start, g.count, Math.max(0, roleNames.indexOf(g.role)));
+      const geo = this.typeGeometry(type);
+      void t;
       const mesh = new THREE.InstancedMesh(geo, materials, list.length);
       list.forEach((g, i) => {
         const inst = plan.kit[g.kit!.index];
@@ -106,6 +107,66 @@ export class KitTowersView {
     }
     this.ready = true;
     this.seen = -1;
+    this.fillOuter();
+  }
+
+  private materials: THREE.Material[] = [];
+  private positions: Float32Array | null = null;
+  private roleNames: string[] = [];
+  private readonly geometries = new Map<number, THREE.BufferGeometry>();
+  private readonly outerMeshes = new Map<number, THREE.InstancedMesh>();
+  private outerGroups: StructureGroup[] = [];
+
+  private typeGeometry(type: number): THREE.BufferGeometry {
+    let geo = this.geometries.get(type);
+    if (geo) return geo;
+    const t = KIT[type];
+    geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.positions!.slice(t.vertexStart * 3, (t.vertexStart + t.vertexCount) * 3), 3));
+    geo.computeVertexNormals();
+    for (const g of t.groups) geo.addGroup(g.start, g.count, Math.max(0, this.roleNames.indexOf(g.role)));
+    this.geometries.set(type, geo);
+    return geo;
+  }
+
+  /** Kit towers of the planet city's near chunks, drawn as real models (PlanetCityView). */
+  setOuter(groups: StructureGroup[]): void {
+    this.outerGroups = groups;
+    this.fillOuter();
+  }
+
+  private fillOuter(): void {
+    if (!this.ready) return;
+    const byType = new Map<number, StructureGroup[]>();
+    for (const g of this.outerGroups) {
+      if (this.world.fractured.has(g.id)) continue;
+      const list = byType.get(g.kit!.type) ?? [];
+      list.push(g);
+      byType.set(g.kit!.type, list);
+    }
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
+    for (let type = 0; type < KIT.length; type++) {
+      const list = byType.get(type) ?? [];
+      let mesh = this.outerMeshes.get(type);
+      if (!mesh || mesh.instanceMatrix.count < list.length) {
+        if (mesh) { mesh.removeFromParent(); mesh.dispose(); }
+        if (!list.length) continue;
+        mesh = new THREE.InstancedMesh(this.typeGeometry(type), this.materials, Math.max(32, list.length * 2));
+        mesh.frustumCulled = false;
+        this.outerMeshes.set(type, mesh);
+        this.root.add(mesh);
+      }
+      list.forEach((g, i) => {
+        const k = g.kit!;
+        q.setFromAxisAngle(up, (k.rot * Math.PI) / 2);
+        m.compose(new THREE.Vector3(k.x, 0, k.z), q, new THREE.Vector3(k.scale, k.scale, k.scale));
+        mesh!.setMatrixAt(i, m);
+      });
+      mesh.count = list.length;
+      mesh.instanceMatrix.needsUpdate = true;
+    }
   }
 
   /**
@@ -118,6 +179,7 @@ export class KitTowersView {
     const moved = camera ? cam.distanceToSquared(this.lastCam) > 100 * 100 : false;
     const due = now - this.lastLodTime > 500;
     if (this.world.version === this.seen && !moved && !(due && camera)) return;
+    if (this.world.version !== this.seen) this.fillOuter();
     this.seen = this.world.version;
     this.lastLodTime = now;
     if (camera) this.lastCam.copy(camera);

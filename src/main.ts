@@ -28,6 +28,7 @@ import { CityView } from './render/CityView.ts';
 import { AirportView } from './render/AirportView.ts';
 import { KitTowersView } from './render/KitTowersView.ts';
 import { LandingSitesView } from './render/LandingSitesView.ts';
+import { PlanetCityView } from './render/PlanetCityView.ts';
 import { ExplosionView } from './render/ExplosionView.ts';
 import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
 import { updateSkyPlanet } from './render/neon.ts';
@@ -148,6 +149,7 @@ async function start() {
   const airportView = new AirportView(scene);
   const kitView = new KitTowersView(scene, sim.staticWorld, import.meta.env.BASE_URL);
   const sitesView = new LandingSitesView(scene, sim.staticWorld);
+  const planetView = new PlanetCityView(scene, sim.staticWorld, kitView);
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
   let explosionHeardAt = -Infinity;
@@ -718,6 +720,7 @@ async function start() {
     cityView.update(dt);
     kitView.update(camera.position);
     sitesView.update();
+    planetView.update(camera.position);
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
     if (!sim.explosions.length) explosionHeardAt = -Infinity;

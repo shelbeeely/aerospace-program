@@ -1,12 +1,11 @@
 import * as THREE from 'three/webgpu';
-import { abs, color, float, floor, fract, hash, instanceIndex, max, min, mix, step, time, uniform } from 'three/tsl';
-import { flatWorld } from './curvature.ts';
-import { CITY, LAYOUT } from '../sim/layout.ts';
+import { color, float, fract, hash, instanceIndex, step, time } from 'three/tsl';
+import { CITY } from '../sim/layout.ts';
 import { airportPlan } from '../world/Airport.ts';
 import { cityPlan, mulberry32 } from '../world/City.ts';
 import type { StaticWorld } from '../world/staticWorld.ts';
 import { worldStructures } from '../world/structures.ts';
-import { gridLines, neonLineMaterial, type TslNode } from './neon.ts';
+import { neonLineMaterial, type TslNode } from './neon.ts';
 import { StructuresView, type StructurePiece } from './StructuresView.ts';
 
 const TRAFFIC = 1600;
@@ -48,12 +47,7 @@ export class CityView {
     this.structures = new StructuresView(pieces, { name: 'structures' });
     this.root.add(this.structures.root);
 
-    // Road surface everywhere except the airfield (split into four rectangles around it).
-    const af = { x0: -560, x1: 260, z0: LAYOUT.runway.centerZ - LAYOUT.runway.length / 2 - 200, z1: LAYOUT.runway.centerZ + LAYOUT.runway.length / 2 + 200 };
-    for (const [ax0, ax1, az0, az1] of [
-      [city.x0, af.x0, city.z0, city.z1], [af.x1, city.x1, city.z0, city.z1],
-      [af.x0, af.x1, city.z0, af.z0], [af.x0, af.x1, af.z1, city.z1],
-    ]) if (ax1 > ax0 && az1 > az0) this.root.add(this.roads(ax0, ax1, az0, az1, city.pitch, city.x0, city.z0));
+    // Streets are drawn by the planet ground (cityGround.ts) everywhere, seamlessly.
 
     // Halo rings around the Grid Spire and the stadium crown.
     const ringPts: number[] = [];
@@ -122,42 +116,6 @@ export class CityView {
     }
 
     scene.add(this.root);
-  }
-
-  /** Road surface: dark blue blocks with a faint grid, streets with glowing lanes. */
-  private roads(x0: number, x1: number, z0: number, z1: number, pitch: number, gx0: number, gz0: number): THREE.Mesh {
-    const mat = new THREE.MeshBasicNodeMaterial({ polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
-    const S = CITY.street;
-    const p = flatWorld;
-    const lx: TslNode = fract(p.x.sub(gx0).div(pitch)).mul(pitch);
-    const lz: TslNode = fract(p.z.sub(gz0).div(pitch)).mul(pitch);
-    // Data highways: every Nth street glows brighter (circuits like freeways).
-    const n = CITY.highwayEvery;
-    const majorX: TslNode = step(fract(floor(p.x.sub(gx0).div(pitch).add(0.5)).div(n)), float(0.5 / n));
-    const majorZ: TslNode = step(fract(floor(p.z.sub(gz0).div(pitch).add(0.5)).div(n)), float(0.5 / n));
-    const dx: TslNode = min(lx, float(pitch).sub(lx)); // distance to the nearest N-S road centre
-    const dz: TslNode = min(lz, float(pitch).sub(lz));
-    const onX: TslNode = step(dx, float(S / 2)); // inside a N-S street
-    const onZ: TslNode = step(dz, float(S / 2));
-    const street: TslNode = max(onX, onZ);
-    const centreX: TslNode = step(dx, float(0.22)).mul(float(1).sub(onZ));
-    const centreZ: TslNode = step(dz, float(0.22)).mul(float(1).sub(onX));
-    const dashZ: TslNode = step(fract(p.z.div(9)), float(0.5));
-    const dashX: TslNode = step(fract(p.x.div(9)), float(0.5));
-    const laneX: TslNode = step(abs(dx.sub(S / 4)), float(0.12)).mul(dashZ).mul(float(1).sub(onZ));
-    const laneZ: TslNode = step(abs(dz.sub(S / 4)), float(0.12)).mul(dashX).mul(float(1).sub(onX));
-    const curb: TslNode = max(step(abs(dx.sub(S / 2)), float(0.3)), step(abs(dz.sub(S / 2)), float(0.3))).mul(float(1).sub(street).add(0.5).min(1));
-    const pad: TslNode = mix(color('#040820'), color('#0b1a5a'), gridLines(p.xz, 10, 1).mul(0.6));
-    const asphalt: TslNode = color('#020311');
-    let c: TslNode = mix(pad, asphalt, street);
-    c = c.add(color('#ff8a1f').mul(max(centreX.mul(majorX.mul(2).add(1)), centreZ.mul(majorZ.mul(2).add(1))).mul(2.2)));
-    c = c.add(color('#00eaff').mul(max(laneX.mul(majorX.mul(1.5).add(1)), laneZ.mul(majorZ.mul(1.5).add(1))).mul(1.4)));
-    c = c.add(uniform(new THREE.Color('#2a5cff')).mul(curb.mul(1.8)));
-    mat.colorNode = c;
-    // Tessellated so the planet curvature bends it with the ground.
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0, Math.ceil((x1 - x0) / 60), Math.ceil((z1 - z0) / 60)).rotateX(-Math.PI / 2), mat);
-    mesh.position.set((x0 + x1) / 2, 0.02, (z0 + z1) / 2);
-    return mesh;
   }
 
   update(dt: number): void {

@@ -1,8 +1,9 @@
 import * as THREE from 'three/webgpu';
 import { abs, float, fwidth, max, smoothstep, step, uniform, uv, vec2 } from 'three/tsl';
 import { COAST, PLANET, RUNWAYS, type LandingSite } from '../sim/layout.ts';
+import { cityGroundNode } from './cityGround.ts';
 import { flatWorld } from './curvature.ts';
-import { GRID_SKY, NEON, glow, groundGridNode, synthSkyNode, type TslNode } from './neon.ts';
+import { GRID_SKY, NEON, glow, synthSkyNode, type TslNode } from './neon.ts';
 
 const HORIZON = new THREE.Color(GRID_SKY.horizon);
 const ZENITH = new THREE.Color(GRID_SKY.zenith);
@@ -78,11 +79,8 @@ export class WorldView {
       polygonOffsetFactor: 1,
       polygonOffsetUnits: 4,
     });
-    this.groundMat.colorNode = groundGridNode(uniform(this.groundBase), uniform(this.gridColor), {
-      minor: 10,
-      major: 100,
-      fade: 6000,
-    });
+    // Streets everywhere on the seamless block grid, and city lights far away (cityGround.ts).
+    this.groundMat.colorNode = cityGroundNode();
     // The planet's ground: a disc that follows the camera, its rings widening with distance out
     // to just short of the antipode, so the curvature bend has vertices to bend. The ocean band
     // is cut out (the sea surface sits below the land level).
