@@ -29,6 +29,7 @@ import { AirportView } from './render/AirportView.ts';
 import { KitTowersView } from './render/KitTowersView.ts';
 import { LandingSitesView } from './render/LandingSitesView.ts';
 import { PlanetCityView } from './render/PlanetCityView.ts';
+import { GLOBE_VIEW_ALT } from './render/cityGround.ts';
 import { TrailView } from './render/TrailView.ts';
 import { ExplosionView } from './render/ExplosionView.ts';
 import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
@@ -581,6 +582,8 @@ async function start() {
       /** PNG of the current 3D view (GPU readback; works on WebGPU and WebGL2). */
       capture,
       takePhoto,
+      /** Camera rig (chase / orbit; rig.setOrbitDistance(m) pulls the orbit camera back). */
+      rig,
       get captureInfo() { return captureInfo; },
       get renderMode() { return actualRenderMode(); },
       get requestedRenderMode() { return requestedRender[mode]; },
@@ -727,6 +730,8 @@ async function start() {
     kitView.update(camera.position);
     sitesView.update();
     planetView.update(camera.position);
+    // From orbit the ground's city lights draw the centre too (sub-pixel towers only shimmer).
+    cityView.root.visible = camera.position.y <= GLOBE_VIEW_ALT;
     trailView.update(sim.time);
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
@@ -748,6 +753,7 @@ async function start() {
       toast('New plane on the runway');
     }
     oceanView.update(sim.time, camera);
+    oceanView.root.visible = camera.position.y <= GLOBE_VIEW_ALT; // the ground draws the sea from orbit
     lightningView.update(sim.time, sim.lightning.strikes, sim.craft, Math.max(sim.lightning.staticCharge, (sim.atmosphere.settings.storm ?? 0) * 0.5));
     fireView.update(sim.time, sim.fire, sim.craft);
 
@@ -778,7 +784,9 @@ async function start() {
     curveOrigin.value.copy(camera.position);
     updateSkyPlanet(camera.position.y, PLANET.radius);
     const alt = Math.max(0, camera.position.y);
-    const far = Math.max(20000, Math.min(PLANET.radius * 3, 6000 + Math.sqrt(2 * PLANET.radius * alt + alt * alt) * 1.6));
+    // Far plane just past the horizon (the tangent distance), so from orbit the whole visible
+    // disc of the planet, out to its limb, is inside the clip range.
+    const far = Math.max(20000, Math.min(PLANET.radius * 12, 6000 + Math.sqrt(2 * PLANET.radius * alt + alt * alt) * 1.15));
     const near = Math.min(20, Math.max(0.3, alt / 4000));
     if (Math.abs(camera.far - far) > far * 0.05 || camera.near !== near) {
       camera.far = far;

@@ -3,6 +3,7 @@ import { CITY } from '../sim/layout.ts';
 import { chunkAt, GRID, imageOffset, planetChunk } from '../world/planetCity.ts';
 import type { StaticWorld } from '../world/staticWorld.ts';
 import type { StructureGroup } from '../world/structures.ts';
+import { GLOBE_VIEW_ALT } from './cityGround.ts';
 import type { KitTowersView } from './KitTowersView.ts';
 import { facadeMaterial, StructuresView, type StructurePiece } from './StructuresView.ts';
 
@@ -45,6 +46,8 @@ export class PlanetCityView {
   }
 
   update(camera: THREE.Vector3): void {
+    // From orbit the ground's city lights stand in for the (sub-pixel, shimmering) boxes.
+    this.boxes.visible = camera.y <= GLOBE_VIEW_ALT;
     this.updateNear(camera);
     this.updateBoxes(camera);
     // Fractures and resets.
