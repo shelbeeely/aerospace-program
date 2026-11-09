@@ -56,8 +56,9 @@ function streetClear(x: number, z: number, axis: 'x' | 'z'): boolean {
  * The nearest clear point on a street centreline to (x, z), facing along the street. Streets
  * run on the city grid lines (x0 + i·pitch, z0 + j·pitch) all the way round the planet; points
  * are tried in order of distance, skipping the sea, the town and anything standing in the way.
+ * Null if none within six blocks is clear.
  */
-export function nearestStreetPoint(x: number, z: number): SpawnPoint {
+export function nearestStreetPoint(x: number, z: number): SpawnPoint | null {
   if (!Number.isFinite(x + z)) { x = 0; z = 0; }
   // Over the sea: start from the nearer shore.
   if (isSea(x)) {
@@ -67,7 +68,7 @@ export function nearestStreetPoint(x: number, z: number): SpawnPoint {
   const i0 = Math.round((x - CITY.x0) / PITCH);
   const j0 = Math.round((z - CITY.z0) / PITCH);
   const candidates: Array<SpawnPoint & { d: number; axis: 'x' | 'z' }> = [];
-  for (let a = -3; a <= 3; a++) for (let b = -3; b <= 3; b++) for (const f of ALONG) {
+  for (let a = -6; a <= 6; a++) for (let b = -6; b <= 6; b++) for (const f of ALONG) {
     // A street along Z (constant x) and one along X (constant z), each a fraction f into the block.
     const sx = CITY.x0 + (i0 + a) * PITCH;
     const sz = CITY.z0 + (j0 + b + f) * PITCH;
@@ -77,6 +78,7 @@ export function nearestStreetPoint(x: number, z: number): SpawnPoint {
     candidates.push({ x: tx, z: tz, y: 0, yaw: Math.PI / 2, axis: 'x', d: Math.hypot(tx - x, tz - z) });
   }
   candidates.sort((p, q) => p.d - q.d);
-  const best = candidates.find((c) => streetClear(c.x, c.z, c.axis)) ?? candidates[0];
+  const best = candidates.find((c) => streetClear(c.x, c.z, c.axis));
+  if (!best) return null; // nothing clear nearby: the caller falls back to the runway
   return { x: best.x, y: terrainHeight(best.x, best.z), z: best.z, yaw: best.yaw };
 }

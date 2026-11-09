@@ -135,7 +135,8 @@ export class Wheel implements ForceModule {
     // relieved, so the tracks hold the hull against sliding sideways but let it turn.
     const skid = def.skid ?? 0;
     if (skid) {
-      _rot.crossVectors(ctx.angvel, _arm.copy(_contact).sub(ctx.com));
+      // Only the turn about the ground normal: roll and pitch stay fully damped.
+      _rot.crossVectors(_normal, _arm.copy(_contact).sub(ctx.com)).multiplyScalar(ctx.angvel.dot(_normal));
       vLat -= TUNING.skidYawRelief * _rot.dot(_lat);
     }
     this.spinAngle = (this.spinAngle + (vLong / def.radius) * ctx.dt) % (Math.PI * 2);

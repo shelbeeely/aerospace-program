@@ -146,9 +146,8 @@ const crash = (def: CraftDef, v: number) => {
     `bitten [${bitten.map(([k, v]) => `${k} ${(v.integrity * 100).toFixed(0)}%`).join(', ')}], broken off [${sim.failures.map((f) => f.partId).join(', ')}]; ${sim.chips.total} chips`);
   check(!sim.exploded, '15 m/s: no explosion');
   for (const b of BUILTINS) {
-    // Reinforced craft (the tank) hold together longer: the threshold scales as explodeSpeed does.
-    const parts = b.craft.parts;
-    const tough = 1 + 0.3 * parts.reduce((a, p) => a + Math.min(3, Math.max(0, p.reinforce ?? 0)), 0) / parts.length;
+    // Reinforced craft (the tank) hold together longer: the threshold scales as the sim's does.
+    const tough = new Simulation(b.craft).explodeSpeed() / new Simulation(TEST_PLANE).explodeSpeed();
     const vFast = Math.round(34 * tough);
     const slow = crash(b.craft, 20);
     const fast = crash(b.craft, vFast);
