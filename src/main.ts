@@ -50,6 +50,8 @@ import type { EventKind } from './sim/events/WorldEvents.ts';
 import { RayTraceMode, type RenderMode } from './render/raytrace/RayTraceMode.ts';
 import { flightShapes, hangarShapes } from './render/raytrace/sceneShapes.ts';
 import { PostFX, QUALITIES, type Quality } from './render/postfx.ts';
+import { NetClient } from './net/NetClient.ts';
+import { MultiplayerPanel } from './ui/MultiplayerPanel.ts';
 
 async function start() {
   await initPhysics();
@@ -177,6 +179,9 @@ async function start() {
   };
   const rig = new CameraRig(camera, canvas);
   const hud = new Hud();
+  // Multiplayer (Grid Link): inert until connected; `?room=CODE&server=ws://host:port` joins.
+  const net = new NetClient({ sim, scene, mode: () => mode });
+  const netPanel = new MultiplayerPanel(net);
 
   // --- Input. The active pilot is any ControlSource; the human is just one of them.
   const gamepad = new GamepadDevice();
@@ -645,6 +650,8 @@ async function start() {
       /** Reset the whole world (respawn() keeps the world and only replaces the craft). */
       reset: () => reset(true),
       respawn: () => reset(false),
+      net,
+      netPanel,
     },
   });
 
@@ -664,6 +671,7 @@ async function start() {
   let wasHardContact = false;
   let wasStalling = false;
   setMode(mode);
+  netPanel.autoJoin(params);
 
   function frame(now: number) {
     requestAnimationFrame(frame);
@@ -721,6 +729,7 @@ async function start() {
       }
     }
 
+    net.update(dt);
     if (mode === 'hangar') {
       // Physics paused; the craft sits on the turntable under the orbit camera.
       accumulator = 0;
