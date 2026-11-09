@@ -102,6 +102,8 @@ export const TUNING = {
   rcsRateBand: 0.25,
   /** RCS: notional thruster lever arm (m) and specific impulse (s) for its propellant use. */
   rcsArm: 2,
+  /** RCS: off below this height above ground (m), full authority by twice it. */
+  rcsMinHeight: 50,
   rcsIsp: 220,
 
   // ---------------------------------------------------------------- wheels

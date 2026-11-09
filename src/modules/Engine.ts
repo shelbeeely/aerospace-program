@@ -112,7 +112,6 @@ export class Engine implements ForceModule {
     const air = this.isTurbofan ? ctx.air(_p.y) : undefined;
     const density = air ? air.density : ctx.airDensity(_p.y);
     const sigma = density / TUNING.seaLevelDensity;
-    if (def.rcsTorque) this.stepRcs(ctx, 0.5 * density * _v.lengthSq());
 
     // Engine-specific thrust factor (fraction of maxThrust at full spool) and fuel factor
     // (fraction of fuelFlow at full spool).
@@ -149,6 +148,9 @@ export class Engine implements ForceModule {
         this.spool *= got / need;
       }
     }
+
+    // RCS after the main engine's fuel draw, so a trickle of attitude control can't starve it.
+    if (def.rcsTorque) this.stepRcs(ctx, 0.5 * density * _v.lengthSq());
 
     const thrust = def.maxThrust * this.spool * thrustFactor * this.integrity;
     this.thrust = thrust;
@@ -189,10 +191,14 @@ export class Engine implements ForceModule {
    * Reaction control: rate-command attitude thrusters. Stick deflection commands a body rate
    * (up to TUNING.rcsMaxRate); with the stick centred they null the rotation. Torque is capped
    * at rcsTorque per axis and fades out between TUNING.rcsFullQ and TUNING.rcsFadeQ of dynamic
-   * pressure, where the control surfaces take over. Fuel: |torque| / arm / (isp · g0).
+   * pressure, where the control surfaces take over. Off near the ground (below rcsMinHeight,
+   * full by twice that), so it never pivots a taxiing craft. Fuel: |torque| / arm / (isp · g0).
    */
   private stepRcs(ctx: StepContext, q: number): void {
-    const fade = THREE.MathUtils.clamp((TUNING.rcsFadeQ - q) / (TUNING.rcsFadeQ - TUNING.rcsFullQ), 0, 1);
+    const height = _p.y - ctx.groundHeight(_p.x, _p.z);
+    const fade =
+      THREE.MathUtils.clamp((TUNING.rcsFadeQ - q) / (TUNING.rcsFadeQ - TUNING.rcsFullQ), 0, 1) *
+      THREE.MathUtils.clamp(height / TUNING.rcsMinHeight - 1, 0, 1);
     this.rcs = fade;
     if (fade <= 0) return;
     const c = ctx.controls;

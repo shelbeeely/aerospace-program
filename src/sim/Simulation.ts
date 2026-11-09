@@ -17,9 +17,9 @@ import { LightningSystem, type LightningStrike, type StrikeTarget } from './ligh
 import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
-import { orbitElements, type Telemetry } from './telemetry.ts';
+import { orbitElements, type OrbitTelemetry, type Telemetry } from './telemetry.ts';
 
-function roundOrbit(o: ReturnType<typeof orbitElements>): ReturnType<typeof orbitElements> {
+function roundOrbit(o: OrbitTelemetry): OrbitTelemetry {
   const r = (x: number | null, d = 0) => (x === null ? null : Math.round(x * 10 ** d) / 10 ** d);
   return { apoapsis: r(o.apoapsis), periapsis: r(o.periapsis)!, speed: r(o.speed, 2)!, period: r(o.period, 1) };
 }

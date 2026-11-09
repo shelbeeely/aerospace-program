@@ -21,6 +21,9 @@ export class Hud {
     wind: $('h-wind'),
     windArrow: $('h-wind-arrow'),
     fuel: $('h-fuel'),
+    orbRow: $('h-orb-row'),
+    orb: $('h-orb'),
+    orbT: $('h-orb-t'),
     fuelRow: $('h-fuel-row'),
     batt: $('h-batt'),
     battRow: $('h-batt-row'),
@@ -108,9 +111,7 @@ export class Hud {
 
   /** ORB row: apoapsis / periapsis (km) and period, once high or fast enough to care. */
   private updateOrbit(t: Telemetry): void {
-    const row = document.getElementById('h-orb-row');
-    const orb = document.getElementById('h-orb');
-    const per = document.getElementById('h-orb-t');
+    const { orbRow: row, orb, orbT: per } = this.el;
     if (!row || !orb || !per) return;
     const o = t.orbit;
     const show = !!o && (t.altitude > 2000 || o.speed > 150);

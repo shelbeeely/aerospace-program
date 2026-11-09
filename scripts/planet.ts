@@ -145,7 +145,7 @@ function launch(x: number, y: number, z: number, v: number, def: CraftDef = JET)
     if (sim.failures.length || sim.explosionResets) break;
   }
   const o = sim.telemetry().orbit!;
-  check(inOrbit > 0, 'Orbiter: scripted ascent reaches a periapsis above 20 km', inOrbit > 0 ? `orbit at t=${inOrbit.toFixed(0)} s, fuel left ${((sim.craft.fuel / sim.craft.fuelCapacity) * 100).toFixed(0)}%` : `stuck at Ap ${o.apoapsis} Pe ${o.periapsis}`);
+  check(inOrbit > 0, `Orbiter: scripted ascent reaches a periapsis above ${ASCENT.periapsis / 1000} km`, inOrbit > 0 ? `orbit at t=${inOrbit.toFixed(0)} s, fuel left ${((sim.craft.fuel / sim.craft.fuelCapacity) * 100).toFixed(0)}%` : `stuck at Ap ${o.apoapsis} Pe ${o.periapsis}`);
   check(inOrbit > 0 && minAlt > 20000 && minPe > 20000 && sim.failures.length === 0, 'Orbiter: stays in orbit for 60 s (above 20 km, Pe above 20 km)', `min alt ${minAlt.toFixed(0)} m, min Pe ${minPe.toFixed(0)} m, now Ap ${o.apoapsis} Pe ${o.periapsis}`);
 }
 

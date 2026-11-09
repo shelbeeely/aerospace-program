@@ -71,6 +71,10 @@ export function airDensity(altitude: number): number {
 
 /** Density altitude (m): the standard-day altitude with the same density. */
 export function densityAltitude(density: number): number {
+  // Above the tropopause: invert the isothermal exponential (scale height R·T11 / g0).
+  const t11 = T0 - LAPSE * H_TROPO;
+  const rho11 = (P0 * Math.pow(t11 / T0, G0 / (R_AIR * LAPSE))) / (R_AIR * t11);
+  if (density > 0 && density < rho11) return H_TROPO + ((R_AIR * t11) / G0) * Math.log(rho11 / density);
   // Invert the troposphere density relation rho = rho0 * (T/T0)^(g/(R*L) - 1).
   const rho0 = P0 / (R_AIR * T0);
   const n = G0 / (R_AIR * LAPSE) - 1;
