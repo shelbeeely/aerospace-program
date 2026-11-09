@@ -65,7 +65,7 @@ interface VoxelPart {
 export class CraftView {
   readonly root = new THREE.Group();
   private readonly animated: Animated[] = [];
-  private readonly materials = new Map<string, THREE.MeshStandardMaterial>();
+  private readonly materials = new Map<string, THREE.MeshStandardNodeMaterial>();
   private livery: THREE.Texture | null = null;
   private readonly discMats: THREE.Material[] = [];
   /** Everything drawn for each part (its mesh and its modules' moving bits), for break-offs. */
@@ -108,7 +108,7 @@ export class CraftView {
   }
 
   /** Dark fill for parts of this colour (keyed by colour so a livery can tint per part). */
-  private material(color: string): THREE.MeshStandardMaterial {
+  private material(color: string): THREE.MeshStandardNodeMaterial {
     let m = this.materials.get(color);
     if (!m) {
       m = neonFillMaterial(fillColor(color, false));
@@ -125,8 +125,8 @@ export class CraftView {
   }
 
   /** Motion-blur disc for a spinning prop/rotor: additive neon haze, opacity animated. */
-  private disc(color: string, side: THREE.Side): THREE.MeshBasicMaterial {
-    const m = new THREE.MeshBasicMaterial({
+  private disc(color: string, side: THREE.Side): THREE.MeshBasicNodeMaterial {
+    const m = new THREE.MeshBasicNodeMaterial({
       color: glow(color, 1.4),
       transparent: true,
       opacity: 0,
