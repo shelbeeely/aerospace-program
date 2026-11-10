@@ -1,0 +1,24 @@
+# Render Blueprint for the Grid multiplayer relay (https://render.com/docs/blueprint-spec).
+# Deploy: Render dashboard → New → Blueprint → pick this repository. Render builds
+# server/Dockerfile, sets PORT, serves it over TLS at wss://<name>.onrender.com, and redeploys
+# when the relay or the shared protocol changes on main.
+services:
+  - type: web
+    name: grid-relay
+    runtime: docker
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: .
+    # Free instances sleep after 15 minutes without traffic (the first player waits ~1 minute
+    # while it wakes, and sleeping drops open rooms). Use "starter" for an always-on relay.
+    plan: free
+    region: oregon
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /health
+    buildFilter:
+      paths:
+        - server/**
+        - src/net/protocol.ts
+    envVars:
+      - key: NODE_ENV
+        value: production

@@ -351,6 +351,15 @@ npm run test:server     # bun test server: two clients join, relay, isolation, s
   explosions; derezzes; chat. Remote jetwalls near you are solid: ride into one and you derez.
 - **Not shared:** the weather, the town's loose blocks and rubble physics (each client simulates
   its own collapse from the same fracture), and craft-to-craft collisions.
+- **Deploy the relay on Render** (free, TLS included): Render dashboard → **New → Blueprint** →
+  this repository. `render.yaml` builds `server/Dockerfile` (Bun) into a web service at
+  `https://grid-relay.onrender.com` (or the name Render gives it), health-checked on `/health`,
+  redeployed when `server/` or the protocol changes on `main`. Then repo **Settings → Secrets
+  and variables → Actions → Variables → `GRID_SERVER` = `wss://grid-relay.onrender.com`** and
+  re-run the Pages deploy: every player's Grid Link connects there by default (a typed server
+  or an invite's `?server=` still wins). Free instances sleep after 15 idle minutes (the first
+  player waits about a minute; sleeping drops open rooms); the `starter` plan stays up.
+  Locally: `docker build -f server/Dockerfile -t grid-relay . && docker run -p 8787:8787 -e PORT=8787 grid-relay`.
 - **Server:** `GET /health` reports rooms and players. Messages are shape-checked, size-capped
   (32 KB, 256 KB for a craft) and rate-limited; silent players are dropped after 20 s.
   Protocol: `src/net/protocol.ts` (versioned; client and server share it). Room logic:
