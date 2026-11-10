@@ -305,6 +305,7 @@ export async function designWithAgent(client: OpenRouter, req: AgentRequest, onT
   };
 
   let nudges = 0;
+  let editsSinceTest = 0;
   for (let turn = 1; turn <= maxTurns && !st.finished; turn++) {
     let res;
     try {
@@ -350,7 +351,13 @@ export async function designWithAgent(client: OpenRouter, req: AgentRequest, onT
     }
     for (const call of res.toolCalls) {
       const before = st.craft;
-      const out = await run(call);
+      let out = await run(call);
+      // Keep the agent moving: editing over and over without testing wastes turns.
+      if (/^(submit_craft|patch)$/.test(call.function.name)) editsSinceTest++;
+      else if (call.function.name === 'flight_test') editsSinceTest = 0;
+      if (editsSinceTest >= 3 && /^(submit_craft|patch)$/.test(call.function.name)) {
+        out += `\nNOTE: ${editsSinceTest} edits in a row without a flight test. Stop rewriting: run analyze, then flight_test, and fix what the report says (${maxTurns - turn} turns left).`;
+      }
       if (st.craft && st.craft !== before) onTool?.({ type: 'craft', craft: st.craft, partial: false, turn });
       lastPreview = { name: '', count: -1, at: 0 };
       onTool?.({ type: 'tool', name: call.function.name, summary: out.split('\n')[0].slice(0, 160), turn });
