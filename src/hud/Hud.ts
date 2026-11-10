@@ -107,6 +107,7 @@ export class Hud {
     const flags = [
       t.onGround ? 'ON GROUND' : '',
       braking ? 'BRAKES' : '',
+      (t.controls.reverse ?? 0) > 0.05 ? 'REVERSE' : '',
       t.fuel === 0 ? 'OUT OF FUEL' : '',
       w.iceMm > 0.2 ? `ICE ${w.iceMm.toFixed(1)} mm` : '',
       t.vortexRing > 0.3 ? 'VORTEX RING' : '',

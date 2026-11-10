@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { isBodyColor } from '../craft/style1982.ts';
 import { abs, float, max, min, positionLocal, smoothstep } from 'three/tsl';
 import type { Craft } from '../craft/Craft.ts';
 import { partQuaternion } from '../craft/massProperties.ts';
@@ -26,9 +27,17 @@ export function geometryFor(shape: ShapeDef): THREE.BufferGeometry {
   }
 }
 
-/** Fill colour for a part: a whisper of its hue on black (the light is in its edges). */
+/**
+ * Fill colour for a part (1982 rules: large unlit surfaces, selective light): a body part shows
+ * its dark navy / steel surface; a light part (accent strip, canopy, nozzle) glows in its colour.
+ */
 function fillColor(color: string): THREE.Color {
-  return neonTint(color).multiplyScalar(0.035);
+  return isBodyColor(color) ? new THREE.Color(color).multiplyScalar(0.55) : neonTint(color).multiplyScalar(0.35);
+}
+
+/** Edge colour: dim structural seams on body parts; only light parts carry bright edges. */
+function edgeColor(color: string): THREE.Color {
+  return isBodyColor(color) ? neonTint(color).multiplyScalar(0.22) : neonTint(color);
 }
 
 interface Animated {
@@ -118,7 +127,7 @@ export class CraftView {
   /** A dark-filled mesh with neon edges in the (saturated) part colour. */
   private neonPart(geo: THREE.BufferGeometry, color: string): THREE.Mesh {
     const mesh = new THREE.Mesh(geo, this.material(color));
-    mesh.add(neonize(geo, neonTint(color)));
+    mesh.add(neonize(geo, edgeColor(color)));
     return mesh;
   }
 

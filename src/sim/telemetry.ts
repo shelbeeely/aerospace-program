@@ -78,7 +78,7 @@ export interface Telemetry {
   /** 0..1, how stalled the main wings are. */
   stall: number;
   /** Current control inputs actually applied. */
-  controls: { pitch: number; roll: number; yaw: number; throttle: number; brake: number; flaps?: number };
+  controls: { pitch: number; roll: number; yaw: number; throttle: number; brake: number; flaps?: number; reverse?: number };
   /** Mach number (airspeed / local speed of sound). */
   mach: number;
   /** Outside air temperature (°C). */

@@ -17,6 +17,7 @@ npm run ground         # ground vehicles: flat ground, skid steering, Outlands h
 npm run arch           # digital world: five families vs the ten checks, districts, interiors, Outlands
 npm run drive          # road network: one graph, every destination by road, the flight computer driving
 npm run weapons        # weapons: mounts, cannon cratering, tank bulldozer, bombs, missiles, armour
+npm run craft          # vehicle rules: connected parts, the 1982 palette, ground-vehicle design loop (offline)
 npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
 ```
@@ -111,7 +112,7 @@ stick expo, haptics, and touch controls auto/on/off.
 
 | Key | Action |
 | --- | --- |
-| W / S | pitch down / up |
+| W / S | pitch down / up (ground vehicles: go / brake, and S from a stop reverses) |
 | A / D | roll |
 | Q / E | yaw (rudder + nose-wheel steering) |
 | Shift / Ctrl | throttle up / down |

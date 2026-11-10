@@ -282,6 +282,19 @@ universe, not a conventional open world decorated with neon.
   blocks a road must keep the graph and the drawn ground in agreement. Islands of streets are
   linked to the network by connector roads (or removed if they cannot be), so there are none.
 - **Ground vehicles start on the road network**, never on an airstrip.
+- **A vehicle never runs into its own light wall** (Rapier collision groups,
+  `src/sim/collisionGroups.ts`); its walls stay deadly to everyone else. Ground vehicles reverse.
+
+## 16. Vehicles (project)
+
+- **Every vehicle wears the 1982 palette.** `src/craft/style1982.ts` restyles every craft when it
+  is built, whatever its source (built-in, Studio, AI designer): dark navy / blue / steel bodies
+  (warm near-blacks for red-team craft) with dim seams, and selective light (accent strips,
+  canopies, leading edges, nozzles) in one circuit colour plus at most one accent, under a
+  quarter of the surface. No custom liveries.
+- **Every vehicle is one connected piece** (`src/craft/connectivity.ts`): part shapes overlap or
+  touch, nothing floats, modules sit on their own part. The AI design loop rejects violations.
+- Check: `npm run craft`.
 - **The imported kit towers remain part of the world.**
 
 ## 15. Reference notes from the book

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CRAFT_GROUPS } from '../sim/collisionGroups.ts';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { WheelDef } from '../craft/types.ts';
 import { DEG, TUNING } from '../tuning.ts';
@@ -85,7 +86,7 @@ export class Wheel implements ForceModule {
       maxLen,
       true,
       undefined,
-      undefined,
+      CRAFT_GROUPS, // the wheels roll over (through) their own light wall too
       undefined,
       ctx.body,
     );
@@ -160,7 +161,9 @@ export class Wheel implements ForceModule {
     // Driven wheel (ground vehicles): the throttle pushes along the ground, within the grip circle.
     // Skid-steered wheels add the yaw channel, left and right sides in opposite directions.
     if (def.drive) {
-      const push = skid ? THREE.MathUtils.clamp(ctx.controls.throttle - skid * skidYaw, -1, 1) : ctx.controls.throttle;
+      // Reverse drives the wheels backwards (skid steering mirrors, so A/D still steer by side).
+      const drive = ctx.controls.throttle - (ctx.controls.reverse ?? 0);
+      const push = skid ? THREE.MathUtils.clamp(drive - skid * skidYaw, -1, 1) : drive;
       fLong += push * def.drive * grip * (1 - ctx.controls.brake);
     }
     let fLat = THREE.MathUtils.clamp(-vLat * gain, -muLat * load, muLat * load);

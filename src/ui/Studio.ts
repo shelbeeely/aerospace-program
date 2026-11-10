@@ -28,12 +28,14 @@ export interface StudioHost {
 }
 
 const SUGGESTIONS = [
-  'a slow, forgiving bush plane with huge wings',
-  'a twin-engine cargo plane',
-  'a canard racer with a pusher prop',
-  'a heavy-lift hexacopter drone',
-  'a two-seat helicopter',
-  'a small helium blimp for sightseeing',
+  'a long, low light cycle with a jetwall',
+  'a six-wheeled armoured hauler that skid-steers',
+  'a ring-winged interceptor jet',
+  'a flying-wing glider with a pusher prop',
+  'a tandem-rotor heavy lifter',
+  'a slow survey blimp with a gondola of light',
+  'a three-wheeled desert racer',
+  'a canard delta spaceplane that reaches orbit',
 ];
 
 type Child = Node | string | null | undefined | false;
@@ -127,8 +129,8 @@ export class Studio {
     const prompt = h('textarea', {
       rows: '3',
       id: 'aircraft-prompt',
-      'aria-label': 'Describe your aircraft',
-      placeholder: 'e.g. a small electric quadcopter or a twin-engine cargo plane',
+      'aria-label': 'Describe your vehicle',
+      placeholder: 'e.g. a ring-winged jet, a six-wheeled tank, a light cycle',
       onkeydown: (e) => {
         const k = e as KeyboardEvent;
         if (k.key === 'Enter' && (k.ctrlKey || k.metaKey)) void this.design(false);
@@ -193,7 +195,7 @@ export class Studio {
       ),
       this.el.status,
       h('section', {},
-        h('label', { for: 'aircraft-prompt', class: 'prompt-label' }, 'Describe your aircraft'),
+        h('label', { for: 'aircraft-prompt', class: 'prompt-label' }, 'Describe your vehicle'),
         prompt,
         chips,
         h('div', { class: 'row' }, designBtn, refineBtn, cancel),

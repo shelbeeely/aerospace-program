@@ -9,6 +9,7 @@
     "typecheck": "tsc",
     "sim": "node --experimental-transform-types --no-warnings scripts/headless.ts",
     "weather": "node --experimental-transform-types --no-warnings scripts/weather.ts",
+    "craft": "node --experimental-transform-types --no-warnings scripts/craft.ts",
     "orbit": "node --experimental-transform-types --no-warnings scripts/orbit.ts",
     "weapons": "node --experimental-transform-types --no-warnings scripts/weapons.ts",
     "destruction": "node --experimental-transform-types --no-warnings scripts/destruction.ts",

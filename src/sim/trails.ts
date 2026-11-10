@@ -1,4 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
+import { OWN_WALL_GROUPS } from './collisionGroups.ts';
 import * as THREE from 'three';
 import type { Craft } from '../craft/Craft.ts';
 import type { TrailDef } from '../craft/types.ts';
@@ -239,7 +240,9 @@ export class TrailSystem {
     const desc = RAPIER.ColliderDesc.cuboid(WALL_THICKNESS / 2, (y1 - y0) / 2, len / 2)
       .setTranslation((a.x + b.x) / 2, (y0 + y1) / 2, (a.z + b.z) / 2)
       .setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) })
-      .setFriction(0.4).setRestitution(0.1);
+      .setFriction(0.4).setRestitution(0.1)
+      .setCollisionGroups(OWN_WALL_GROUPS) // deadly to everyone but the vehicle that laid it
+      .setSolverGroups(OWN_WALL_GROUPS);
     b.collider = this.world.createCollider(desc, this.body);
     this.colliderOwner.set(b.collider.handle, t);
   }
