@@ -375,6 +375,8 @@ async function start() {
   const client = browserClient(stored(KEY_STORAGE), Number(stored(CAP_STORAGE) ?? 1));
   const library = new Library();
   let currentEntry: LibraryEntry | null = null;
+  /** While the agent builds a vehicle on the turntable: the craft that was there before. */
+  let previewSaved: CraftDef | null = null;
   /** Load a craft (null = built-in trainer): on the turntable in the hangar, on the runway in flight. */
   const select = (entry: LibraryEntry | null) => {
     previewSaved = null; // a real selection ends any agent preview
@@ -455,8 +457,14 @@ async function start() {
     };
     group('Built-in', list.filter((e) => e.id.startsWith('builtin:')));
     group('Your designs', list.filter((e) => !e.id.startsWith('builtin:')));
-    const cur = currentEntry?.id ?? 'builtin:trainer';
-    if (!list.some((e) => e.id === cur)) {
+    const cur = previewSaved ? 'building' : currentEntry?.id ?? 'builtin:trainer';
+    if (previewSaved) {
+      // The agent is building a vehicle on the turntable right now.
+      const o = document.createElement('option');
+      o.value = cur;
+      o.textContent = `Building: ${sim.craft.def.name}`;
+      sel.prepend(o);
+    } else if (!list.some((e) => e.id === cur)) {
       // An unsaved craft (fresh from the Studio): show it at the top.
       const o = document.createElement('option');
       o.value = cur;
@@ -695,7 +703,6 @@ async function start() {
       showDef(def);
     },
   });
-  let previewSaved: CraftDef | null = null;
   function showDef(def: CraftDef): void {
     try {
       sim.loadCraft(def);
