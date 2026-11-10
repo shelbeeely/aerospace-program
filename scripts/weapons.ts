@@ -12,6 +12,7 @@
 import { BUILTINS } from '../src/craft/builtins.ts';
 import { JET } from '../src/craft/jet.ts';
 import { TANK } from '../src/craft/tank.ts';
+import { LIGHT_CYCLE } from '../src/craft/lightCycle.ts';
 import type { ControlInputs } from '../src/sim/controls.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 import { LOADOUT_ORDER, mountsFor } from '../src/sim/weapons.ts';
@@ -140,6 +141,72 @@ console.log('\n--- armour');
   const plain = new Simulation({ ...TANK, armor: undefined }).craft.strength.get('hull') ?? 0;
   check(hull >= plain * 3.99, 'the hull is 4x stronger with armour', `${(hull / 1000).toFixed(0)} kN vs ${(plain / 1000).toFixed(0)} kN`);
   check(sim.explodeSpeed() >= 1.99 * new Simulation({ ...TANK, armor: undefined }).explodeSpeed(), 'and survives twice the crash speed');
+}
+
+// ---------------------------------------------------------------- 7. light walls break
+console.log('\n--- light walls');
+{
+  const sim = new Simulation(LIGHT_CYCLE);
+  sim.weapons.arm(LIGHT_CYCLE, 'guns');
+  for (let i = 0; i < 120 * 8; i++) sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 1, brake: 0 });
+  const wall = sim.trails.trails.find((t) => t.kind === 'wall')!;
+  const solid0 = sim.trails.colliderCount;
+  // Shoot at the middle of the wall it laid.
+  const mid = wall.points[Math.floor(wall.points.length / 2)];
+  const b = sim.craft.body;
+  // Stand 30 m to the side of the wall's middle, facing it.
+  const nx = -(wall.points.at(-1)!.z - wall.points[0].z), nz = wall.points.at(-1)!.x - wall.points[0].x;
+  const nl = Math.hypot(nx, nz);
+  const sx = mid.x + (nx / nl) * 30, sz = mid.z + (nz / nl) * 30;
+  const yaw = Math.atan2(-(mid.x - sx), -(mid.z - sz));
+  b.setTranslation({ x: sx, y: 1.2, z: sz }, true);
+  b.setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }, true);
+  b.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  sim.trails.mode = 'off';
+  sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
+  for (let k = 0; k < 6; k++) { sim.fireWeapon('primary'); run(sim, 0.2); }
+  const walls = sim.trails.trails.filter((t) => t.kind === 'wall' && t.derezAt === null);
+  check(sim.trails.colliderCount < solid0, 'gunfire breaks a light wall', `${solid0} -> ${sim.trails.colliderCount} solid segments`);
+  check(walls.length >= 2, 'leaving a gap (the wall splits in two)', `${walls.length} wall pieces`);
+}
+
+// ---------------------------------------------------------------- 8. craters
+console.log('\n--- craters');
+{
+  const sim = new Simulation(JET);
+  sim.weapons.arm(JET, 'bombs');
+  place(sim, 300, 300, -2000, 0, [0, 0, -100]);
+  sim.step(idle);
+  sim.fireWeapon('secondary');
+  for (let i = 0; i < 120 * 12 && !sim.craters.length; i++) {
+    const c = sim.craft.body;
+    c.setTranslation({ x: 300, y: 300, z: c.translation().z }, true);
+    c.setLinvel({ x: 0, y: 0, z: -100 }, true);
+    sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0.8, brake: 0 });
+  }
+  const c = sim.craters[0];
+  check(!!c && c.radius >= 9, 'a bomb leaves a crater in the ground', c ? `r ${c.radius.toFixed(1)} m at (${c.x.toFixed(0)}, ${c.z.toFixed(0)}), ground y ${c.y.toFixed(1)}` : 'none');
+  const n = sim.craters.length;
+  sim.explode();
+  check(sim.craters.length === n, 'an airburst (the jet exploding 300 m up) leaves none');
+}
+{
+  const sim = new Simulation(TANK);
+  place(sim, 300, 1.5, -2000);
+  run(sim, 1);
+  // A shell into the ground just ahead: tip the tank's nose down and fire.
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.25);
+  sim.craft.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
+  sim.step(idle);
+  sim.fireWeapon('primary');
+  run(sim, 1);
+  check(sim.craters.length >= 1, 'a cannon shell into the ground leaves a crater', `${sim.craters.length}`);
+  const before = sim.craters.length;
+  (sim as unknown as { prevVelocity: THREE.Vector3 }).prevVelocity.set(0, 0, -40); // going in at 40 m/s
+  sim.explode();
+  check(sim.craters.length === before + 1, 'and so does a crash on the ground');
+  sim.resetToRunway();
+  check(sim.craters.length === 0, 'a world reset clears them');
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');

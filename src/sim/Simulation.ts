@@ -84,6 +84,20 @@ export class Simulation {
   damage: DamageModel;
   /** Breakable block buildings and their rubble (src/world). */
   readonly town: Town;
+  /**
+   * Ground craters left by bombs, shells, missiles, crashes and explosions (persistent until a
+   * world reset; the renderer draws them as terraced scars in the ground, newest last).
+   */
+  readonly craters: Array<{ x: number; y: number; z: number; radius: number; time: number; color: string }> = [];
+  /** Scar the ground at (x, z) if the blast at height y is close enough to it. */
+  private crater(x: number, y: number, z: number, blast: number, color: string): void {
+    const gy = isSea(x) ? null : terrainHeight(x, z);
+    if (gy === null || y - gy > blast * 0.6) return; // over the sea, or an airburst
+    const radius = blast * (0.5 + 0.3 * (1 - Math.max(0, y - gy) / (blast * 0.6)));
+    this.craters.push({ x, y: gy, z, radius, time: this.time, color });
+    if (this.craters.length > 256) this.craters.splice(0, this.craters.length - 256);
+  }
+
   /** Guns, cannon, bombs and missiles (Rapier ray-swept projectiles); see sim/weapons.ts. */
   readonly weapons = new WeaponSystem();
   private dozeAt = -Infinity;
@@ -393,6 +407,7 @@ export class Simulation {
     this.town.reset();
     this.chips.reset();
     this.explosions.length = 0;
+    this.craters.length = 0;
     this.lightning.reset(this.atmosphere.settings.seed);
     this.atmosphere.restart();
     this.groundMotion.set(0, 0, 0);
@@ -778,8 +793,11 @@ export class Simulation {
   private weaponImpact(h: WeaponImpact): void {
     const p = h.point;
     const col = h.collider;
-    if (col) this.traffic.derezCollider(col.handle, this.time);
+    if (col) this.traffic.derezCollider(col.handle, this.time); // a rider, or a rider's jetwall
     if (h.blast >= 3) this.traffic.derezWithin(p.x, p.z, h.blast * 0.8, this.time);
+    // Light walls break: a round that strikes one cuts a gap; a blast clears its radius.
+    const wallHit = !!col && this.trails.isWall(col.handle);
+    if (wallHit || h.blast >= 3) this.trails.cutAt(p.x, p.z, wallHit ? Math.max(2, h.blast * 0.8) : h.blast * 0.8);
     const body = col?.parent();
     if (body && body.isDynamic()) {
       const k = h.mass * (h.kind === 'gun' ? 1.5 : 4);
@@ -799,6 +817,7 @@ export class Simulation {
       });
     }
     this.staticWorld.blastAt(p.x, p.y, p.z, h.blast, this.time);
+    if (h.blast >= 3) this.crater(p.x, p.y, p.z, h.blast, h.color);
     if (h.blast >= 3) for (const b of this.town.buildings) this.town.blast(b, p.x, p.y, p.z, h.blast * 0.6, this.time);
     if (h.kind === 'gun') {
       this.chips.emit({ x: p.x, y: p.y, z: p.z, radius: 0.3, vx: h.normal.x * 4, vy: h.normal.y * 4 + 1, vz: h.normal.z * 4, speed: 5, count: 5, size: 0.12, color: h.color });
@@ -1001,8 +1020,11 @@ export class Simulation {
       const gy = isSea(c.x) ? 0 : terrainHeight(c.x, c.z);
       this.chips.emit({ x: c.x, y: Math.min(c.y, gy), z: c.z, radius: 1.2, vx: lv.x, vy: 0, vz: lv.z, speed: Math.min(28, 8 + speed * 0.3), count: Math.min(900, 300 + Math.round(speed * 6)), size: 0.18, color: circuit, splash: true });
     }
-    // Blast: crater whatever stands within the radius.
+    // Blast: crater whatever stands within the radius, and the ground under it.
     this.staticWorld.blastAt(c.x, c.y, c.z, radius, this.time);
+    this.crater(c.x, c.y, c.z, radius, circuit);
+    this.trails.cutAt(c.x, c.z, radius * 0.5);
+    this.traffic.derezWithin(c.x, c.z, radius * 0.6, this.time); // riders (and their walls) caught in it
     for (const b of this.town.buildings) this.town.blast(b, c.x, c.y, c.z, radius * 0.6, this.time);
     this.version++;
   }

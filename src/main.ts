@@ -42,6 +42,7 @@ import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
 import { updateSkyPlanet } from './render/neon.ts';
 import { ChipsView } from './render/ChipsView.ts';
 import { WeaponsView } from './render/WeaponsView.ts';
+import { CraterView } from './render/CraterView.ts';
 import { LOADOUT_ORDER, LOADOUTS, WEAPONS, type Loadout, type WeaponKind } from './sim/weapons.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
@@ -188,6 +189,7 @@ async function start() {
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
   const weaponsView = new WeaponsView(scene, sim.weapons);
+  const craterView = new CraterView(scene);
   let explosionHeardAt = -Infinity;
   let explodedAt: number | null = null;
   const _wind10 = new THREE.Vector3();
@@ -954,6 +956,7 @@ async function start() {
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
     weaponsView.update();
+    craterView.update(sim.time, sim.craters);
     {
       const ammo = sim.weapons.ammo();
       const kinds = Object.keys(ammo) as WeaponKind[];
