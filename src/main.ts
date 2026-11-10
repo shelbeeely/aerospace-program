@@ -12,6 +12,7 @@ import { STREET_SITE } from './world/spawnSites.ts';
 import { obstacleTop } from './world/structures.ts';
 import { browserClient } from './gen/openrouter.ts';
 import { Library, type LibraryEntry } from './gen/library.ts';
+import { loadTheme } from './gen/tracks.ts';
 import { CameraRig } from './render/CameraRig.ts';
 import { CraftView } from './render/CraftView.ts';
 import { DebrisView } from './render/DebrisView.ts';
@@ -378,8 +379,15 @@ async function start() {
   /** While the agent builds a vehicle on the turntable: the craft that was there before. */
   let previewSaved: CraftDef | null = null;
   /** Load a craft (null = built-in trainer): on the turntable in the hangar, on the runway in flight. */
+  /** Play the theme saved for a hangar entry (or fade out if it has none). */
+  const playThemeFor = (id: string) => {
+    void loadTheme(id).then((t) => {
+      if ((currentEntry?.id ?? 'builtin:trainer') === id) void audio.playTheme(t?.audio ?? null);
+    });
+  };
   const select = (entry: LibraryEntry | null) => {
     previewSaved = null; // a real selection ends any agent preview
+    playThemeFor(entry?.id ?? 'builtin:trainer');
     sim.loadCraft(entry ? entry.craft : TEST_PLANE);
     replaceCraftView();
     viewVersion = sim.version;
@@ -687,6 +695,7 @@ async function start() {
       if (mode === 'hangar') select(entry);
     },
     fly: () => fly(),
+    playTheme: (id) => playThemeFor(id),
     // The agent building a vehicle: show it on the turntable as its parts stream in. The craft
     // that was there is remembered and comes back if the job is cancelled or fails.
     preview: (def) => {

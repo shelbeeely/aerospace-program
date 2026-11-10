@@ -77,7 +77,13 @@ npm run build          # typecheck + production build
    entry records its provenance: every model that worked on it, prompt, score, rounds and cost.
 6. **Refine.** After flying, "Refine current" sends the craft, your instructions, and a
    summary of your flight (stalls, crashes, lift-off speed, g range) back to the crew.
-7. **Score.** The **Composer** writes a soundtrack (early-80s synth and orchestra presets).
+7. **Theme.** Tick *Compose a theme track for it* and the **Composer** (Lyria 3, free) writes a
+   theme while the agent builds the vehicle, in a style picked from the description (light
+   cycle race, solar sailer, Outlands, master control or the Grid; early-80s synth and
+   orchestra). It is saved with the vehicle (IndexedDB, `src/gen/tracks.ts`; ♪ in the hangar)
+   and plays through the game's own audio whenever you fly it, looping and faded in, under the
+   game volume (M mutes). The Studio's Music section composes or removes the theme of the
+   vehicle you're in.
    There are no custom liveries: every vehicle wears the 1982 palette.
 
 ### The crew: one model per job, free first
