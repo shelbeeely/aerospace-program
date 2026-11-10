@@ -153,7 +153,7 @@ export class Studio {
     const musicPrompt = h('input', { type: 'text', placeholder: 'extra direction, e.g. slower, with a guitar solo' });
     const musicStyle = h('select', { title: 'Genre', 'aria-label': 'Music genre' });
     for (const [id, s] of Object.entries(MUSIC_STYLES)) musicStyle.append(h('option', { value: id }, s.label));
-    musicStyle.value = 'synthwave';
+    musicStyle.value = 'grid';
     const composeBtn = h('button', { onclick: () => this.compose() }, 'Compose');
     this.audioEl = h('audio', { controls: '', loop: '', class: 'hidden' });
     const importInput = h('input', { type: 'file', accept: '.json,application/json', class: 'hidden', onchange: () => this.importFile(importInput) });

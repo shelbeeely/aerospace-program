@@ -166,6 +166,13 @@ export class OpenRouter {
     else body.model = req.model;
     if (req.format === 'json') body.response_format = { type: 'json_object' };
     if (req.modalities) body.modalities = req.modalities;
+    // Audio output only comes back on a stream, with an audio config (OpenRouter docs: Audio
+    // Output). Without these, music models answer with text and no audio at all.
+    const wantsAudio = !!req.modalities?.includes('audio');
+    if (wantsAudio) {
+      body.stream = true;
+      body.audio = { voice: 'alloy', format: /^openai\//.test(req.model) ? 'pcm16' : 'wav' };
+    }
     if (req.temperature !== undefined) body.temperature = req.temperature;
     if (req.maxTokens !== undefined) body.max_tokens = await this.clampMaxTokens(req.maxTokens, [req.model, ...fallbacks]);
     if (req.reasoningEffort) body.reasoning = { effort: req.reasoningEffort };
@@ -174,7 +181,7 @@ export class OpenRouter {
     let shrunk = false;
     for (;;) {
       try {
-        return await this.chatOnce(body, req.model, req.signal);
+        return await (wantsAudio ? this.chatStream(body, req.model, req.signal) : this.chatOnce(body, req.model, req.signal));
       } catch (e) {
         // A provider that rejects the reply budget gets one retry with the old safe default.
         if (!shrunk && e instanceof OpenRouterError && e.status === 400 && typeof body.max_tokens === 'number'
@@ -205,6 +212,88 @@ export class OpenRouter {
       if (m?.maxCompletionTokens) out = Math.min(out, m.maxCompletionTokens);
     }
     return Math.max(1000, out);
+  }
+
+  /**
+   * A streamed reply (server-sent events), for audio output: text deltas are joined, audio
+   * arrives as base64 chunks in delta.audio.data (decoded and concatenated), usage comes last.
+   */
+  private async chatStream(body: Record<string, unknown>, model: string, signal?: AbortSignal): Promise<ChatResult> {
+    const r = await fetch(`${this.cfg.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!r.ok || !r.body) {
+      const text = await r.text();
+      let msg = `HTTP ${r.status}: ${text.slice(0, 200)}`;
+      try {
+        const j = JSON.parse(text);
+        msg = String(j.error?.metadata?.raw ?? j.error?.message ?? msg);
+      } catch { /* not JSON */ }
+      throw new OpenRouterError(msg, r.status, r.status === 429 || r.status >= 500);
+    }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    let content = '';
+    let transcript = '';
+    let usedModel = model;
+    const chunks: Uint8Array[] = [];
+    const urls: string[] = [];
+    const usage: Usage = { promptTokens: 0, completionTokens: 0, cost: 0 };
+    const take = (a: any) => {
+      if (!a) return;
+      if (typeof a === 'string') { chunks.push(b64Bytes(a)); return; }
+      if (typeof a.transcript === 'string') transcript += a.transcript;
+      const url = a.url ?? a.audio_url?.url;
+      if (typeof url === 'string' && /^https?:/.test(url)) urls.push(url);
+      const data = a.data ?? a.b64_json ?? (typeof url === 'string' && url.startsWith('data:') ? url : undefined);
+      if (typeof data === 'string' && data) chunks.push(b64Bytes(data));
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (value) buf += dec.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith('data:')) continue; // comments (": OPENROUTER PROCESSING"), blank lines
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') continue;
+        let j: any;
+        try { j = JSON.parse(data); } catch { continue; }
+        if (j.error) {
+          const status = Number(j.error.code) || 500;
+          throw new OpenRouterError(String(j.error.metadata?.raw ?? j.error.message ?? 'stream error'), status, status === 429 || status >= 500);
+        }
+        if (j.model) usedModel = j.model;
+        if (j.usage) {
+          usage.promptTokens = num(j.usage.prompt_tokens);
+          usage.completionTokens = num(j.usage.completion_tokens);
+          usage.cost = num(j.usage.cost);
+        }
+        const d = j.choices?.[0]?.delta ?? j.choices?.[0]?.message ?? {};
+        if (typeof d.content === 'string') content += d.content;
+        else if (Array.isArray(d.content)) for (const c of d.content) {
+          if (typeof c?.text === 'string') content += c.text;
+          if (/audio/.test(c?.type ?? '')) take(c.audio ?? c.input_audio ?? c);
+        }
+        take(d.audio);
+        for (const a of d.audios ?? []) take(a);
+      }
+      if (done) break;
+    }
+    this.spent += usage.cost;
+    const audio = [...urls];
+    if (chunks.length) {
+      const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+      let o = 0;
+      for (const c of chunks) { all.set(c, o); o += c.length; }
+      audio.unshift(audioDataUrl(all));
+    }
+    return { model: usedModel, content: content || transcript, images: [], audio, reasoning: '', usage };
   }
 
   private async chatOnce(body: Record<string, unknown>, model: string, signal?: AbortSignal): Promise<ChatResult> {
@@ -243,6 +332,47 @@ export class OpenRouter {
     const reasoning = typeof msg.reasoning === 'string' ? msg.reasoning : '';
     return { model: j.model ?? model, content: content ?? '', images, audio, reasoning, usage };
   }
+}
+
+/** Decode base64 (also URL-safe base64) to bytes. */
+function b64Bytes(s: string): Uint8Array {
+  const clean = s.replace(/^data:[^,]*,/, '').replace(/-/g, '+').replace(/_/g, '/').replace(/\s/g, '');
+  const bin = atob(clean + '='.repeat((4 - (clean.length % 4)) % 4));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function bytesB64(b: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+/** Raw 16-bit little-endian PCM (OpenAI's streamed audio: 24 kHz mono) in a WAV container. */
+function pcmToWav(pcm: Uint8Array, rate = 24000, channels = 1): Uint8Array {
+  const out = new Uint8Array(44 + pcm.length);
+  const v = new DataView(out.buffer);
+  const str = (o: number, t: string) => { for (let i = 0; i < t.length; i++) out[o + i] = t.charCodeAt(i); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + pcm.length, true); str(8, 'WAVE');
+  str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, channels, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * channels * 2, true); v.setUint16(32, channels * 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, pcm.length, true);
+  out.set(pcm, 44);
+  return out;
+}
+
+/** A playable data URL for audio bytes: the container is sniffed from its magic bytes. */
+export function audioDataUrl(bytes: Uint8Array): string {
+  const tag = String.fromCharCode(...bytes.subarray(0, 4));
+  let mime = '';
+  if (tag === 'RIFF') mime = 'audio/wav';
+  else if (tag === 'OggS') mime = 'audio/ogg';
+  else if (tag === 'fLaC') mime = 'audio/flac';
+  else if (tag.startsWith('ID3') || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)) mime = 'audio/mpeg';
+  else if (String.fromCharCode(...bytes.subarray(4, 8)) === 'ftyp') mime = 'audio/mp4';
+  if (!mime) return `data:audio/wav;base64,${bytesB64(pcmToWav(bytes))}`; // headerless: raw PCM
+  return `data:${mime};base64,${bytesB64(bytes)}`;
 }
 
 /**

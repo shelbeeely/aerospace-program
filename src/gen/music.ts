@@ -11,18 +11,18 @@ export interface MusicResult {
 
 /** Genre presets: the model follows concrete instrumentation far better than a genre name. */
 export const MUSIC_STYLES: Record<string, { label: string; prompt: string }> = {
-  synthwave: { label: 'Synthwave', prompt: 'Synthwave / retrowave: warm analog polysynth pads, pulsing arpeggiated sawtooth bass, gated-reverb snare, LinnDrum-style beat, soaring lead synth melody, 80s retro-futurist night drive, 105 BPM' },
-  outrun: { label: 'Outrun', prompt: 'Outrun: fast driving 80s synth music, octave-bouncing bass, bright brassy synth stabs, punchy gated drums, sunset-highway energy, 118 BPM' },
-  darksynth: { label: 'Darksynth', prompt: 'Darksynth: heavy distorted analog bass, ominous minor-key arpeggios, cold digital pads, hard-hitting drum machine, cyberpunk tension, 100 BPM' },
-  grid: { label: 'Grid ambient', prompt: 'Ambient electronic in a vast digital world: slow evolving glassy synth pads, sparkling arpeggios, deep sub bass, light electronic percussion, calm and wide, 90 BPM' },
-  adventure: { label: 'Flying adventure', prompt: 'Breezy, optimistic orchestral-electronic flying adventure theme' },
+  grid: { label: 'The Grid (1982)', prompt: 'Early-80s electronic film score: analog modular synthesizer voices blended with a symphony orchestra and pipe organ, stately brass, crystalline sequenced arpeggios, vast and mysterious, a monumental digital world, 84 BPM' },
+  lightcycle: { label: 'Light cycle race', prompt: 'Driving early-80s analog synth action cue: pulsing sequencer ostinato, timpani and orchestral strings, urgent brass stabs, racing through a digital arena, 132 BPM' },
+  solar: { label: 'Solar sailer', prompt: 'Slow, luminous early-80s synthesizer and string-orchestra drift: sustained choir pads, gentle sequenced chimes, floating over a glowing geometric landscape, 70 BPM' },
+  outlands: { label: 'Outlands', prompt: 'Sparse, eerie analog synth ambience: low drones, distant metallic pulses, slow organ chords, a lonely electronic wilderness, 60 BPM' },
+  mcp: { label: 'Master control', prompt: 'Ominous early-80s synth and orchestra: deep pipe organ, minor-key brass, heavy sequenced bass, a towering control program, 92 BPM' },
 };
 
 export interface MusicRequest {
   model: string;
   fallbacks?: string[];
   prompt: string;
-  /** A MUSIC_STYLES key (default synthwave); the free-text prompt adds to it. */
+  /** A MUSIC_STYLES key (default grid); the free-text prompt adds to it. */
   style?: string;
   /** Optional context so the track fits what's on screen. */
   craftName?: string;
@@ -43,7 +43,7 @@ export async function composeMusic(client: OpenRouter, req: MusicRequest): Promi
       {
         role: 'user',
         content:
-          `Instrumental soundtrack for a neon flying game set inside a computer world${req.craftName ? ` (the player is flying "${req.craftName}")` : ''}. ` +
+          `Instrumental soundtrack for a game set inside a 1982-style digital world of monumental electronic architecture${req.craftName ? ` (the player is in "${req.craftName}")` : ''}. ` +
           `${req.style ? `${MUSIC_STYLES[req.style]?.prompt ?? req.style}. ` : ''}${req.prompt ? `${req.prompt}. ` : ''}Loopable, no vocals.`,
       },
     ],

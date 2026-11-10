@@ -72,6 +72,8 @@ export function modelsForJob(models: ModelInfo[], job: JobId, freeOnly = false):
     .filter((m) => j.outputs.some((o) => m.outputModalities.includes(o)))
     // Audio/image jobs need that output; plain text-only routers can't paint pictures etc.
     .filter((m) => job !== 'composer' || m.outputModalities.includes('audio'))
+    // Speech models (gpt-audio) output audio but only talk: they can't compose music.
+    .filter((m) => job !== 'composer' || !/gpt-audio|tts|speech/i.test(m.id))
     .filter((m) => !m.id.endsWith(':batch') && !m.id.startsWith('openrouter/auto') && m.id !== 'openrouter/free')
     .filter((m) => !freeOnly || isFree(m))
     .sort((a, b) => b.created - a.created);
