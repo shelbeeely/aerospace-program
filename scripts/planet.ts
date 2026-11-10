@@ -8,6 +8,7 @@ import { Engine } from '../src/modules/Engine.ts';
 import type { Telemetry } from '../src/sim/telemetry.ts';
 import type { CraftDef } from '../src/craft/types.ts';
 import { PLANET } from '../src/sim/layout.ts';
+import { TUNING } from '../src/tuning.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 
 await initPhysics();
@@ -147,6 +148,19 @@ function launch(x: number, y: number, z: number, v: number, def: CraftDef = JET)
   const o = sim.telemetry().orbit!;
   check(inOrbit > 0, `Orbiter: scripted ascent reaches a periapsis above ${ASCENT.periapsis / 1000} km`, inOrbit > 0 ? `orbit at t=${inOrbit.toFixed(0)} s, fuel left ${((sim.craft.fuel / sim.craft.fuelCapacity) * 100).toFixed(0)}%` : `stuck at Ap ${o.apoapsis} Pe ${o.periapsis}`);
   check(inOrbit > 0 && minAlt > 20000 && minPe > 20000 && sim.failures.length === 0, 'Orbiter: stays in orbit for 60 s (above 20 km, Pe above 20 km)', `min alt ${minAlt.toFixed(0)} m, min Pe ${minPe.toFixed(0)} m, now Ap ${o.apoapsis} Pe ${o.periapsis}`);
+}
+
+// --- System boundary: anything that climbs past it derezzes; below it nothing happens.
+{
+  const below = launch(0, TUNING.systemBoundary - 5000, 0, 0, BALL);
+  below.craft.body.setLinvel({ x: 0, y: 200, z: 0 }, true);
+  for (let i = 0; i < 120; i++) below.step(idle);
+  check(!below.exploded && below.derezCause === null, 'below the system boundary a craft flies on', `alt ${below.position.y.toFixed(0)} m`);
+  const sim = launch(0, TUNING.systemBoundary - 50, 0, 0, BALL);
+  sim.craft.body.setLinvel({ x: 0, y: 200, z: 0 }, true);
+  let derezzed = false;
+  for (let i = 0; i < 120 && !derezzed; i++) { sim.step(idle); derezzed = sim.derezCause === 'boundary'; }
+  check(derezzed, `crossing the system boundary (${TUNING.systemBoundary / 1000} km) derezzes the craft`, `cause ${sim.derezCause}, alt ${sim.position.y.toFixed(0)} m`);
 }
 
 console.log(failures ? `\n${failures} planet check(s) failed` : '\nall planet checks passed');

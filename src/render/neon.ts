@@ -1,8 +1,8 @@
 import * as THREE from 'three/webgpu';
 import { flatWorld } from './curvature.ts';
 import {
-  abs, cameraPosition, clamp, color, distance, dot, float, fract, fwidth, max, min, mix, normalize, positionLocal,
-  pow, smoothstep, step, uniform, vec3,
+  abs, asin, cameraPosition, clamp, color, cos, distance, dot, exp, float, floor, fract, fwidth, hash, length, max, min, mix,
+  normalize, positionLocal, pow, sin, smoothstep, step, uniform, vec3,
 } from 'three/tsl';
 import type { Node } from 'three/webgpu';
 
@@ -164,24 +164,79 @@ export function groundGridNode(
  * (acos(R/(R+h))), `space` fades the air to black as the craft leaves the atmosphere.
  * Update `altitude` each frame (main.ts) and call `updateSkyPlanet`.
  */
-export const SKY_PLANET = { dip: uniform(0), space: uniform(0), altitude: 0 };
+export const SKY_PLANET = {
+  dip: uniform(0),
+  space: uniform(0),
+  altitude: 0,
+  /** The horizon's depression angle acos(R / (R + h)) (rad). */
+  dipAngle: uniform(0),
+  /** Angular thickness (rad) of the glowing air on the planet's limb as seen from here. */
+  limbWidth: uniform(0.02),
+  /** 0 near the ground → 1 high up: how much the air shell over the ground shows. */
+  shell: uniform(0),
+};
+/** Visual thickness (m) of the glowing air shell drawn on the limb from altitude. */
+const LIMB_AIR = 650;
 export function updateSkyPlanet(altitude: number, radius: number): void {
   SKY_PLANET.altitude = altitude;
   const h = Math.max(0, altitude);
-  SKY_PLANET.dip.value = Math.sin(Math.acos(radius / (radius + h)));
+  const dip = Math.acos(radius / (radius + h));
+  SKY_PLANET.dip.value = Math.sin(dip);
+  SKY_PLANET.dipAngle.value = dip;
+  // Seen from the tangent distance the shell spans about LIMB_AIR / distance radians; kept
+  // between ~1/3° (still a visible line) and the low-altitude horizon band's width.
+  const tangent = Math.sqrt(2 * radius * h + h * h);
+  SKY_PLANET.limbWidth.value = Math.min(0.05, Math.max(0.006, LIMB_AIR / Math.max(1, tangent)));
   const t = Math.min(1, Math.max(0, (h - 5000) / 25000));
   SKY_PLANET.space.value = t * t * (3 - 2 * t);
+  const s = Math.min(1, Math.max(0, (h - 1500) / 8500));
+  SKY_PLANET.shell.value = s * s * (3 - 2 * s);
+}
+
+/**
+ * A sparse, geometric star field on unit direction `d` (rgb): small diamonds in a few percent
+ * of the cells of a 3D lattice, each centred on its cell's jittered point projected onto the
+ * sphere, kept only when that point stays inside the cell (so no star straddles a cell edge).
+ * Cool white, some cyan, a rare amber.
+ */
+function starField(d: TslNode): TslNode {
+  const N = 70;
+  const q: TslNode = d.mul(N);
+  const cell: TslNode = floor(q);
+  const h1: TslNode = hash(cell.x.mul(127.1).add(cell.y.mul(311.7)).add(cell.z.mul(74.7)));
+  const h2: TslNode = hash(cell.x.mul(269.5).add(cell.y.mul(183.3)).add(cell.z.mul(246.1)));
+  const jitter: TslNode = vec3(h1, h2, fract(h1.mul(h2).mul(17.3))).sub(0.5).mul(0.5);
+  const centre: TslNode = normalize(cell.add(0.5).add(jitter)).mul(N);
+  const rel: TslNode = centre.sub(cell);
+  const inCell: TslNode = step(0, rel.x).mul(step(rel.x, 1)).mul(step(0, rel.y)).mul(step(rel.y, 1)).mul(step(0, rel.z)).mul(step(rel.z, 1));
+  const o: TslNode = abs(q.sub(centre));
+  const diamond: TslNode = o.x.add(o.y).add(o.z);
+  const size: TslNode = h2.mul(0.05).add(0.06);
+  const shape: TslNode = float(1).sub(smoothstep(size.mul(0.45), size, diamond));
+  const present: TslNode = step(0.968, h1).mul(inCell);
+  const cool: TslNode = mix(color('#cfe9ff') as TslNode, color(NEON.cyan) as TslNode, step(0.6, h2));
+  const tint: TslNode = mix(cool, color('#ffb347') as TslNode, step(0.9, h2));
+  return tint.mul(shape.mul(present).mul(h2.mul(0.8).add(0.5)));
 }
 
 export function synthSkyNode(horizon: TslNode, zenith: TslNode, opts: { sunDir: THREE.Vector3; sunRadius?: number; sun?: TslNode } ): TslNode {
-  const d0 = normalize(positionLocal);
-  // Sky directions are measured from the (sunken) planet horizon.
-  const d = vec3(d0.x, d0.y.add(SKY_PLANET.dip), d0.z);
+  const d0: TslNode = normalize(positionLocal);
+  // Sky directions are measured from the (sunken) planet horizon: `a` is the angle above it
+  // (rad). Rotating the elevation (rather than shifting its sine) keeps the band thin from orbit.
+  const a: TslNode = asin(clamp(d0.y, -1, 1)).add(SKY_PLANET.dipAngle);
+  const ac: TslNode = clamp(a, -Math.PI / 2, Math.PI / 2);
+  const hz: TslNode = cos(ac).div(max(length(d0.xz), float(1e-5)));
+  const d: TslNode = vec3(d0.x.mul(hz) as TslNode, sin(ac) as TslNode, d0.z.mul(hz) as TslNode);
   const up = clamp(d.y, 0, 1);
   const sky = mix(horizon, zenith, pow(clamp(up.mul(2.2), 0, 1), 0.6));
-  // Glow band right at the horizon (magenta haze line).
+  // Coloured haze at the horizon: the electric-blue band, a thin cyan-white core, and a faint
+  // amber under-glow of the city lights in the lowest degree.
   const band = float(1).sub(smoothstep(0, 0.05, abs(d.y))).mul(0.6);
-  const bandCol = color(GRID_SKY.band).mul(band);
+  const core = float(1).sub(smoothstep(0, 0.012, abs(d.y))).mul(0.22);
+  const amber = float(1).sub(smoothstep(0, 0.02, abs(d.y))).mul(0.05);
+  const bandCol = (color(GRID_SKY.band) as TslNode).mul(band)
+    .add((color(NEON.cyan) as TslNode).mul(core))
+    .add((color(NEON.orange) as TslNode).mul(amber));
   // Sun: angle from its centre on the horizon.
   const sd = opts.sunDir.clone().normalize();
   const sunDir = vec3(sd.x, sd.y, sd.z);
@@ -199,9 +254,16 @@ export function synthSkyNode(horizon: TslNode, zenith: TslNode, opts: { sunDir: 
   const halo = smoothstep(Math.cos(r * 2.2), Math.cos(r), cosA).mul(0.12).mul(step(-0.02, d.y));
   const sunCol = (opts.sun ?? float(1)) as TslNode;
   const air = sky.add(bandCol).add(color(NEON.pink).mul(halo).mul(sunCol)).mul(float(1).sub(sunMask.mul(sunCol))).add(sunGrad.mul(sunMask).mul(sunCol));
-  // Space: near-black, with the thin glowing air still hugging the horizon.
-  const limb = float(1).sub(smoothstep(0, 0.12, abs(d.y))).mul(0.8);
-  const space: TslNode = (color('#000208') as TslNode).add((color(GRID_SKY.band) as TslNode).mul(limb));
+  // Space: near-black with sparse geometric stars, and the planet's limb: a thin shell of
+  // glowing air hugging the silhouette (cyan core, electric-blue falloff above it).
+  const w: TslNode = SKY_PLANET.limbWidth;
+  const above: TslNode = max(a, float(0));
+  const onSky: TslNode = step(float(-0.002), a);
+  const shellGlow: TslNode = exp(above.div(w).negate()).mul(onSky);
+  const coreGlow: TslNode = exp(above.div(w.mul(0.2)).negate()).mul(onSky);
+  const limb: TslNode = (color(GRID_SKY.band) as TslNode).mul(shellGlow.mul(0.8)).add((color(NEON.cyan) as TslNode).mul(coreGlow.mul(1.5)));
+  const stars: TslNode = starField(d0).mul(smoothstep(0.03, 0.2, a)).mul(1.3);
+  const space: TslNode = (color('#000208') as TslNode).add(limb).add(stars);
   return mix(air as TslNode, space, SKY_PLANET.space as unknown as TslNode);
 }
 

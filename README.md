@@ -458,6 +458,8 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
   (pyramids and flat-topped mesas, planar faces, straight ridgelines) lit in the contrasting
   palette, amber contours and orange-to-red ridges over an electric-blue survey grid. Physics
   uses one convex hull per solid, so you hit exactly what you see.
+- **The system boundary.** The edge of the Grid sits at 100 km, above every orbit: anything
+  that crosses it derezzes. The HUD warns from 85 km (`TUNING.systemBoundary`).
 - **Light cycles and trails (Rule 4: movement produces visible information).** The Light Cycle
   (built-ins) drives on the streets: W go, S brake, A/D steer; a gyro stabiliser keeps it
   upright, leaning into turns. **L** cycles its trail: **jetwall** (solid light: ride into

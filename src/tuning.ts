@@ -152,6 +152,10 @@ export const TUNING = {
   gearSinkLimit: 5,
   /** The craft explodes when a hard contact changes its velocity by more than this within 0.15 s (m/s; ~110 km/h). */
   explodeSpeed: 30,
+  /** The system boundary: the edge of the Grid, above the orbits (m altitude). Anything that
+   *  crosses it derezzes. The HUD warns from systemBoundaryWarning metres below. */
+  systemBoundary: 100_000,
+  systemBoundaryWarning: 15_000,
   /** Limit nose-up elevator on the ground so rotating can't drag the tail (fly-by-wire style). */
   tailStrikeProtection: true,
   /** Seconds after an explosion before a new plane appears on the runway (browser). */
