@@ -1021,7 +1021,7 @@ async function start() {
     trafficView.update(sim.time);
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
-    weaponsView.update();
+    weaponsView.update(sim.time);
     aiTrafficView.update(dt);
     craterView.update(sim.time, sim.craters);
     {

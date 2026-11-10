@@ -96,6 +96,10 @@ export function validateCraft(input: unknown): string[] {
           if (!isNum(m.control.gain, -1, 1)) e.push(`${at}: control gain -1..1`);
         }
         break;
+      case 'weapon':
+        if (!['gun', 'cannon', 'bomb', 'missile', 'laser', 'disc', 'pulse'].includes(m.kind)) e.push(`${at}: weapon kind must be gun, cannon, bomb, missile, laser, disc or pulse`);
+        if (m.ammo !== undefined && (!Number.isInteger(m.ammo) || m.ammo < 1 || m.ammo > 2000)) e.push(`${at}: weapon ammo must be an integer 1..2000`);
+        break;
       case 'airbrake':
         if (!isNum(m.area, 0.01, 200)) e.push(`${at}: airbrake area 0.01..200 m²`);
         if (m.cd !== undefined && !isNum(m.cd, 0.1, 3)) e.push(`${at}: airbrake cd 0.1..3`);

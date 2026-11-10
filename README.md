@@ -16,7 +16,7 @@ npm run weather        # weather impact checks (rain, icing, ground effect, vort
 npm run ground         # ground vehicles: flat ground, skid steering, Outlands highways and rubble, spawn sites
 npm run arch           # digital world: five families vs the ten checks, districts, interiors, Outlands
 npm run drive          # road network: one graph, every destination by road, the flight computer driving
-npm run weapons        # weapons: mounts, cannon cratering, tank bulldozer, bombs, missiles, armour
+npm run weapons        # weapons: fitted multiples, cannon cratering, tank bulldozer, bombs, missiles, laser, discs, armour
 npm run craft          # vehicle rules: connected parts, the 1982 palette, ground-vehicle design loop (offline)
 npm run engines        # fast flight: compressibility, ramjet/scramjet/solid/turbojet, thrust vectoring, airbrake, chute, cone/capsule parts, weight floors
 npm run air            # AI air traffic: count, clearance, destinations and circling, shot down and replaced
@@ -175,7 +175,7 @@ stick expo, haptics, and touch controls auto/on/off.
 | H | controls & settings |
 | V (hold) | fire guns / cannon (armed craft: the tank by default) |
 | O (hold) | drop bombs / fire missiles |
-| I | weapons loadout: unarmed, guns, cannon, guns + bombs, guns + missiles, tank, full |
+| I | weapons loadout: fitted (when the craft has weapon parts), unarmed, guns, cannon, guns + bombs, guns + missiles, tank, laser + discs, pulse + missiles, full |
 
 > Browsers don't let pages block Ctrl+W, so tapping Ctrl for throttle-down next to W can
 > close the tab. Prefer Z/X or a gamepad if that bites you.
@@ -270,9 +270,18 @@ A ramjet dart (solid booster to Mach 2, then a ramjet) passes Mach 3.2 in `npm r
 
 ## Weapons and derez
 
-Every craft can carry weapons (**I** cycles the loadout; the tank comes armed). Mounts come
-from the craft's geometry: a cannon at the tip of a barrel part (else the nose), guns either
-side of the nose (coaxial on a turret), bombs under the belly, missiles under the wings.
+Weapons are physical parts: a `weapon` module (`gun`, `cannon`, `missile` rail, `bomb` bay,
+`laser`, `disc`, `pulse`) is fitted to a part, drawn on the craft and fired from where it sits.
+Fit as many as you like; each adds its own rate of fire, and missile rails and bomb bays show
+their rounds leaving them. The tank fits its cannon and coaxial gun, the jet twin cheek guns,
+a missile rail under each wing and a belly bomb bay. The TRON weapons: the **laser** is an
+instant beam of light out to 1.5 km, the **identity disc** ricochets off structures up to three
+times, cutting what it strikes, and the tank's **pulse** bolt bounces once. Bombs are
+front-heavy (they leave level and pitch nose-down into the fall) with a lit band and ring
+tail; missiles and bombs draw light trails. Craft without fitted weapons can take a preset
+loadout (**I** cycles them); its mounts come from the craft's geometry: a cannon at the tip of
+a barrel part (else the nose), guns either side of the nose (coaxial on a turret), energy
+weapons on the turret or nose, bombs under the belly, missiles under the wings.
 Projectiles are integrated in `sim/weapons.ts` and swept with Rapier ray casts every step (a
 600 m/s round can't tunnel through a wall), excluding the firing craft. A hit derezzes the
 rider it strikes (and any within a blast), shoves loose bodies, craters structures (they

@@ -20,6 +20,7 @@ import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
 import { craftBounds, WeaponSystem, type WeaponHost, type WeaponImpact } from './weapons.ts';
 import { AiAirTraffic, type AiFlyer } from './aiTraffic.ts';
+import { WeaponMount } from '../modules/WeaponMount.ts';
 import { BOOM_DAMAGE, BOOM_DEREZ, BOOM_SHATTER, boomBite, boomOverpressure, boomReach, type BoomEvent } from './sonicBoom.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
 import { vehicleKind } from './vehicleTests.ts';
@@ -637,6 +638,7 @@ export class Simulation {
     this.trails.step(this.time, this.craft, this.rotation, this.position, this.linvel.length(), this.craft.wheels.some((w) => w.grounded));
     if (this.exploded) this.weapons.trigger.primary = this.weapons.trigger.secondary = false;
     this.weapons.step(this.weaponHost, this.dt, this.time);
+    this.syncWeaponMounts();
     this.bulldoze();
     this.playerBoom();
     const resets = this.explosionResets;
@@ -886,6 +888,24 @@ export class Simulation {
       groundAt: (x: number, z: number) => (isSea(x) ? -COAST.depth : terrainHeight(x, z)),
     };
   })();
+
+  /** Fitted weapons: mirror each mount's rounds and last shot onto its module (the craft view shows them). */
+  private syncWeaponMounts(): void {
+    const mods = this.craft.modules.filter((m): m is WeaponMount => m instanceof WeaponMount);
+    if (!mods.length) return;
+    const fitted = this.weapons.loadout === 'fitted';
+    const used = new Set<WeaponMount>();
+    for (const mount of this.weapons.mounts) {
+      if (!mount.partId) continue;
+      const mod = mods.find((m) => !used.has(m) && m.partId === mount.partId && m.def.kind === mount.kind);
+      if (!mod) continue;
+      used.add(mod);
+      mod.ammo = mount.ammo;
+      mod.sinceFired = this.time - (mount.lastFired ?? -Infinity);
+    }
+    // Not using the fitted weapons (another loadout chosen): show them full and quiet.
+    if (!fitted) for (const m of mods) if (!used.has(m)) m.sinceFired = Infinity;
+  }
 
   /** Fire one round of a trigger group now (scripts, tests, the LLM pilot). */
   fireWeapon(group: 'primary' | 'secondary' = 'primary'): number {

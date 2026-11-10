@@ -86,7 +86,7 @@ console.log('\n--- design loop');
 
 // ---------------------------------------------------------------- 4. prompt and ground card
 console.log('\n--- prompt');
-for (const [k, re] of [['ground vehicles', /Ground vehicles:/], ['skid steering', /"skid"/], ['stabilizer', /"type":"stabilizer"/], ['visual language', /1982 TRON/], ['connectivity', /ONE connected piece/], ['light cycle reference', /Light cycle \(two wheels/], ['inventiveness', /Be inventive/], ['fast engines', /"kind":"ramjet"[\s\S]*"kind":"scramjet"[\s\S]*"kind":"solid"/], ['thrust vectoring', /gimbalDeg/], ['cone and capsule parts', /"type":"cone"[\s\S]*"type":"capsule"/], ['airbrakes and chutes', /"type":"airbrake"[\s\S]*"type":"chute"/], ['weight floors', /must cover what it carries/], ['going fast', /## Going fast/]] as const) {
+for (const [k, re] of [['ground vehicles', /Ground vehicles:/], ['skid steering', /"skid"/], ['stabilizer', /"type":"stabilizer"/], ['visual language', /1982 TRON/], ['connectivity', /ONE connected piece/], ['light cycle reference', /Light cycle \(two wheels/], ['inventiveness', /Be inventive/], ['fast engines', /"kind":"ramjet"[\s\S]*"kind":"scramjet"[\s\S]*"kind":"solid"/], ['thrust vectoring', /gimbalDeg/], ['cone and capsule parts', /"type":"cone"[\s\S]*"type":"capsule"/], ['airbrakes and chutes', /"type":"airbrake"[\s\S]*"type":"chute"/], ['fitted weapons', /"type":"weapon"[\s\S]*"laser"\|"disc"\|"pulse"/], ['weight floors', /must cover what it carries/], ['going fast', /## Going fast/]] as const) {
   check(re.test(DESIGNER_SYSTEM_PROMPT), `the designer prompt covers ${k}`);
 }
 {

@@ -227,6 +227,20 @@ export interface WheelDef {
   brakes?: boolean;
 }
 
+/**
+ * A weapon fitted to the part, firing from `offset` along the part's forward (-Z) axis (bomb bays
+ * drop downward). Fit as many as you like: two cannons, four gun pods, missile rails under each
+ * wing, several bomb bays. The part's mass must cover the weapon and its rounds.
+ */
+export interface WeaponModuleDef {
+  type: 'weapon';
+  offset?: Vec3Tuple;
+  /** gun, cannon, missile (rail), bomb (bay), laser (beam), disc (identity disc launcher), pulse (bolt emitter). */
+  kind: 'gun' | 'cannon' | 'bomb' | 'missile' | 'laser' | 'disc' | 'pulse';
+  /** Rounds (bombs, missiles, discs...) it carries. Default per kind. */
+  ammo?: number;
+}
+
 /** Airbrake / speed brake: panels that open into the airflow with the brake input. */
 export interface AirbrakeDef {
   type: 'airbrake';
@@ -343,6 +357,7 @@ export interface TrailDef {
 }
 
 export type ModuleDef =
+  | WeaponModuleDef
   | AirbrakeDef
   | ChuteDef
   | AeroSurfaceDef

@@ -1,4 +1,4 @@
-import type { ModuleDef, PartDef } from './types.ts';
+import type { ModuleDef, PartDef, WeaponModuleDef } from './types.ts';
 
 const G = 9.81;
 
@@ -32,6 +32,16 @@ export function moduleMinMass(m: ModuleDef): { kg: number; why: string } | null 
       return { kg: wh / 250, why: `${Math.round(wh)} Wh battery (≤ 250 Wh/kg)` };
     }
     case 'airbrake': return { kg: m.area * 4, why: `${m.area} m² airbrake` };
+    case 'weapon': {
+      // The weapon plus its rounds (a bomb bay is mostly bombs).
+      const per: Record<WeaponModuleDef['kind'], [number, number, number]> = {
+        // [weapon kg, kg per round, default rounds]
+        gun: [40, 0.05, 600], cannon: [150, 12, 40], missile: [30, 60, 6], bomb: [60, 250, 8], laser: [60, 0, 240], disc: [25, 4, 12], pulse: [80, 1, 60],
+      };
+      const [w, r, n] = per[m.kind];
+      const rounds = m.ammo ?? n;
+      return { kg: w + r * rounds, why: `${m.kind} with ${rounds} rounds` };
+    }
     case 'chute': return { kg: m.cdA * 0.15, why: `drag chute (cdA ${m.cdA} m²)` };
     default: return null;
   }

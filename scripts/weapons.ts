@@ -1,12 +1,14 @@
 /**
  * Headless weapons tests. Run with `npm run weapons`.
  *
- * 1. Mounts: the tank carries its cannon and coaxial gun by default; every loadout mounts on
+ * 1. Mounts: the tank carries its fitted cannon and coaxial gun by default; every loadout mounts on
  *    every built-in.
  * 2. The tank's cannon, fired at a structure, craters it (the structure fractures into blocks).
  * 3. The tank drives through a structure: the bulldozer clears its blocks and the tank survives.
  * 4. A jet's bomb falls ballistically and detonates on the ground (a derez flash in its colour).
  * 5. A missile accelerates in flight.
+ * 5b. Fitted weapons: multiples of each kind, each firing from where it is fitted; bays and rails
+ *    empty on the craft; nose-heavy bombs pitch down; the laser hits instantly; the disc ricochets.
  * 6. Armour: the tank's parts are at least 4x stronger than reinforcement alone.
  */
 import { BUILTINS } from '../src/craft/builtins.ts';
@@ -18,6 +20,7 @@ import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 import { LOADOUT_ORDER, mountsFor } from '../src/sim/weapons.ts';
 import { worldStructures } from '../src/world/structures.ts';
 import * as THREE from 'three';
+import { WeaponMount } from '../src/modules/WeaponMount.ts';
 
 await initPhysics();
 let failed = 0;
@@ -43,11 +46,13 @@ console.log('--- mounts');
 {
   const sim = new Simulation(TANK);
   const kinds = sim.weapons.mounts.map((m) => m.kind).sort().join(',');
-  check(sim.weapons.loadout === 'tank' && kinds === 'cannon,gun', 'the tank is armed by default', kinds);
+  check(sim.weapons.loadout === 'fitted' && kinds === 'cannon,gun', 'the tank is armed by default', kinds);
+  const jet = new Simulation(JET).weapons.mounts.map((m) => m.kind).sort().join(',');
+  check(jet === 'bomb,gun,gun,missile,missile', 'the jet carries its fitted guns, rails and bay', jet);
   const cannon = sim.weapons.mounts.find((m) => m.kind === 'cannon')!;
   check(cannon.offset.z < -3, 'its cannon fires from the barrel tip', `z ${cannon.offset.z.toFixed(2)}`);
   let bad = 0;
-  for (const b of BUILTINS) for (const l of LOADOUT_ORDER) if (l !== 'none' && mountsFor(b.craft, l).length === 0) bad++;
+  for (const b of BUILTINS) for (const l of LOADOUT_ORDER) if (l !== 'none' && l !== 'fitted' && mountsFor(b.craft, l).length === 0) bad++;
   check(bad === 0, 'every loadout mounts on every built-in', `${BUILTINS.length} craft x ${LOADOUT_ORDER.length} loadouts`);
 }
 
@@ -131,6 +136,80 @@ console.log('\n--- missile');
   const v0 = m.vel.length();
   run(sim, 1.5, { pitch: 0, roll: 0, yaw: 0, throttle: 0.8, brake: 0 });
   check(m.vel.length() > v0 + 100, 'it accelerates under thrust', `${v0.toFixed(0)} -> ${m.vel.length().toFixed(0)} m/s`);
+}
+
+// ---------------------------------------------------------------- 5b. fitted weapons
+console.log('\n--- fitted weapons');
+{
+  // A jet with weapons fitted as parts: two cannons, four gun pods, two missile rails, two bomb
+  // bays, a laser and a disc launcher.
+  const W = (kind: string, offset: [number, number, number], ammo?: number) => ({ type: 'weapon' as const, kind: kind as 'gun', offset, ...(ammo ? { ammo } : {}) });
+  const armed = structuredClone(JET);
+  for (const p of armed.parts) p.modules = p.modules?.filter((m) => m.type !== 'weapon'); // start bare
+  const body = armed.parts[0];
+  body.mass += 6000;
+  body.modules = [
+    ...(body.modules ?? []),
+    W('cannon', [-0.6, -0.4, 0]), W('cannon', [0.6, -0.4, 0]),
+    W('gun', [-1.2, -0.3, 0]), W('gun', [1.2, -0.3, 0]), W('gun', [-1.5, -0.3, 0.5]), W('gun', [1.5, -0.3, 0.5]),
+    W('missile', [-1.0, -0.6, 1], 4), W('missile', [1.0, -0.6, 1], 4),
+    W('bomb', [-0.5, -0.7, 1.5], 4), W('bomb', [0.5, -0.7, 1.5], 4),
+    W('laser', [0, -0.5, -1]), W('disc', [0, 0.5, 0]),
+  ];
+  const sim = new Simulation(armed);
+  const count = (k: string) => sim.weapons.mounts.filter((m) => m.kind === k).length;
+  check(sim.weapons.loadout === 'fitted', 'a craft with fitted weapons uses them', sim.weapons.loadout);
+  check(count('cannon') === 2 && count('gun') === 4 && count('missile') === 2 && count('bomb') === 2, 'multiples of each: 2 cannons, 4 guns, 2 rails, 2 bays',
+    sim.weapons.mounts.map((m) => m.kind).join(','));
+  const cx = sim.weapons.mounts.filter((m) => m.kind === 'cannon').map((m) => m.offset.x);
+  check(Math.abs(cx[0] - cx[1]) > 1, 'each fires from where it is fitted', `cannon x ${cx.map((x) => x.toFixed(1)).join(', ')}`);
+  const mods = sim.craft.modules.filter((m): m is WeaponMount => m instanceof WeaponMount);
+  check(mods.length === 12, 'each weapon is a module on the craft (drawn on it)', `${mods.length}`);
+
+  place(sim, 300, 800, -2000, 0, [0, 0, -150]);
+  sim.step(idle);
+  sim.fireWeapon('secondary');
+  run(sim, 0.05);
+  const bays = mods.filter((m) => m.def.kind === 'bomb');
+  const rails = mods.filter((m) => m.def.kind === 'missile');
+  check(bays.every((b) => b.ammo === 3) && rails.every((r) => r.ammo === 3), 'firing empties the bays and rails on the craft', `bays ${bays.map((b) => b.ammo)}, rails ${rails.map((r) => r.ammo)}`);
+
+  // Bombs are nose-heavy: released level, they pitch nose-down into the fall.
+  const bomb = sim.weapons.projectiles.find((p) => p.kind === 'bomb')!;
+  const pitch0 = bomb.heading.y;
+  run(sim, 3, { pitch: 0, roll: 0, yaw: 0, throttle: 0.8, brake: 0 });
+  check(Math.abs(pitch0) < 0.1 && bomb.heading.y < -0.15, 'bombs leave level and pitch nose-down as they fall', `heading y ${pitch0.toFixed(2)} -> ${bomb.heading.y.toFixed(2)}`);
+}
+{
+  // The laser: an instant beam that strikes the target the moment it fires.
+  const sim = new Simulation(TANK);
+  sim.weapons.arm(TANK, 'light');
+  place(sim, target.p.x, 2, face + 120);
+  run(sim, 1);
+  const h0 = sim.weapons.hits;
+  sim.weapons.fireOnce((sim as unknown as { weaponHost: Parameters<typeof sim.weapons.fireOnce>[0] }).weaponHost, 'primary', sim.time);
+  check(sim.weapons.beams.length >= 1, 'the laser fires a beam of light', `${sim.weapons.beams.length}`);
+  check(sim.weapons.hits > h0, 'which hits instantly', `${sim.weapons.hits - h0} hits in the same step`);
+}
+{
+  // The identity disc ricochets off a structure and flies on.
+  const sim = new Simulation(TANK);
+  sim.weapons.arm(TANK, 'light');
+  place(sim, target.p.x, 2, face + 60);
+  run(sim, 1);
+  const host = (sim as unknown as { weaponHost: Parameters<typeof sim.weapons.fireOnce>[0] }).weaponHost;
+  // Fire just the disc: drop the laser for this shot.
+  const laser = sim.weapons.mounts.find((m) => m.kind === 'laser')!;
+  laser.ammo = 0;
+  sim.weapons.fireOnce(host, 'primary', sim.time);
+  const disc = sim.weapons.projectiles.find((p) => p.kind === 'disc');
+  check(!!disc, 'the disc launcher throws a disc');
+  let bounced = false;
+  for (let i = 0; i < 240 && disc; i++) {
+    sim.step(idle);
+    if (disc.bounces < 3) { bounced = true; break; }
+  }
+  check(bounced && !!disc && disc.vel.z > 0, 'it ricochets off the structure and comes back', disc ? `bounces left ${disc.bounces}, vz ${disc.vel.z.toFixed(0)}` : '');
 }
 
 // ---------------------------------------------------------------- 6. armour
