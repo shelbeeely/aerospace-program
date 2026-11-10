@@ -705,7 +705,7 @@ export class TrafficSystem {
     });
     if (r.speed > 20) {
       this.chips?.emit({
-        x: r.x, y: 0.5, z: r.z, radius: 0.6, vx: HX[r.heading] * r.speed, vy: 0, vz: HZ[r.heading] * r.speed,
+        x: r.x, y: 0, z: r.z, radius: 0.6, vx: HX[r.heading] * r.speed, vy: 0, vz: HZ[r.heading] * r.speed,
         speed: Math.min(30, 8 + r.speed * 0.3), count: 160, size: 0.15, color, splash: true,
       });
     }

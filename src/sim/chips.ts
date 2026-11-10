@@ -20,7 +20,8 @@ export interface ChipBurst {
   color: string;
   /** Derez voxels: they stay where they land, scattered on the Grid like broken glass. */
   persist?: boolean;
-  /** Energy splash (fast-moving derez): rises like liquid from the impact, then dissipates. */
+  /** Energy splash (fast-moving derez): droplets erupt from the grid at (x, y, z), the impact site,
+   *  on parabolic arcs under gravity and dissipate where they land back on the grid. */
   splash?: boolean;
   seq: number;
 }

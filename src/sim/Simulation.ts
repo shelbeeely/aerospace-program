@@ -808,7 +808,9 @@ export class Simulation {
     this.explosions.push({ x: p.x, y: p.y, z: p.z, time: this.time, radius: h.blast, color: h.color, speed });
     if (this.explosions.length > 32) this.explosions.splice(0, this.explosions.length - 32);
     this.chips.emit({ x: p.x, y: p.y, z: p.z, radius: h.blast * 0.15, vx: 0, vy: 4, vz: 0, speed: 6 + h.blast, count: Math.round(40 + h.blast * 12), size: 0.22, color: h.color, persist: true });
-    this.chips.emit({ x: p.x, y: p.y, z: p.z, radius: 0.5, vx: h.vel.x * 0.1, vy: 0, vz: h.vel.z * 0.1, speed: 8 + h.blast * 1.2, count: Math.round(60 + h.blast * 10), size: 0.14, color: h.color, splash: true });
+    // An energy splash erupts where the round meets the grid (not off a wall face high up).
+    const gy = isSea(p.x) ? 0 : terrainHeight(p.x, p.z);
+    if (p.y - gy < 4) this.chips.emit({ x: p.x, y: gy, z: p.z, radius: 0.5, vx: h.vel.x * 0.1, vy: 0, vz: h.vel.z * 0.1, speed: 8 + h.blast * 1.2, count: Math.round(60 + h.blast * 10), size: 0.14, color: h.color, splash: true });
   }
 
   /** A bulldozer shoving through structure or rubble: no damage to it (the rubble still feels it). */
@@ -993,9 +995,11 @@ export class Simulation {
     // scatter on the Grid like broken glass and stay there.
     const lv = this.prevVelocity;
     this.chips.emit({ x: c.x, y: c.y, z: c.z, radius: 2, vx: lv.x * 0.35, vy: 5, vz: lv.z * 0.35, speed: 16, count: 1400, size: 0.3, color: circuit, persist: true });
-    // A fast vehicle's derez carries so much energy it rises like a liquid splash, then dissipates.
+    // A fast vehicle's derez carries so much energy it erupts from the grid at the impact site
+    // like a liquid splash, droplets arcing out under gravity, then dissipates.
     if (speed > 20) {
-      this.chips.emit({ x: c.x, y: c.y, z: c.z, radius: 1.2, vx: lv.x, vy: 0, vz: lv.z, speed: Math.min(45, 10 + speed * 0.35), count: Math.min(900, 300 + Math.round(speed * 6)), size: 0.18, color: circuit, splash: true });
+      const gy = isSea(c.x) ? 0 : terrainHeight(c.x, c.z);
+      this.chips.emit({ x: c.x, y: Math.min(c.y, gy), z: c.z, radius: 1.2, vx: lv.x, vy: 0, vz: lv.z, speed: Math.min(28, 8 + speed * 0.3), count: Math.min(900, 300 + Math.round(speed * 6)), size: 0.18, color: circuit, splash: true });
     }
     // Blast: crater whatever stands within the radius.
     this.staticWorld.blastAt(c.x, c.y, c.z, radius, this.time);

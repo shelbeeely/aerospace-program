@@ -16,6 +16,8 @@ npm run weather        # weather impact checks (rain, icing, ground effect, vort
 npm run ground         # ground vehicles: flat ground, skid steering, Outlands highways and rubble, spawn sites
 npm run arch           # digital world: five families vs the ten checks, districts, interiors, Outlands
 npm run drive          # road network: one graph, every destination by road, the flight computer driving
+npm run weapons        # weapons: mounts, cannon cratering, tank bulldozer, bombs, missiles, armour
+npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
 ```
 
@@ -124,6 +126,9 @@ stick expo, haptics, and touch controls auto/on/off.
 | F3 | debug: force vectors, CoM/CoL/CoT, stats, CoM slider, weather |
 | N | toggle the Studio (generate / refine / paint craft, hangar) |
 | H | controls & settings |
+| V (hold) | fire guns / cannon (armed craft: the tank by default) |
+| O (hold) | drop bombs / fire missiles |
+| I | weapons loadout: unarmed, guns, cannon, guns + bombs, guns + missiles, tank, full |
 
 > Browsers don't let pages block Ctrl+W, so tapping Ctrl for throttle-down next to W can
 > close the tab. Prefer Z/X or a gamepad if that bites you.
@@ -179,6 +184,24 @@ air temperature, precipitation and cloud (IMC), and flags ICE, VORTEX RING and A
 What you see comes from the same model the physics flies through: rain and snow fall with the
 wind's drift, the cloud deck is drawn from the same drifting cells that make showers, thermals
 and icing, fog follows visibility, and the runway darkens when wet.
+
+## Weapons and derez
+
+Every craft can carry weapons (**I** cycles the loadout; the tank comes armed). Mounts come
+from the craft's geometry: a cannon at the tip of a barrel part (else the nose), guns either
+side of the nose (coaxial on a turret), bombs under the belly, missiles under the wings.
+Projectiles are integrated in `sim/weapons.ts` and swept with Rapier ray casts every step (a
+600 m/s round can't tunnel through a wall), excluding the firing craft. A hit derezzes the
+rider it strikes (and any within a blast), shoves loose bodies, craters structures (they
+fracture into Rapier blocks), and flashes and shatters into voxels in the shooter's circuit
+colour. Everything runs on Rapier: ray sweeps, impulses and fracture cover what weapons need,
+so there is no second physics engine (Ammo.js) to keep in step.
+
+**Derez.** A derezzing vehicle shatters into thousands of cubical voxels in its circuit colour
+that scatter on the Grid like broken glass and stay there; about 4% are rogue red/orange
+fragments that keep derezzing, flickering until they wink out. A fast-moving derez also
+erupts as a high-energy splash: droplets of its energy leave the grid at the impact site on
+parabolic arcs under gravity, crest and dissipate.
 
 ## Physics model
 
@@ -369,8 +392,11 @@ npm run test:server     # bun test server: two clients join, relay, isolation, s
 ## Disasters
 
 F3 has explicit **Tornado**, **Hurricane**, **Earthquake**, and **Clear events** buttons.
-Ordinary flights have no scheduled disasters. Tornadoes move along seeded paths, add
-Rankine-vortex swirl/inflow/updrafts, and appear as rotating neon rings. Hurricanes add a
+In the game, **tornadoes also form at random** (weather panel: *Random tornadoes*): seeded,
+one at a time, 1.4-3.2 km from you, heading roughly your way. Headless runs have no random
+events. Tornadoes move along seeded paths, add Rankine-vortex swirl/inflow/updrafts, and are
+drawn as a solid mass: a dark, opaque funnel that sways and carries rotating spiral striations
+under a wall cloud, with a dust skirt and a debris cloud of voxel fragments orbiting its base. Hurricanes add a
 Holland wind field and spiral rain bands; earthquakes physically shake the runway with an
 analytic, seeded ground motion. Reset clears the event timeline.
 
@@ -516,8 +542,11 @@ with the debug panel and the archetype lab; in the game, **K** opens the inspect
   ground vehicles. Check: `npm run trails`.
 - **Light Car and Program Tank (built-ins).** The **Light Car** is a four-wheel neon runabout
   (cyan lines, red and amber accents): front wheels steer, rear wheels drive, and it lays a
-  jetwall / light ribbon from its tail. The **Program Tank** is heavy, slow and fully
-  reinforced, on six road wheels per side, and lays a red jetwall. It **skid-steers**: a wheel
+  jetwall / light ribbon from its tail. The **Program Tank** is heavy, slow, fully
+  reinforced and armoured (`armor: 4`: four times the strength, impact HP and crash
+  tolerance), on six road wheels per side, and lays a red jetwall. It **bulldozes** through
+  structures it drives into (they fracture into Rapier blocks it shoves aside) and carries a
+  cannon and coaxial gun. It **skid-steers**: a wheel
   with `skid: 1 | -1` (its side) is driven by the yaw channel, the two sides in opposite
   directions, so A/D turns it on the spot. Both score 100/100 on the ground card in calm and
   moderate weather and drive down the Outlands highways. Check: `npm run ground`.
