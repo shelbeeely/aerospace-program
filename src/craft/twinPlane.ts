@@ -170,6 +170,7 @@ export const TWIN_PLANE: CraftDef = {
         },
       ],
     },
+    { id: 'gear.nose.strut', kind: 'gear.strut', mass: 0.3, position: [0, -0.55, -3.0], shape: { type: 'box', size: [0.06, 0.3, 0.06] }, collider: false, color: '#ffb000' },
     {
       id: 'gear.nose',
       kind: 'gear',

@@ -5,6 +5,7 @@ import { TEST_PLANE } from '../craft/testPlane.ts';
 import { TWIN_PLANE } from '../craft/twinPlane.ts';
 import type { CraftDef } from '../craft/types.ts';
 import { validateCraft } from '../craft/validate.ts';
+import { connectivityErrors } from '../craft/connectivity.ts';
 import { autoFix } from './autofix.ts';
 import { TUNING } from '../tuning.ts';
 import { PLANET } from '../sim/layout.ts';
@@ -286,6 +287,8 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
       return { attempt, outcome: { kind: 'error', api: false, message: attempt.error } };
     }
     const errors = validateCraft(parsed.craft);
+    // One connected piece: no floating parts, every module on its own part.
+    if (!errors.length) errors.push(...connectivityErrors(parsed.craft as CraftDef));
     if (errors.length) {
       attempt.validationErrors = errors;
       emit({ type: 'attempt', attempt });
