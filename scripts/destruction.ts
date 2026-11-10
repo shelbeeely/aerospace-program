@@ -152,8 +152,11 @@ const crash = (def: CraftDef, v: number) => {
     const vFast = Math.round(34 * tough);
     const slow = crash(b.craft, 20);
     const fast = crash(b.craft, vFast);
-    const tougher = tough > 1 ? !crash(b.craft, 34).exploded : true;
-    check(!slow.exploded && fast.exploded && tougher, `${b.label}: survives 20 m/s${tough > 1 ? ' and 34 m/s' : ''}, explodes at ${vFast} m/s`, `20: ${slow.exploded}, ${vFast}: ${fast.exploded}`);
+    // Clearly tougher craft (≥ 25% over the trainer: explode threshold well above 34 m/s)
+    // survive the 34 m/s crash; a marginally reinforced one (the crawler, 1.05×: ~31.5 m/s)
+    // rightly doesn't.
+    const tougher = tough >= 1.25 ? !crash(b.craft, 34).exploded : true;
+    check(!slow.exploded && fast.exploded && tougher, `${b.label}: survives 20 m/s${tough >= 1.25 ? ' and 34 m/s' : ''}, explodes at ${vFast} m/s`, `20: ${slow.exploded}, ${vFast}: ${fast.exploded}`);
   }
 }
 

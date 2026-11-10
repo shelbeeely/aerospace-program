@@ -44,6 +44,8 @@ const wing = (side: -1 | 1): PartDef => ({
       criticalMach: 0.8,
       control: { channel: 'roll', maxDeflectionDeg: 15, gain: side < 0 ? 1 : -1, spanFraction: 0.85, chordFraction: 0.25 },
     },
+    // A missile rail under the outer wing, two rounds.
+    { type: 'weapon', kind: 'missile', offset: [side * 0.7, -0.1, 0.1], ammo: 2 },
   ],
 });
 
@@ -85,6 +87,10 @@ export const JET: CraftDef = {
         { type: 'body', length: 11.5, diameter: 1.2, offset: [0, 0, 1.0], cdFront: 0.1 },
         // Fuselage tank over the wing.
         { type: 'fuel', offset: [0, 0.2, 1.4], capacity: 450 },
+        // Twin guns in the cheeks and a bomb bay in the belly behind the nose gear.
+        { type: 'weapon', kind: 'gun', offset: [-0.45, -0.3, -2.0], ammo: 300 },
+        { type: 'weapon', kind: 'gun', offset: [0.45, -0.3, -2.0], ammo: 300 },
+        { type: 'weapon', kind: 'bomb', offset: [0, -0.65, 0.6], ammo: 2 },
       ],
     },
     {

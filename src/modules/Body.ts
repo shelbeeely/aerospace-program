@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { bodyWaveFactor } from './compressibility.ts';
 import type { BodyDef } from '../craft/types.ts';
 import { TUNING } from '../tuning.ts';
 import type { ForceModule, StepContext } from './ForceModule.ts';
@@ -64,7 +65,9 @@ export class Body implements ForceModule {
     this.alpha = Math.acos(Math.max(-1, Math.min(1, vAxial / speed)));
 
     // Axial drag (opposes motion along the axis).
-    const axial = -0.5 * rho * vAxial * Math.abs(vAxial) * (this.def.cdFront ?? 0.2) * this.frontalArea;
+    // Nose-on drag, with the transonic wave-drag bump (sound speed from the local air).
+    const mach = speed / ctx.air(_p.y).speedOfSound;
+    const axial = -0.5 * rho * vAxial * Math.abs(vAxial) * (this.def.cdFront ?? 0.2) * bodyWaveFactor(mach) * this.frontalArea;
     _f.copy(_b).multiplyScalar(axial);
     ctx.applyForce('drag', _f, _p);
 

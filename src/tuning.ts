@@ -246,7 +246,10 @@ export const TUNING = {
   airframeFriction: 0.6,
   airframeRestitution: 0.1,
   /** If the body ever exceeds these, it's considered exploded and is reset. */
-  maxSaneSpeed: 2000,
+  /** Above this the craft is assumed to have blown up numerically and is reset (m/s; scramjets reach ~3 km/s). */
+  maxSaneSpeed: 8000,
+  /** Rapier's length unit: it caps body speed at 400 m/s × this (10 → 4 km/s, ~Mach 13 high up). */
+  physicsLengthUnit: 10,
   maxSaneAngularSpeed: 200,
 
   // ---------------------------------------------------------------- input

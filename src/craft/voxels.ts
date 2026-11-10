@@ -114,8 +114,19 @@ function extents(s: ShapeDef): [number, number, number] {
 function insideShape(s: ShapeDef, x: number, y: number, z: number, c: number): boolean {
   if (s.type === 'box') return true; // the grid is the box
   if (s.type === 'sphere') return Math.hypot(x, y, z) <= Math.max(s.radius, c / 2);
-  const r = Math.max(s.radius, c / 2);
-  if (s.axis === 'x') return Math.hypot(y, z) <= r;
-  if (s.axis === 'z') return Math.hypot(x, y) <= r;
-  return Math.hypot(x, z) <= r;
+  const axis = s.axis ?? 'y';
+  const along = axis === 'x' ? x : axis === 'z' ? z : y;
+  const radial = axis === 'x' ? Math.hypot(y, z) : axis === 'z' ? Math.hypot(x, y) : Math.hypot(x, z);
+  let r = s.radius;
+  if (s.type === 'cone') {
+    // Radius grows from the tip (at tip·length/2) to the base.
+    const tip = s.tip ?? -1;
+    const t = (s.length / 2 - along * tip) / s.length; // 0 at the tip, 1 at the base
+    r = s.radius * Math.min(1, Math.max(0, t));
+  } else if (s.type === 'capsule') {
+    const flat = s.length / 2 - s.radius;
+    const over = Math.abs(along) - flat;
+    if (over > 0) r = Math.sqrt(Math.max(0, s.radius * s.radius - over * over));
+  }
+  return radial <= Math.max(r, c / 2);
 }

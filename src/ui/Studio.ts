@@ -4,7 +4,11 @@ import { AGENTIC_ONLY, defaultModel, fallbacksFor, isAgenticOnly, isFree, JOBS, 
 import { type DesignResult } from '../gen/craftDesigner.ts';
 import { fromImportJson, toExportJson, type Library, type LibraryEntry } from '../gen/library.ts';
 import { composeMusic, MUSIC_STYLES } from '../gen/music.ts';
-import { designWithAgent, type AgentEvent } from '../gen/agent.ts';
+import { deleteTheme, saveTheme, themeStyleForPrompt } from '../gen/tracks.ts';
+
+interface ComposedTheme { audio: string; model: string; cost: number }
+import { designWithAgent, type AgentEvent, type AgentTrace } from '../gen/agent.ts';
+import { clearTraces, listTraces, saveTrace, toJsonl } from '../gen/traces.ts';
 import {
   DIRECT_BASE_URL,
   supportsTools,
@@ -29,6 +33,8 @@ export interface StudioHost {
   fly(): void;
   /** Show a craft on the turntable while the agent builds it (null = back to the current craft). */
   preview(craft: CraftDef | null): void;
+  /** Play the saved theme of this hangar entry, if it is the current one. */
+  playTheme(entryId: string): void;
 }
 
 const SUGGESTIONS = [
@@ -97,7 +103,6 @@ export class Studio {
   private searchInfo!: HTMLElement;
   /** The selected Designer's endpoint terms, when it is agentic-only. */
   private termsNote!: HTMLElement;
-  private readonly audioEl: HTMLAudioElement;
 
   private readonly el: {
     status: HTMLElement;
@@ -107,9 +112,14 @@ export class Studio {
     settings: HTMLDetailsElement;
     prompt: HTMLTextAreaElement;
     detailPass: HTMLInputElement;
+    /** Compose a theme track alongside the vehicle. */
+    themeBox: HTMLInputElement;
     log: HTMLOListElement;
     /** Live agent console: reasoning and text as they stream, tool calls and results. */
     console: HTMLElement;
+    /** "Download this run" after an agent run ends (its trace, for fine-tuning). */
+    traceRow: HTMLElement;
+    traceCount: HTMLElement;
     result: HTMLElement;
     musicPrompt: HTMLInputElement;
     musicStyle: HTMLSelectElement;
@@ -168,14 +178,15 @@ export class Studio {
     const designBtn = h('button', { class: 'primary', onclick: () => this.design(false) }, 'Generate vehicle');
     const detailBtn = h('button', { onclick: () => this.detailCurrent(), title: 'The agent adds visual detail (panels, plates, intakes, light lines) to the current craft. Its physics stay exactly as tested.' }, 'Add detail');
     const detailPass = h('input', { type: 'checkbox', checked: '' }) as HTMLInputElement;
+    const passedOnly = h('input', { type: 'checkbox' }) as HTMLInputElement;
+    const themeBox = h('input', { type: 'checkbox', checked: '' }) as HTMLInputElement;
     const refineBtn = h('button', { onclick: () => this.design(true), title: 'Modify the craft you are flying, using your flight as feedback' }, 'Refine current');
     const cancel = h('button', { class: 'hidden', onclick: () => this.busy?.abort() }, 'Cancel');
     const musicPrompt = h('input', { type: 'text', placeholder: 'extra direction, e.g. slower, with a guitar solo' });
     const musicStyle = h('select', { title: 'Genre', 'aria-label': 'Music genre' });
     for (const [id, s] of Object.entries(MUSIC_STYLES)) musicStyle.append(h('option', { value: id }, s.label));
     musicStyle.value = 'grid';
-    const composeBtn = h('button', { onclick: () => this.compose() }, 'Compose');
-    this.audioEl = h('audio', { controls: '', loop: '', class: 'hidden' });
+    const composeBtn = h('button', { onclick: () => this.compose() }, 'Compose theme');
     const importInput = h('input', { type: 'file', accept: '.json,application/json', class: 'hidden', onchange: () => this.importFile(importInput) });
     const settings = h('details', { class: 'settings' },
       h('summary', {}, 'Key & spend'),
@@ -196,6 +207,8 @@ export class Studio {
       prompt,
       log: h('ol', { class: 'studio-log' }),
       console: h('div', { class: 'agent-console hidden', 'aria-live': 'off' }),
+      traceRow: h('div', { class: 'row hidden' }),
+      traceCount: h('span', { class: 'muted small' }),
       result: h('div', { class: 'studio-result hidden' }),
       musicPrompt,
       musicStyle,
@@ -203,6 +216,7 @@ export class Studio {
       hangar: h('div', { class: 'studio-hangar' }),
       buttons: [designBtn, refineBtn, detailBtn, composeBtn],
       detailPass,
+      themeBox,
       cancel,
     };
     settings.append(this.el.keyNote);
@@ -225,7 +239,9 @@ export class Studio {
         chips,
         h('div', { class: 'row' }, designBtn, refineBtn, detailBtn, cancel),
         h('label', { class: 'muted small', title: 'Once the design passes, the agent adds visual detail (re-tested; physics unchanged)' }, detailPass, ' Add detail once it passes'),
+        h('label', { class: 'muted small', title: 'The Composer writes a theme for the vehicle while the agent builds it; it is saved with the vehicle and plays when you fly it' }, themeBox, ' Compose a theme track for it'),
         this.el.console,
+        this.el.traceRow,
         this.el.log,
         this.el.result,
       ),
@@ -239,10 +255,20 @@ export class Studio {
         this.termsNote,
         crew, h('label', {}, 'Reasoning effort', effort), h('label', {}, 'Flight-test budget', tests),
       ),
+      h('details', { class: 'settings' },
+        h('summary', {}, 'Training data'),
+        h('div', { class: 'muted small' }, 'Every agent run is kept in this browser (nothing is uploaded): the model\'s reasoning, each tool call and result, and how it went. Download as JSONL (OpenAI chat format with tools, reasoning on each assistant turn) to fine-tune a model.'),
+        h('div', { class: 'row' }, this.el.traceCount),
+        h('div', { class: 'row' },
+          h('label', { class: 'inline' }, passedOnly, ' Passed runs only'),
+          h('button', { onclick: () => this.downloadTraces(passedOnly.checked) }, 'Download all (JSONL)'),
+          h('button', { onclick: () => this.clearTraces() }, 'Clear'),
+        ),
+      ),
       h('section', {},
         h('h4', {}, 'Music'),
-        h('div', { class: 'row' }, musicStyle, musicPrompt, composeBtn),
-        this.audioEl,
+        h('div', { class: 'muted small' }, 'Theme for the vehicle you are in: saved with it and played whenever you fly it (M mutes).'),
+        h('div', { class: 'row' }, musicStyle, musicPrompt, composeBtn, h('button', { title: 'Remove this vehicle theme', onclick: () => this.removeTheme() }, '✕')),
         this.el.musicInfo,
       ),
       h('section', {},
@@ -254,6 +280,7 @@ export class Studio {
     document.body.append(this.root);
     this.renderHangar();
     this.updateSpend();
+    void this.updateTraceCount();
     void this.loadModels();
   }
 
@@ -465,11 +492,22 @@ export class Studio {
     this.el.log.replaceChildren();
     this.el.result.classList.add('hidden');
     this.consoleReset();
+    this.el.traceRow.classList.add('hidden');
     const prompt = kind === 'detail'
       ? `Keep this design exactly as it is (do not patch it). flight_test it, then add_detail with 25-80 visual detail parts in the 1982 style${text ? ` (direction: ${text})` : ''}, check, flight_test again and finish.`
       : kind === 'refine' ? (text || 'Fix whatever made it fly badly.') : text;
     let ok = false;
+    // A theme track, composed in parallel with the build (it doesn't need the finished vehicle).
+    const composer = kind !== 'detail' && this.el.themeBox.checked ? this.crew('composer') : null;
+    const style = themeStyleForPrompt(text || cur.craft.name);
+    let theme: Promise<ComposedTheme | null> | null = null;
     await this.run(kind === 'detail' ? 'Detail' : 'Design', async (signal) => {
+      if (composer?.model) {
+        this.logLine(`Composer (${shortName(composer.model)}): writing a ${MUSIC_STYLES[style]?.label ?? style} theme alongside…`, 'muted');
+        theme = composeMusic(this.host.client, { model: composer.model, fallbacks: composer.fallbacks, prompt: text, style, craftName: text || cur.craft.name, signal })
+          .then((r) => ({ audio: r.audio, model: r.model, cost: r.cost }))
+          .catch((e) => { if (!signal.aborted) this.logLine(`Composer: no theme (${e instanceof Error ? e.message.slice(0, 140) : e})`, 'warn'); return null; });
+      }
       const result = await designWithAgent(this.host.client, {
         model: designer.model,
         designerFallbacks: designer.fallbacks,
@@ -482,6 +520,7 @@ export class Studio {
         detail: kind === 'detail' || this.el.detailPass.checked,
         tester: runFlightTest,
         signal,
+        onTrace: (t) => this.keepTrace(t),
         onEvent: (e) => {
           if (e.type === 'status') this.setStatus(e.message);
           else if (e.attempt.report) {
@@ -513,9 +552,56 @@ export class Studio {
       this.showResult(result, entry);
       this.renderHangar();
       this.host.select(entry);
+      if (theme) {
+        this.setStatus(`"${entry.name}" is built. Finishing its theme track…`);
+        const t = await (theme as Promise<ComposedTheme | null>);
+        if (t) {
+          await saveTheme(entry.id, { audio: t.audio, style, model: t.model, prompt: text, createdAt: new Date().toISOString() });
+          this.host.library.update(entry.id, { provenance: { ...entry.provenance, theme: MUSIC_STYLES[style]?.label ?? style } });
+          this.logLine(`Composer (${shortName(t.model)}): theme saved with "${entry.name}" ($${t.cost.toFixed(4)}). It plays when you fly it.`, 'good');
+          this.renderHangar();
+          this.host.playTheme(entry.id);
+        }
+      }
       this.setStatus(`"${entry.name}" is ready in the hangar. FLY ▸ to try it, then Refine with what you'd change.`);
     });
     if (!ok) this.host.preview(null); // cancelled or failed: back to the craft we had
+  }
+
+  // ---------------------------------------------------------------- training data
+
+
+
+  /** Keep a finished run's trace (IndexedDB) and offer it for download right away. */
+  private keepTrace(t: AgentTrace): void {
+
+    void saveTrace(t).then(() => this.updateTraceCount());
+    const m = t.metadata;
+    const name = `agent-run-${m.startedAt.replace(/[:.]/g, '-')}.jsonl`;
+    this.el.traceRow.replaceChildren(
+      h('button', { onclick: () => downloadText(name, toJsonl([t])), title: 'This run as one JSONL line: reasoning, tool calls, results and outcome' }, '⬇ Download this run'),
+      h('span', { class: 'muted small' }, `${m.turns} turns · ${m.flightTests} tests · ${m.passed ? `passed ${m.score}/100` : m.error ? m.error.slice(0, 60) : `best ${m.score ?? '–'}/100`}`),
+    );
+    this.el.traceRow.classList.remove('hidden');
+  }
+
+  private async updateTraceCount(): Promise<void> {
+    const all = await listTraces();
+    const passed = all.filter((t) => t.metadata.passed).length;
+    this.el.traceCount.textContent = `${all.length} run(s) stored, ${passed} passed.`;
+  }
+
+  private async downloadTraces(passedOnly: boolean): Promise<void> {
+    const all = await listTraces();
+    const lines = toJsonl(all, { passedOnly });
+    if (lines.trim() === '') return this.setStatus('No agent runs stored yet.', 'error');
+    downloadText(`agent-runs-${new Date().toISOString().slice(0, 10)}${passedOnly ? '-passed' : ''}.jsonl`, lines);
+  }
+
+  private async clearTraces(): Promise<void> {
+    if (!confirm('Delete every stored agent run from this browser?')) return;
+    await clearTraces();
+    void this.updateTraceCount();
   }
 
   private design(refine: boolean): Promise<void> {
@@ -609,43 +695,37 @@ export class Studio {
     return this.runAgent('detail');
   }
 
+  /** Compose (or replace) the current vehicle's theme: saved with it, played through the game's audio. */
   private async compose(): Promise<void> {
     const composer = this.guard('composer');
     if (!composer) return;
+    const cur = this.host.current();
+    const id = cur.entryId ?? 'builtin:trainer';
     const extra = this.el.musicPrompt.value.trim();
-    const genre = this.el.musicStyle.value;
-    const style = `${MUSIC_STYLES[genre]?.label ?? 'Music'}${extra ? ` · ${extra}` : ''}`;
-    this.setStatus(`Composer (${shortName(composer.model)}) writing…`);
+    const style = this.el.musicStyle.value;
+    this.setStatus(`Composer (${shortName(composer.model)}) writing a theme for "${cur.craft.name}"…`);
     await this.run('Composing', async (signal) => {
-      const res = await composeMusic(this.host.client, {
-        model: composer.model,
-        fallbacks: composer.fallbacks,
-        prompt: extra,
-        style: genre,
-        craftName: this.host.current().craft.name,
-        signal,
-      });
-      this.audioEl.src = res.audio;
-      this.audioEl.volume = 0.5;
-      this.audioEl.classList.remove('hidden');
-      void this.audioEl.play().catch(() => {});
-      // Media Session: title on the lock screen / media hub, hardware play-pause keys.
-      if ('mediaSession' in navigator) {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: style.slice(0, 60),
-          artist: `Composed by ${shortName(res.model)}`,
-          album: `Aerospace Program · ${this.host.current().craft.name}`,
-        });
-        navigator.mediaSession.setActionHandler('play', () => void this.audioEl.play());
-        navigator.mediaSession.setActionHandler('pause', () => this.audioEl.pause());
-        navigator.mediaSession.setActionHandler('stop', () => {
-          this.audioEl.pause();
-          this.audioEl.currentTime = 0;
-        });
-      }
+      const res = await composeMusic(this.host.client, { model: composer.model, fallbacks: composer.fallbacks, prompt: extra, style, craftName: cur.craft.name, signal });
+      await saveTheme(id, { audio: res.audio, style, model: res.model, prompt: extra, createdAt: new Date().toISOString() });
+      const e = this.host.library.get(id);
+      if (e) this.host.library.update(id, { provenance: { ...e.provenance, theme: MUSIC_STYLES[style]?.label ?? style } });
       this.el.musicInfo.textContent = `${shortName(res.model)} · $${res.cost.toFixed(4)}${res.text ? ` · ${res.text.slice(0, 120)}` : ''}`;
-      this.setStatus('Now playing. (Music is kept for this session only.)');
+      this.renderHangar();
+      this.host.playTheme(id);
+      this.setStatus(`Theme saved with "${cur.craft.name}": it plays whenever you fly it (M mutes).`);
     });
+  }
+
+  /** Remove the current vehicle's theme. */
+  private async removeTheme(): Promise<void> {
+    const cur = this.host.current();
+    const id = cur.entryId ?? 'builtin:trainer';
+    await deleteTheme(id);
+    const e = this.host.library.get(id);
+    if (e) this.host.library.update(id, { provenance: { ...e.provenance, theme: undefined } });
+    this.renderHangar();
+    this.host.playTheme(id);
+    this.setStatus(`"${cur.craft.name}" has no theme now.`);
   }
 
   // ---------------------------------------------------------------- hangar
@@ -667,7 +747,7 @@ export class Studio {
     });
     for (const e of this.host.library.list()) {
       const p = e.provenance;
-      const meta = [p.score !== undefined ? `${p.score}/100` : '', p.model ? shortName(p.model.split(' + ')[0]) : p.source]
+      const meta = [p.score !== undefined ? `${p.score}/100` : '', p.model ? shortName(p.model.split(' + ')[0]) : p.source, p.theme ? `♪ ${p.theme}` : '']
         .filter(Boolean)
         .join(' · ');
       rows.push(
@@ -768,4 +848,16 @@ function download(name: string, text: string): void {
   a.download = name.replace(/[^\w.-]+/g, '_');
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+/** Save text as a file (a download). */
+function downloadText(name: string, text: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/jsonl' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }

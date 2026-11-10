@@ -6,6 +6,9 @@ import { Battery } from './Battery.ts';
 import { Body } from './Body.ts';
 import { Buoyancy } from './Buoyancy.ts';
 import { Drag } from './Drag.ts';
+import { Airbrake, Chute } from './Airbrake.ts';
+import { WeaponMount } from './WeaponMount.ts';
+import { WEAPONS } from '../sim/weapons.ts';
 import { Engine } from './Engine.ts';
 import { FlightController } from './FlightController.ts';
 import type { ForceModule } from './ForceModule.ts';
@@ -40,6 +43,12 @@ export function createModule(
       return new Wheel(part.id, def, position, rotation);
     case 'drag':
       return new Drag(part.id, def, position);
+    case 'weapon':
+      return new WeaponMount(part.id, def, position, rotation, def.ammo ?? WEAPONS[def.kind].ammo);
+    case 'airbrake':
+      return new Airbrake(part.id, def, position);
+    case 'chute':
+      return new Chute(part.id, def, position);
     case 'body':
       return new Body(part.id, def, position, rotation);
     case 'fuel':

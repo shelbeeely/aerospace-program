@@ -18,11 +18,11 @@ export function debrisShape(shape: ShapeDef, position: Vector3, rotation: Quater
     : shape.type === 'sphere' ? new Vector3(shape.radius, shape.radius, shape.radius)
     : new Vector3(shape.radius, shape.length / 2, shape.radius);
   const q = rotation.clone();
-  if (shape.type === 'cylinder') {
+  if (shape.type !== 'box' && shape.type !== 'sphere') {
     if (shape.axis === 'x') q.multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 2));
     if (shape.axis === 'z') q.multiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), Math.PI / 2));
   }
-  return { kind: shape.type, position, rotation: q, size, color: tint(color), emission: 3.2 };
+  return { kind: shape.type === 'cone' || shape.type === 'capsule' ? 'cylinder' : shape.type, position, rotation: q, size, color: tint(color), emission: 3.2 };
 }
 
 /** Analytic approximation of the neon hangar shell, floor and turntable. */

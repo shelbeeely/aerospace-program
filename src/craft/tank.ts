@@ -31,14 +31,13 @@ const track = (side: 1 | -1): PartDef => ({
  * Program tank: a heavy, slow armoured hull on six road wheels per side. It skid-steers: the
  * yaw channel drives the two tracks in opposite directions, so it can turn on the spot. Every
  * part is fully reinforced and armoured (4x strength), it bulldozes through buildings it drives
- * into, fires its cannon and coaxial gun, and lays a red jetwall behind it.
+ * into, fires its cannon and coaxial gun (fitted weapon modules), and lays a red jetwall behind it.
  */
 export const TANK: CraftDef = {
   name: 'Program Tank',
   formatVersion: 1,
   armor: 4,
   bulldozer: true,
-  loadout: 'tank',
   parts: [
     {
       id: 'hull',
@@ -56,7 +55,15 @@ export const TANK: CraftDef = {
     },
     track(-1),
     track(1),
-    { id: 'turret', kind: 'turret', mass: 1800, position: [0, 1.9, 0.3], shape: { type: 'box', size: [2.0, 0.6, 2.4] }, color: '#2a0c08', reinforce: 3 },
+    {
+      id: 'turret', kind: 'turret', mass: 1800, position: [0, 1.9, 0.3], shape: { type: 'box', size: [2.0, 0.6, 2.4] }, color: '#2a0c08', reinforce: 3,
+      // The main gun (its breech in the turret, the barrel out through the mantlet) and the
+      // coaxial machine gun beside it.
+      modules: [
+        { type: 'weapon', kind: 'cannon', offset: [0, 0.05, -1.2] },
+        { type: 'weapon', kind: 'gun', offset: [0.55, 0.05, -1.2] },
+      ],
+    },
     { id: 'cannon', kind: 'cannon', mass: 300, position: [0, 1.95, -1.9], shape: { type: 'cylinder', radius: 0.14, length: 2.6, axis: 'z' }, color: '#ff8a1f', reinforce: 3 },
     { id: 'glacis.light', kind: 'accent', mass: 5, position: [0, 1.62, -3.0], shape: { type: 'box', size: [2.6, 0.08, 0.06] }, collider: false, color: '#ffb000' },
     { id: 'turret.light', kind: 'accent', mass: 5, position: [0, 2.22, 0.3], shape: { type: 'box', size: [2.04, 0.05, 2.44] }, collider: false, color: '#ff3b1f' },

@@ -34,12 +34,13 @@ export function craftShapes(craft: Craft, position: Vector3, rotation: Quaternio
     const size = s.type === 'box' ? new Vector3(...s.size).multiplyScalar(0.5)
       : s.type === 'sphere' ? new Vector3(s.radius, s.radius, s.radius)
       : new Vector3(s.radius, s.length / 2, s.radius);
-    if (s.type === 'cylinder') {
+    // Cones and capsules are traced as cylinders (close enough for this mode).
+    if (s.type !== 'box' && s.type !== 'sphere') {
       if (s.axis === 'x') rotationLocal.multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 2));
       if (s.axis === 'z') rotationLocal.multiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), Math.PI / 2));
     }
     const color = new Color(p.color);
-    return { kind: s.type, position: new Vector3(...p.position).applyQuaternion(rotation).add(position),
+    return { kind: s.type === 'cone' || s.type === 'capsule' ? 'cylinder' : s.type, position: new Vector3(...p.position).applyQuaternion(rotation).add(position),
       rotation: rotation.clone().multiply(rotationLocal), size, color: new Vector3(color.r, color.g, color.b) };
   });
 }

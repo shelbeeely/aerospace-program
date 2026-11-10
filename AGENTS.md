@@ -297,6 +297,16 @@ universe, not a conventional open world decorated with neon.
 - **Generated vehicles are detailed** in three tiers (primary silhouette, secondary machinery,
   tertiary seams and light lines). The detail round (`src/gen/detailer.ts`) adds visual-only
   parts and can never change the tested physics.
+- **The architecture rules apply to every vehicle** (`src/craft/grammar.ts`, drawn by
+  `src/render/VehicleGrammarView.ts`). A craft's parts are its primary geometry; the vehicle
+  grammar reads what each part does (hull, wing, fin, cockpit, engine, rotor, wheel, trail
+  emitter) and derives secondary geometry (spines, armour plates, wingtip caps, fences, nozzle
+  rings and petals, intake cowls, canopy frames, fender arcs, rotor guards) and tertiary
+  geometry (panel seams, chine light lines, intake lips, tip lights, nozzle glow), seeded by the
+  craft so every design varies and the same craft always looks the same. Render-only: it never
+  touches the physics. Lights have states (§5): running lights dim when idle and brighten when
+  active, nozzles glow with spool and flare on afterburner, damaged parts flicker, wrecks go
+  dark. Lit pieces stay under a tenth of the surface.
 - Check: `npm run craft`.
 - **The imported kit towers remain part of the world.**
 

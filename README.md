@@ -16,8 +16,10 @@ npm run weather        # weather impact checks (rain, icing, ground effect, vort
 npm run ground         # ground vehicles: flat ground, skid steering, Outlands highways and rubble, spawn sites
 npm run arch           # digital world: five families vs the ten checks, districts, interiors, Outlands
 npm run drive          # road network: one graph, every destination by road, the flight computer driving
-npm run weapons        # weapons: mounts, cannon cratering, tank bulldozer, bombs, missiles, armour
-npm run craft          # vehicle rules: connected parts, the 1982 palette, ground-vehicle design loop (offline)
+npm run weapons        # weapons: fitted multiples, cannon cratering, tank bulldozer, bombs, missiles, laser, discs, armour
+npm run craft          # vehicle rules: connected parts, the 1982 palette, the vehicle grammar, ground-vehicle design loop (offline)
+npm run engines        # fast flight: compressibility, ramjet/scramjet/solid/turbojet, thrust vectoring, airbrake, chute, cone/capsule parts, weight floors
+npm run air            # AI air traffic: count, clearance, destinations and circling, shot down and replaced
 npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
 ```
@@ -77,8 +79,21 @@ npm run build          # typecheck + production build
    entry records its provenance: every model that worked on it, prompt, score, rounds and cost.
 6. **Refine.** After flying, "Refine current" sends the craft, your instructions, and a
    summary of your flight (stalls, crashes, lift-off speed, g range) back to the crew.
-7. **Score.** The **Composer** writes a soundtrack (early-80s synth and orchestra presets).
+7. **Theme.** Tick *Compose a theme track for it* and the **Composer** (Lyria 3, free) writes a
+   theme while the agent builds the vehicle, in a style picked from the description (light
+   cycle race, solar sailer, Outlands, master control or the Grid; early-80s synth and
+   orchestra). It is saved with the vehicle (IndexedDB, `src/gen/tracks.ts`; ♪ in the hangar)
+   and plays through the game's own audio whenever you fly it, looping and faded in, under the
+   game volume (M mutes). The Studio's Music section composes or removes the theme of the
+   vehicle you're in.
    There are no custom liveries: every vehicle wears the 1982 palette.
+   Every vehicle, stock or generated, is also dressed by the **vehicle grammar**
+   (`src/craft/grammar.ts`): the building rules applied to vehicles. From what each part does it
+   adds secondary machinery (hull spines and armour plates, wingtip caps and fences, nozzle
+   rings and petals, intake cowls, canopy frames, fender arcs, rotor guards) and tertiary seams
+   and light lines, seeded by the craft. Lights are functional: running lights brighten when
+   the vehicle is active, nozzles glow with the engine's spool and flare on afterburner,
+   damaged parts flicker. It is drawn only, so it never changes how a craft flies.
 
 ### The crew: one model per job, free first
 
@@ -167,7 +182,7 @@ stick expo, haptics, and touch controls auto/on/off.
 | H | controls & settings |
 | V (hold) | fire guns / cannon (armed craft: the tank by default) |
 | O (hold) | drop bombs / fire missiles |
-| I | weapons loadout: unarmed, guns, cannon, guns + bombs, guns + missiles, tank, full |
+| I | weapons loadout: fitted (when the craft has weapon parts), unarmed, guns, cannon, guns + bombs, guns + missiles, tank, laser + discs, pulse + missiles, full |
 
 > Browsers don't let pages block Ctrl+W, so tapping Ctrl for throttle-down next to W can
 > close the tab. Prefer Z/X or a gamepad if that bites you.
@@ -224,11 +239,56 @@ What you see comes from the same model the physics flies through: rain and snow 
 wind's drift, the cloud deck is drawn from the same drifting cells that make showers, thermals
 and icing, fog follows visibility, and the runway darkens when wet.
 
+## AI air traffic
+
+Other programs fly around you (`src/sim/aiTraffic.ts`): the built-in aircraft and, in single
+player, your own hangar designs (F3 → *AI air traffic*: how many, and whether yours fly too).
+Each picks a destination 1.5-6 km from you, flies there, circles for 30-90 s, then picks
+another; it scans its path 15 s ahead (and the whole circle before circling) and climbs over
+anything in the way. The flight model is a kinematic coordinated turn (banking into turns), so
+two dozen cost almost nothing; each carries a kinematic collider, so you can fly into one or
+shoot it down (it derezzes in its circuit colour and another takes its place).
+
+## Going fast: engines, parts and modules
+
+- **No speed wall.** Rapier clamps bodies to 400 m/s × its length unit, which kept every
+  craft below ~Mach 1.2; the simulation now runs at length unit 10 (4 km/s, ~Mach 13 high
+  up) with its contact tolerances scaled back so collisions are unchanged
+  (`TUNING.physicsLengthUnit`).
+- **Compressibility** (`src/modules/compressibility.ts`): wing wave drag rises from the
+  critical Mach to a peak just past Mach 1 (smaller for thin sections) and falls as
+  1/√(M²−1); the lift slope follows Prandtl-Glauert then Ackeret; bodies get a transonic
+  drag bump.
+- **Engines:** `turbojet` (no bypass, Mach 3-4), `ramjet` (no static thrust, Mach 0.5-6, best
+  2.5-4), `scramjet` (Mach 3.5-12, best 6-9, works high), `solid` booster (lit once, burns
+  `burnTime` at full thrust, can't be throttled), plus the existing prop, turbofan and rocket.
+  Any engine can vector its thrust (`gimbalDeg`) from the pitch and yaw stick.
+- **Parts:** `cone` (nose cones, nozzles, spikes) and `capsule` (rounded fuselages, pods)
+  shapes, with colliders, mass and inertia, voxel damage and rendering.
+- **Modules:** `airbrake` (panels on the brake input) and `chute` (a drag chute that streams
+  out on the brake at speed, one use, drawn as a canopy).
+- **Weight:** modules stay massless (a part's mass covers what it carries, as every design
+  already assumes), but parts can't be lighter than their modules allow: jets thrust/8g,
+  props thrust/4g, rockets thrust/100g, ramjets /15g, scramjets /10g, solids their
+  propellant, batteries 250 Wh/kg. The design pipeline raises a part that's too light and
+  tells the model (`src/craft/moduleMass.ts`).
+
+A ramjet dart (solid booster to Mach 2, then a ramjet) passes Mach 3.2 in `npm run engines`.
+
 ## Weapons and derez
 
-Every craft can carry weapons (**I** cycles the loadout; the tank comes armed). Mounts come
-from the craft's geometry: a cannon at the tip of a barrel part (else the nose), guns either
-side of the nose (coaxial on a turret), bombs under the belly, missiles under the wings.
+Weapons are physical parts: a `weapon` module (`gun`, `cannon`, `missile` rail, `bomb` bay,
+`laser`, `disc`, `pulse`) is fitted to a part, drawn on the craft and fired from where it sits.
+Fit as many as you like; each adds its own rate of fire, and missile rails and bomb bays show
+their rounds leaving them. The tank fits its cannon and coaxial gun, the jet twin cheek guns,
+a missile rail under each wing and a belly bomb bay. The TRON weapons: the **laser** is an
+instant beam of light out to 1.5 km, the **identity disc** ricochets off structures up to three
+times, cutting what it strikes, and the tank's **pulse** bolt bounces once. Bombs are
+front-heavy (they leave level and pitch nose-down into the fall) with a lit band and ring
+tail; missiles and bombs draw light trails. Craft without fitted weapons can take a preset
+loadout (**I** cycles them); its mounts come from the craft's geometry: a cannon at the tip of
+a barrel part (else the nose), guns either side of the nose (coaxial on a turret), energy
+weapons on the turret or nose, bombs under the belly, missiles under the wings.
 Projectiles are integrated in `sim/weapons.ts` and swept with Rapier ray casts every step (a
 600 m/s round can't tunnel through a wall), excluding the firing craft. A hit derezzes the
 rider it strikes (and any within a blast), shoves loose bodies, craters structures (they

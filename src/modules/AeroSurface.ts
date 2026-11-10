@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { liftSlopeFactor, surfaceWaveDrag } from './compressibility.ts';
 import type { AeroSurfaceDef } from '../craft/types.ts';
 import { DEG, TUNING } from '../tuning.ts';
 import type { ForceModule, StepContext } from './ForceModule.ts';
@@ -247,9 +248,11 @@ export class AeroSurface implements ForceModule {
     const reDrag = Math.min(2.5, Math.max(0.75, Math.pow(3e6 / re, 0.2)));
     const reStall = Math.min(1.05, Math.max(0.8, 1 + 0.06 * Math.log10(re / 3e6)));
     this.mach = speed / air.speedOfSound;
-    const pg = 1 / Math.sqrt(1 - Math.min(this.mach, 0.9) ** 2);
+    // Compressibility: lift slope up toward Mach 1, down supersonically; wave drag peaks near
+    // Mach 1.05 and falls again (so a craft with the thrust can go supersonic).
+    const pg = liftSlopeFactor(this.mach);
     const mcrit = this.def.criticalMach ?? 0.72;
-    const wave = this.mach > mcrit ? 20 * (this.mach - mcrit) ** 4 + (this.mach > 1 ? 0.06 : 0) : 0;
+    const wave = surfaceWaveDrag(this.mach, mcrit);
 
     // --- Rain and ice degrade the section (more so for small, low-Re surfaces)
     const precip = ctx.precipitation(_p);

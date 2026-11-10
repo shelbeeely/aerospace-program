@@ -13,6 +13,8 @@ export interface Provenance {
   createdAt: string;
   /** Library id of the craft this one was refined from. */
   parentId?: string;
+  /** Its theme track's style label, when one was composed (the audio lives in IndexedDB). */
+  theme?: string;
 }
 
 export interface LibraryEntry {

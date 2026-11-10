@@ -69,9 +69,14 @@ export function validateCraft(input: unknown): string[] {
       case 'sphere':
         return isNum(s.radius, 0.001, 200) ? [] : [`${at}: sphere radius invalid`];
       case 'cylinder':
-        return isNum(s.radius, 0.001, 200) && isNum(s.length, 0.001, 200)
+      case 'cone':
+        return isNum(s.radius, 0.001, 200) && isNum(s.length, 0.001, 200) && (s.axis === undefined || ['x', 'y', 'z'].includes(s.axis))
           ? []
-          : [`${at}: cylinder dims invalid`];
+          : [`${at}: ${s.type} dims invalid (radius, length 0.001..200 m, axis x|y|z)`];
+      case 'capsule':
+        return isNum(s.radius, 0.001, 200) && isNum(s.length, 0.001, 200) && s.length >= 2 * s.radius && (s.axis === undefined || ['x', 'y', 'z'].includes(s.axis))
+          ? []
+          : [`${at}: capsule dims invalid (length is overall: at least 2 × radius)`];
       default:
         return [`${at}: unknown shape type`];
     }
@@ -91,6 +96,18 @@ export function validateCraft(input: unknown): string[] {
           if (!isNum(m.control.gain, -1, 1)) e.push(`${at}: control gain -1..1`);
         }
         break;
+      case 'weapon':
+        if (!['gun', 'cannon', 'bomb', 'missile', 'laser', 'disc', 'pulse'].includes(m.kind)) e.push(`${at}: weapon kind must be gun, cannon, bomb, missile, laser, disc or pulse`);
+        if (m.ammo !== undefined && (!Number.isInteger(m.ammo) || m.ammo < 1 || m.ammo > 2000)) e.push(`${at}: weapon ammo must be an integer 1..2000`);
+        break;
+      case 'airbrake':
+        if (!isNum(m.area, 0.01, 200)) e.push(`${at}: airbrake area 0.01..200 m²`);
+        if (m.cd !== undefined && !isNum(m.cd, 0.1, 3)) e.push(`${at}: airbrake cd 0.1..3`);
+        break;
+      case 'chute':
+        if (!isNum(m.cdA, 0.1, 500)) e.push(`${at}: chute cdA 0.1..500 m²`);
+        for (const k of ['deploySpeed', 'maxSpeed', 'cutSpeed'] as const) if (m[k] !== undefined && !isNum(m[k], 0, 1000)) e.push(`${at}: chute ${k} 0..1000 m/s`);
+        break;
       case 'engine':
         if (!isNum(m.maxThrust, 0, 5e6)) e.push(`${at}: maxThrust invalid`);
         if (m.propMaxSpeed !== undefined && !isNum(m.propMaxSpeed, 1, 400)) e.push(`${at}: propMaxSpeed 1..400 m/s`);
@@ -98,18 +115,19 @@ export function validateCraft(input: unknown): string[] {
         if (m.propDirection !== undefined && ![1, -1, 0].includes(m.propDirection)) e.push(`${at}: propDirection must be 1, -1 or 0`);
         if (m.fuelFlow !== undefined && !isNum(m.fuelFlow, 0, 1000)) e.push(`${at}: fuelFlow 0..1000 kg/s`);
         if (m.spoolTime !== undefined && !isNum(m.spoolTime, 0, 30)) e.push(`${at}: spoolTime 0..30 s`);
-        if (m.kind !== undefined && m.kind !== 'prop' && m.kind !== 'turbofan' && m.kind !== 'rocket') e.push(`${at}: kind must be "prop", "turbofan" or "rocket"`);
-        if (m.kind === 'rocket' && (m.propMaxSpeed !== undefined || m.propDirection || m.propRadius !== undefined))
-          e.push(`${at}: a rocket has no propeller: remove propMaxSpeed/propDirection/propRadius`);
-        if (m.isp !== undefined && m.kind !== 'rocket') e.push(`${at}: isp only applies to kind "rocket"`);
+        const KINDS = ['prop', 'turbofan', 'turbojet', 'rocket', 'ramjet', 'scramjet', 'solid'];
+        if (m.kind !== undefined && !KINDS.includes(m.kind)) e.push(`${at}: kind must be one of ${KINDS.map((k) => `"${k}"`).join(', ')}`);
+        const noProp = m.kind !== undefined && m.kind !== 'prop';
+        if (noProp && (m.propMaxSpeed !== undefined || m.propDirection || m.propRadius !== undefined))
+          e.push(`${at}: a ${m.kind} has no propeller: remove propMaxSpeed/propDirection/propRadius (or use kind "prop")`);
+        if (m.isp !== undefined && m.kind !== 'rocket' && m.kind !== 'solid') e.push(`${at}: isp only applies to kind "rocket" or "solid"`);
+        if (m.gimbalDeg !== undefined && !isNum(m.gimbalDeg, 0, 20)) e.push(`${at}: gimbalDeg 0..20`);
+        if (m.burnTime !== undefined && (m.kind !== 'solid' || !isNum(m.burnTime, 0.5, 600))) e.push(`${at}: burnTime (0.5..600 s) only applies to kind "solid"`);
         if (m.isp !== undefined && !isNum(m.isp, 50, 1000)) e.push(`${at}: isp 50..1000 s`);
         if (m.rcsTorque !== undefined && !isNum(m.rcsTorque, 0, 1e6)) e.push(`${at}: rcsTorque 0..1e6 N·m`);
-        if (m.kind === 'turbofan' && m.propMaxSpeed !== undefined) e.push(`${at}: a turbofan has no propeller: remove propMaxSpeed (or use kind "prop")`);
-        if (m.kind === 'turbofan' && (m.propDirection || m.propRadius !== undefined))
-          e.push(`${at}: a turbofan has no propeller: remove propDirection/propRadius`);
         if (m.kind === 'prop' && m.propMaxSpeed === undefined) e.push(`${at}: kind "prop" needs propMaxSpeed`);
-        if (m.kind !== 'turbofan' && (m.bypassRatio !== undefined || m.afterburner !== undefined))
-          e.push(`${at}: bypassRatio/afterburner only apply to kind "turbofan"`);
+        if (m.kind !== 'turbofan' && m.kind !== 'turbojet' && (m.bypassRatio !== undefined || m.afterburner !== undefined))
+          e.push(`${at}: bypassRatio/afterburner only apply to kind "turbofan" or "turbojet"`);
         if (m.bypassRatio !== undefined && !isNum(m.bypassRatio, 0, 15)) e.push(`${at}: bypassRatio 0..15`);
         if (m.afterburner !== undefined) {
           if (typeof m.afterburner !== 'object' || m.afterburner === null) e.push(`${at}: afterburner must be {thrustRatio, fuelRatio}`);

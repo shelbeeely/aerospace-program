@@ -30,11 +30,24 @@ export class FlightAudio {
   private readonly thunderQueue: Array<{ due: number; distance: number }> = [];
   volume = 0.7;
   muted = false;
+  /** Theme music level (under the master volume and mute). */
+  musicVolume = 0.45;
+  private music: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
+  private musicGain: GainNode | null = null;
+  /** The theme to play once audio can start (browsers wait for a user gesture). */
+  private pendingTheme: string | null = null;
+  private themeUrl: string | null = null;
+  private themeToken = 0;
 
   constructor() {
     const start = () => {
       this.ensure();
       void this.ctx?.resume();
+      if (this.pendingTheme) {
+        const url = this.pendingTheme;
+        this.pendingTheme = null;
+        void this.playTheme(url);
+      }
     };
     for (const ev of ['pointerdown', 'keydown', 'touchstart'] as const) window.addEventListener(ev, start, { passive: true });
     document.addEventListener('visibilitychange', () => {
@@ -180,6 +193,27 @@ export class FlightAudio {
   }
 
   /** A craft explosion `distance` m from the listener: a sharp crack, then a long low roll. */
+  /** A sonic boom: the N-wave's double crack, a sharp rise and a second one ~0.15 s later. */
+  boom(strength: number): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running') return;
+    const level = Math.min(1.4, 0.4 + strength);
+    for (const dt of [0, 0.16]) {
+      const t = ctx.currentTime + dt;
+      const src = this.loopNoise();
+      const f = ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.setValueAtTime(2400, t);
+      f.frequency.exponentialRampToValueAtTime(60, t + 0.9);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.setValueAtTime(level, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 1);
+      src.connect(f).connect(g).connect(this.master);
+      src.stop(t + 1.05);
+    }
+  }
+
   explosion(distance: number): void {
     const ctx = this.ctx;
     if (!ctx || ctx.state !== 'running') return;
@@ -300,6 +334,59 @@ export class FlightAudio {
       source.onended = () => { source.disconnect(); filter.disconnect(); gain.disconnect(); };
       source.start(); source.stop(ctx.currentTime + 1.9);
     }
+  }
+
+  /**
+   * The vehicle's theme: a generated track looped through the game's own mix (so the volume and
+   * M mute apply), faded in; null fades it out. Waits for the first click if audio isn't running.
+   */
+  async playTheme(url: string | null): Promise<void> {
+    if (url === this.themeUrl && (this.music || this.pendingTheme === url)) return;
+    this.themeUrl = url;
+    const token = ++this.themeToken;
+    const ctx = this.ctx;
+    // Fade out whatever is playing.
+    if (this.music && ctx) {
+      const old = this.music;
+      this.music = null;
+      old.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.4);
+      old.src.stop(ctx.currentTime + 2.5);
+      old.src.onended = () => { old.src.disconnect(); old.gain.disconnect(); };
+    }
+    if (!url) { this.pendingTheme = null; return; }
+    if (!ctx || ctx.state !== 'running') { this.pendingTheme = url; return; }
+    let buffer: AudioBuffer;
+    try {
+      const bytes = await (await fetch(url)).arrayBuffer();
+      buffer = await ctx.decodeAudioData(bytes);
+    } catch {
+      return; // undecodable: stay silent rather than break the game's audio
+    }
+    if (token !== this.themeToken) return; // another theme was asked for meanwhile
+    if (!this.musicGain) {
+      this.musicGain = ctx.createGain();
+      this.musicGain.gain.value = this.musicVolume;
+      this.musicGain.connect(this.master);
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    gain.gain.setTargetAtTime(1, ctx.currentTime, 0.8);
+    src.connect(gain).connect(this.musicGain);
+    src.start();
+    this.music = { src, gain };
+  }
+
+  /** Is a theme playing (or waiting for the first click)? */
+  get themePlaying(): boolean {
+    return !!this.music || !!this.pendingTheme;
+  }
+
+  setMusicVolume(v: number): void {
+    this.musicVolume = v;
+    if (this.ctx && this.musicGain) this.musicGain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.1);
   }
 
   /** Fade every continuous voice to silence (e.g. in the hangar, where nothing is running). */

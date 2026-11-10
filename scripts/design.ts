@@ -4,12 +4,14 @@
  *   npm run design -- "a stubby twin-boom cargo plane" [--designer id] [--engineer id] [--rounds 4] [--drafts 2] [--base crafts/x.json] [--agent] [--no-detail]
  *
  * --effort low|medium|high: reasoning effort (agent). --think: stream the model's reasoning live.
+ * --trace runs.jsonl: append the agent run (reasoning, tool calls, results, outcome) as training data.
  * --agent: the designer runs the whole pipeline with tools (submit, check, analyze, patch,
  * flight test, add detail, finish); models without tool calling fall back to the fixed rounds.
  *
  * Needs OPENROUTER_API_KEY in the environment (or a proxy that injects it).
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { toJsonl } from '../src/gen/traces.ts';
 import { JOBS } from '../src/gen/catalog.ts';
 import { designCraft } from '../src/gen/craftDesigner.ts';
 import { designWithAgent } from '../src/gen/agent.ts';
@@ -35,6 +37,7 @@ const basePath = opt('base');
 const flag = (name: string) => { const i = args.indexOf(`--${name}`); if (i >= 0) args.splice(i, 1); return i >= 0; };
 const agent = flag('agent');
 const think = flag('think');
+const tracePath = opt('trace');
 const effort = (opt('effort') ?? 'medium') as 'low' | 'medium' | 'high';
 const detail = !flag('no-detail');
 const prompt = args.join(' ').trim();
@@ -53,7 +56,7 @@ const base = basePath ? JSON.parse(readFileSync(basePath, 'utf8')).craft ?? unde
 const t0 = Date.now();
 const models = agent ? await client.models().catch(() => []) : [];
 const design = agent
-  ? (r: Parameters<typeof designCraft>[1]) => designWithAgent(client, { ...r, effort, modelInfo: models.find((m) => m.id === model) }, (e) => {
+  ? (r: Parameters<typeof designCraft>[1]) => designWithAgent(client, { ...r, effort, modelInfo: models.find((m) => m.id === model), onTrace: (t) => { if (tracePath) { writeFileSync(tracePath, toJsonl([t]), { flag: 'a' }); console.log(`  trace appended to ${tracePath}`); } } }, (e) => {
       if (e.type === 'tool') console.log(`${think ? '\n' : ''}  agent ${e.turn} · ${e.name}: ${e.summary}`);
       else if (think && (e.type === 'thinking' || e.type === 'text')) (process as unknown as { stdout: { write(s: string): void } }).stdout.write(e.text);
     })

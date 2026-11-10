@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import type { CraftDef, PartDef } from '../craft/types.ts';
+import type { CraftDef, PartDef, WeaponModuleDef } from '../craft/types.ts';
 import { TUNING } from '../tuning.ts';
 
 /**
@@ -15,7 +15,7 @@ import { TUNING } from '../tuning.ts';
  * unsynchronised physics world for no feature Rapier lacks.
  */
 
-export type WeaponKind = 'gun' | 'cannon' | 'bomb' | 'missile';
+export type WeaponKind = WeaponModuleDef['kind'];
 
 export interface WeaponSpec {
   label: string;
@@ -38,6 +38,10 @@ export interface WeaponSpec {
   gravity: number;
   /** Trigger group: primary (guns, cannon) or secondary (bombs, missiles). */
   group: 'primary' | 'secondary';
+  /** Bounces off structures before it detonates (identity discs, pulse bolts). */
+  ricochet?: number;
+  /** Laser: an instant beam out to this range (m) instead of a projectile. */
+  beam?: number;
 }
 
 export const WEAPONS: Record<WeaponKind, WeaponSpec> = {
@@ -45,6 +49,11 @@ export const WEAPONS: Record<WeaponKind, WeaponSpec> = {
   cannon: { label: 'Cannon', speed: 330, rate: 0.6, ammo: 40, mass: 12, blast: 7, life: 10, gravity: 1, group: 'primary' },
   bomb: { label: 'Bombs', speed: 0, rate: 1.5, ammo: 8, mass: 250, blast: 18, life: 90, gravity: 1, group: 'secondary' },
   missile: { label: 'Missiles', speed: 30, rate: 1.2, ammo: 6, mass: 60, blast: 10, life: 14, thrust: 120, maxSpeed: 280, gravity: 0.15, group: 'secondary' },
+  // TRON: a beam of light (instant, out to 1.5 km), the identity disc (ricochets off structures
+  // up to three times, cutting through what it strikes), and the tank's pulse bolt (bounces once).
+  laser: { label: 'Laser', speed: 0, rate: 5, ammo: 240, mass: 0.02, blast: 1.2, life: 0, gravity: 0, group: 'primary', beam: 1500 },
+  disc: { label: 'Disc', speed: 140, rate: 1.5, ammo: 12, mass: 4, blast: 2.5, life: 7, gravity: 0, group: 'primary', ricochet: 3 },
+  pulse: { label: 'Pulse', speed: 210, rate: 2, ammo: 60, mass: 6, blast: 4, life: 6, gravity: 0, group: 'primary', ricochet: 1 },
 };
 
 /** Loadouts a vehicle can carry: which weapons, chosen in the hangar or cycled with I. */
@@ -55,13 +64,21 @@ export const LOADOUTS = {
   bombs: { label: 'Guns + bombs', kinds: ['gun', 'bomb'] },
   missiles: { label: 'Guns + missiles', kinds: ['gun', 'missile'] },
   tank: { label: 'Cannon + coax gun', kinds: ['cannon', 'gun'] },
-  full: { label: 'Full', kinds: ['gun', 'cannon', 'bomb', 'missile'] },
+  light: { label: 'Laser + discs', kinds: ['laser', 'disc'] },
+  pulse: { label: 'Pulse bolts + missiles', kinds: ['pulse', 'missile'] },
+  full: { label: 'Full', kinds: ['gun', 'cannon', 'bomb', 'missile', 'laser', 'disc'] },
+  /** The weapons fitted as parts of the craft (weapon modules), where they are. */
+  fitted: { label: 'Fitted weapons', kinds: [] },
 } as const satisfies Record<string, { label: string; kinds: readonly WeaponKind[] }>;
 export type Loadout = keyof typeof LOADOUTS;
 export const LOADOUT_ORDER = Object.keys(LOADOUTS) as Loadout[];
 
 export interface Mount {
   kind: WeaponKind;
+  /** Fitted weapons: the part it's on (its module shows the ammo left on the craft). */
+  partId?: string;
+  /** Weapon-system time it last fired. */
+  lastFired?: number;
   /** Craft-frame muzzle position and direction (forward = -Z). */
   offset: THREE.Vector3;
   dir: THREE.Vector3;
@@ -71,6 +88,8 @@ export interface Mount {
 export interface Projectile {
   id: number;
   kind: WeaponKind;
+  /** Ricochets left (discs, pulse bolts). */
+  bounces: number;
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   /** Missiles: the direction they burn along. */
@@ -138,7 +157,37 @@ export function craftBounds(def: CraftDef): Extent {
  * 'cannon' part (else the nose), guns either side of the nose (coaxial on a turret), bombs under
  * the belly, missiles under the wings.
  */
+/** Where a fitted weapon's rounds leave it, from its base (matches the models in CraftView). */
+const MUZZLE: Record<WeaponKind, THREE.Vector3> = {
+  gun: new THREE.Vector3(0, 0, -1.15),
+  cannon: new THREE.Vector3(0, 0, -2.56),
+  laser: new THREE.Vector3(0, 0, -0.47),
+  disc: new THREE.Vector3(0, 0.03, -0.45),
+  pulse: new THREE.Vector3(0, 0, -0.85),
+  missile: new THREE.Vector3(0, -0.12, -1.1),
+  bomb: new THREE.Vector3(0, -0.35, 0),
+};
+
+/** Weapons fitted as weapon modules on the craft's parts: one mount each, where it is. */
+export function fittedMounts(def: CraftDef): Mount[] {
+  const out: Mount[] = [];
+  for (const p of def.parts) {
+    const r = p.rotationDeg ?? [0, 0, 0];
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(r[0] * Math.PI / 180, r[1] * Math.PI / 180, r[2] * Math.PI / 180, 'XYZ'));
+    for (const m of p.modules ?? []) {
+      if (m.type !== 'weapon') continue;
+      // The module sits at the weapon's base; rounds leave from the muzzle (the bay's doors).
+      const local = new THREE.Vector3(...(m.offset ?? [0, 0, 0])).add(MUZZLE[m.kind]);
+      const offset = local.applyQuaternion(q).add(new THREE.Vector3(...p.position));
+      const dir = (m.kind === 'bomb' ? new THREE.Vector3(0, -1, 0) : new THREE.Vector3(0, 0, -1)).applyQuaternion(q);
+      out.push({ kind: m.kind, offset, dir, ammo: m.ammo ?? WEAPONS[m.kind].ammo, partId: p.id });
+    }
+  }
+  return out;
+}
+
 export function mountsFor(def: CraftDef, loadout: Loadout): Mount[] {
+  if (loadout === 'fitted') return fittedMounts(def);
   if (!def.parts.length) return [];
   const { min, max } = craftBounds(def);
   const midY = (min.y + max.y) / 2;
@@ -166,6 +215,15 @@ export function mountsFor(def: CraftDef, loadout: Loadout): Mount[] {
       }
     } else if (kind === 'bomb') {
       out.push({ kind, offset: new THREE.Vector3(0, min.y - 0.6, midZ), dir: new THREE.Vector3(0, -1, 0), ammo });
+    } else if (kind !== 'missile') {
+      // Laser, disc and pulse emitters: on the turret's face, else paired at the nose.
+      if (turret) {
+        const t = partExtent(turret);
+        out.push({ kind, offset: new THREE.Vector3(kind === 'disc' ? 0 : -t.max.x * 0.6, t.max.y + 0.1, t.min.z - 0.2), dir: fwd.clone(), ammo });
+      } else {
+        const x = Math.min(1.0, Math.max(0.3, halfW * 0.3));
+        for (const s of [-1, 1]) out.push({ kind, offset: new THREE.Vector3(s * x, midY, min.z - 0.4), dir: fwd.clone(), ammo: Math.round(ammo / 2) });
+      }
     } else {
       const x = Math.max(0.8, halfW * 0.55);
       for (const s of [-1, 1]) out.push({ kind, offset: new THREE.Vector3(s * x, min.y - 0.3, midZ), dir: fwd.clone(), ammo: Math.round(ammo / 2) });
@@ -178,6 +236,7 @@ const _ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 });
 const _a = new THREE.Vector3();
 const _b = new THREE.Vector3();
 const _g = new THREE.Vector3();
+const _c = new THREE.Vector3();
 
 export class WeaponSystem {
   loadout: Loadout = 'none';
@@ -201,7 +260,9 @@ export class WeaponSystem {
   /** Arm a craft: its loadout (or the default it declares) mounted where its geometry allows. */
   arm(def: CraftDef, loadout?: Loadout): void {
     this.def = def;
-    const want = loadout ?? (def.loadout && def.loadout in LOADOUTS ? (def.loadout as Loadout) : 'none');
+    // A craft with weapons fitted as parts uses them; otherwise its declared loadout (or none).
+    const fitted = def.parts.some((p) => p.modules?.some((m) => m.type === 'weapon'));
+    const want = loadout ?? (fitted ? 'fitted' : def.loadout && def.loadout in LOADOUTS ? (def.loadout as Loadout) : 'none');
     this.loadout = want;
     this.mounts = mountsFor(def, want);
     this.cooldown.clear();
@@ -211,10 +272,16 @@ export class WeaponSystem {
   /** Next loadout in the list (the I key). */
   cycle(): Loadout {
     if (!this.def) return this.loadout;
-    const i = LOADOUT_ORDER.indexOf(this.loadout);
-    this.arm(this.def, LOADOUT_ORDER[(i + 1) % LOADOUT_ORDER.length]);
+    // 'fitted' only for craft that have weapons fitted.
+    const fitted = this.def.parts.some((p) => p.modules?.some((m) => m.type === 'weapon'));
+    const order = LOADOUT_ORDER.filter((l) => l !== 'fitted' || fitted);
+    const i = order.indexOf(this.loadout);
+    this.arm(this.def, order[(i + 1) % order.length]);
     return this.loadout;
   }
+
+  /** Recent laser beams (start, end, time, colour), for the renderer. */
+  readonly beams: Array<{ a: THREE.Vector3; b: THREE.Vector3; time: number; color: string }> = [];
 
   reset(): void {
     this.projectiles.length = 0;
@@ -235,7 +302,9 @@ export class WeaponSystem {
   fireOnce(host: WeaponHost, group: 'primary' | 'secondary', time: number): number {
     let n = 0;
     for (const kind of new Set(this.mounts.filter((m) => WEAPONS[m.kind].group === group).map((m) => m.kind))) {
-      if (this.shoot(host, kind, time)) n++;
+      // Fitted weapons fire a salvo: every mount of the kind once.
+      const shots = this.loadout === 'fitted' ? this.mounts.filter((m) => m.kind === kind).length : 1;
+      for (let i = 0; i < shots; i++) if (this.shoot(host, kind, time)) n++;
     }
     return n;
   }
@@ -247,7 +316,9 @@ export class WeaponSystem {
       if (!this.trigger[spec.group]) continue;
       const ready = this.mounts.filter((m) => m.kind === kind);
       const last = Math.max(...ready.map((m) => this.cooldown.get(m) ?? -Infinity));
-      if (time - last >= 1 / spec.rate) this.shoot(host, kind, time);
+      // Fitted multiples each add their own rate of fire, rippling in turn.
+      const n = this.loadout === 'fitted' ? Math.max(1, ready.filter((m) => m.ammo > 0).length) : 1;
+      if (time - last >= 1 / (spec.rate * n)) this.shoot(host, kind, time);
     }
     this.integrate(host, dt, time);
   }
@@ -260,14 +331,33 @@ export class WeaponSystem {
     const m = mounts[k];
     const spec = WEAPONS[kind];
     m.ammo--;
+    m.lastFired = time;
     for (const mm of this.mounts) if (mm.kind === kind) this.cooldown.set(mm, time);
     const dir = _a.copy(m.dir).applyQuaternion(host.rotation).normalize();
     const pos = m.offset.clone().applyQuaternion(host.rotation).add(host.position);
+    this.fired++;
+    if (spec.beam) {
+      // A beam of light: instant, straight, out to its range.
+      _ray.origin = { x: pos.x, y: pos.y, z: pos.z };
+      _ray.dir = { x: dir.x, y: dir.y, z: dir.z };
+      const h = host.world.castRayAndGetNormal(_ray, spec.beam, true, undefined, undefined, undefined, host.body);
+      const end = pos.clone().addScaledVector(dir, h ? h.timeOfImpact : spec.beam);
+      this.beams.push({ a: pos, b: end, time, color: host.color });
+      if (this.beams.length > 32) this.beams.splice(0, this.beams.length - 32);
+      if (h) {
+        const hit: WeaponImpact = { kind, point: end, normal: new THREE.Vector3(h.normal.x, h.normal.y, h.normal.z), vel: dir.clone().multiplyScalar(800), mass: spec.mass, blast: spec.blast, color: host.color, collider: h.collider, time };
+        this.hits++;
+        this.impacts.push(hit);
+        if (this.impacts.length > 64) this.impacts.splice(0, this.impacts.length - 64);
+        this.onImpact?.(hit);
+      }
+      return true;
+    }
     const vel = host.linvel.clone();
     if (kind !== 'bomb') vel.addScaledVector(dir, spec.speed);
-    const heading = kind === 'bomb' ? vel.clone().normalize() : dir.clone();
-    this.projectiles.push({ id: this.nextId++, kind, pos, vel, heading, age: 0, color: host.color });
-    this.fired++;
+    // Bombs leave the bay level with the craft and pitch nose-down as they fall (front-heavy).
+    const heading = kind === 'bomb' ? new THREE.Vector3(0, 0, -1).applyQuaternion(host.rotation) : dir.clone();
+    this.projectiles.push({ id: this.nextId++, kind, pos, vel, heading, age: 0, color: host.color, bounces: spec.ricochet ?? 0 });
     // Recoil (bombs just drop).
     if (kind !== 'bomb') {
       const j = spec.mass * spec.speed;
@@ -292,8 +382,8 @@ export class WeaponSystem {
       _a.copy(p.pos);
       p.vel.addScaledVector(_g, dt);
       _b.copy(p.pos).addScaledVector(p.vel, dt);
-      // Bombs fall nose first.
-      if (p.kind === 'bomb' && p.vel.lengthSq() > 1) p.heading.copy(p.vel).normalize();
+      // Bombs are nose-heavy: they weathercock nose-first into the airflow over about a second.
+      if (p.kind === 'bomb' && p.vel.lengthSq() > 1) p.heading.lerp(_c.copy(p.vel).normalize(), Math.min(1, dt * 2.5)).normalize();
       // Sweep the segment just flown.
       const seg = _b.clone().sub(_a);
       const len = seg.length();
@@ -304,7 +394,21 @@ export class WeaponSystem {
         const h = host.world.castRayAndGetNormal(_ray, len, true, undefined, undefined, undefined, host.body);
         if (h) {
           const pt = _a.clone().addScaledVector(seg, h.timeOfImpact / len);
-          hit = this.impact(p, pt, new THREE.Vector3(h.normal.x, h.normal.y, h.normal.z), h.collider, time);
+          const n = new THREE.Vector3(h.normal.x, h.normal.y, h.normal.z);
+          if (p.bounces > 0) {
+            // Ricochet: bite what it struck (a small blast), reflect, fly on.
+            p.bounces--;
+            const bite = this.impact(p, pt.clone(), n.clone(), h.collider, time);
+            bite.blast = Math.min(bite.blast, 2.5);
+            this.hits++;
+            this.impacts.push(bite);
+            this.onImpact?.(bite);
+            p.vel.addScaledVector(n, -2 * p.vel.dot(n));
+            p.heading.copy(p.vel).normalize();
+            p.pos.copy(pt).addScaledVector(n, 0.3);
+            continue;
+          }
+          hit = this.impact(p, pt, n, h.collider, time);
         }
       }
       if (!hit) {

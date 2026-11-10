@@ -12,6 +12,7 @@ import { STREET_SITE } from './world/spawnSites.ts';
 import { obstacleTop } from './world/structures.ts';
 import { browserClient } from './gen/openrouter.ts';
 import { Library, type LibraryEntry } from './gen/library.ts';
+import { loadTheme } from './gen/tracks.ts';
 import { CameraRig } from './render/CameraRig.ts';
 import { CraftView } from './render/CraftView.ts';
 import { DebrisView } from './render/DebrisView.ts';
@@ -43,6 +44,10 @@ import { updateSkyPlanet } from './render/neon.ts';
 import { ChipsView } from './render/ChipsView.ts';
 import { WeaponsView } from './render/WeaponsView.ts';
 import { CraterView } from './render/CraterView.ts';
+import { BoomView } from './render/BoomView.ts';
+import { AiTrafficView } from './render/AiTrafficView.ts';
+import { terrainHeight } from './sim/terrain.ts';
+import { craftBounds } from './sim/weapons.ts';
 import { LOADOUT_ORDER, LOADOUTS, WEAPONS, type Loadout, type WeaponKind } from './sim/weapons.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
@@ -190,6 +195,10 @@ async function start() {
   const explosionView = new ExplosionView(scene);
   const weaponsView = new WeaponsView(scene, sim.weapons);
   const craterView = new CraterView(scene);
+  const boomView = new BoomView(scene);
+  const aiTrafficView = new AiTrafficView(scene, sim.airTraffic);
+  let boomHeardAt = -Infinity;
+  let wasSupersonic = false;
   let explosionHeardAt = -Infinity;
   let explodedAt: number | null = null;
   const _wind10 = new THREE.Vector3();
@@ -374,12 +383,33 @@ async function start() {
   // dev-server proxy holds the key. Default session cap: $1.
   const client = browserClient(stored(KEY_STORAGE), Number(stored(CAP_STORAGE) ?? 1));
   const library = new Library();
+  // AI air traffic: the built-in aircraft, plus your own designs in single player.
+  const aiCount = document.getElementById('w-ai-count') as HTMLInputElement | null;
+  const aiMine = document.getElementById('w-ai-mine') as HTMLInputElement | null;
+  const aiCountLabel = document.getElementById('w-ai-count-v');
+  const updateAirPool = () => {
+    const own = aiMine?.checked !== false && !net.connected ? library.list().map((e) => e.craft) : [];
+    sim.airTraffic.pool = [...BUILTINS.map((b) => b.craft), ...own];
+    sim.airTraffic.count = Number(aiCount?.value ?? 8);
+    if (aiCountLabel) aiCountLabel.textContent = String(sim.airTraffic.count);
+  };
+  aiCount?.addEventListener('input', updateAirPool);
+  aiMine?.addEventListener('change', updateAirPool);
+  updateAirPool();
+  setInterval(updateAirPool, 5000); // new designs join the traffic; multiplayer drops your own
   let currentEntry: LibraryEntry | null = null;
   /** While the agent builds a vehicle on the turntable: the craft that was there before. */
   let previewSaved: CraftDef | null = null;
   /** Load a craft (null = built-in trainer): on the turntable in the hangar, on the runway in flight. */
+  /** Play the theme saved for a hangar entry (or fade out if it has none). */
+  const playThemeFor = (id: string) => {
+    void loadTheme(id).then((t) => {
+      if ((currentEntry?.id ?? 'builtin:trainer') === id) void audio.playTheme(t?.audio ?? null);
+    });
+  };
   const select = (entry: LibraryEntry | null) => {
     previewSaved = null; // a real selection ends any agent preview
+    playThemeFor(entry?.id ?? 'builtin:trainer');
     sim.loadCraft(entry ? entry.craft : TEST_PLANE);
     replaceCraftView();
     viewVersion = sim.version;
@@ -687,6 +717,7 @@ async function start() {
       if (mode === 'hangar') select(entry);
     },
     fly: () => fly(),
+    playTheme: (id) => playThemeFor(id),
     // The agent building a vehicle: show it on the turntable as its parts stream in. The craft
     // that was there is remembered and comes back if the job is cancelled or fails.
     preview: (def) => {
@@ -990,8 +1021,25 @@ async function start() {
     trafficView.update(sim.time);
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
-    weaponsView.update();
+    weaponsView.update(sim.time);
+    aiTrafficView.update(dt);
     craterView.update(sim.time, sim.craters);
+    {
+      // Sonic booms: the Mach cone and vapour, ground shock rings, and the double crack when the
+      // craft goes supersonic or a boom breaks something.
+      const b = craftBounds(sim.craft.def);
+      const length = Math.max(b.max.z - b.min.z, b.max.x - b.min.x);
+      const vel = new THREE.Vector3(...telemetry.velocity);
+      boomView.update(sim.time, renderPos, vel, telemetry.mach, length, sim.booms, (x, z) => terrainHeight(x, z));
+      const supersonic = telemetry.mach > 1.02;
+      if (supersonic && !wasSupersonic) audio.boom(0.6);
+      wasSupersonic = supersonic;
+      for (const e of sim.booms) {
+        if (e.time <= boomHeardAt) continue;
+        boomHeardAt = e.time;
+        if (e.blocks > 0) { audio.boom(Math.min(1, e.groundDp / 3000)); player.rumble(0.8, 400); }
+      }
+    }
     {
       const ammo = sim.weapons.ammo();
       const kinds = Object.keys(ammo) as WeaponKind[];

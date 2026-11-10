@@ -32,7 +32,8 @@ SI units: metres, kilograms, newtons, degrees. Craft-local axes: +X = right, +Y 
 Part = {
   "id": unique string, "kind": free-text label, "mass": kg (>0),
   "position": [x,y,z] (centre of the part), "rotationDeg"?: [x,y,z] Euler XYZ degrees,
-  "shape": {"type":"box","size":[x,y,z]} | {"type":"cylinder","radius":r,"length":l,"axis":"x"|"y"|"z"} | {"type":"sphere","radius":r},
+  "shape": {"type":"box","size":[x,y,z]} | {"type":"cylinder","radius":r,"length":l,"axis":"x"|"y"|"z"} | {"type":"sphere","radius":r} | {"type":"cone","radius":r,"length":l,"axis":"x"|"y"|"z","tip"?:-1|1} | {"type":"capsule","radius":r,"length":l,"axis":"x"|"y"|"z"},
+    (cone: base radius r, tip at the axis's negative end by default, so a "z" cone is a forward-pointing nose; "tip":1 flips it (a rear nozzle or tail cone). capsule: a cylinder with rounded ends, length is overall, at least 2r: smooth fuselages, pods, tanks. All shapes collide, take damage and render.)
   "collider"?: boolean (default true; set false for thin landing-gear legs),
   "color": CSS hex colour,
   "modules"?: Module[],
@@ -40,7 +41,7 @@ Part = {
   "hp"?: J (impact energy the part absorbs before breaking off in a collision; omit for a default from mass and size; 0 = indestructible),
   "reinforce"?: 0-3 (structural reinforcement level; each level adds 15% to the part's mass, 60% to its strength and 80% to its impact HP)
 }
-Mass and inertia come ONLY from part masses and shapes. Modules are massless and attach to their part. Each module "offset" is relative to the part origin, in the part's rotated frame.
+Mass and inertia come ONLY from part masses and shapes. Modules are massless and attach to their part, so a part's mass must cover what it carries. The game enforces floors and raises a part that is too light: jets weigh at least thrust/(8g), propeller engines thrust/(4g), rockets thrust/(100g), ramjets thrust/(15g), scramjets thrust/(10g); a solid booster holds its propellant (thrust × burnTime / (isp × g), +15% casing); batteries at most 250 Wh/kg; airbrakes ~4 kg/m² of panel; weapons and their rounds (see Weapon). Each module "offset" is relative to the part origin, in the part's rotated frame.
 
 ## Modules
 1. Lifting surface: {"type":"aero","offset"?:[x,y,z],"span":m,"chord":m,"aspectRatio"?:number,"incidenceDeg"?:deg,"camberDeg"?:deg,"cm0"?:number,"criticalMach"?:number,"control"?:Control}
@@ -63,6 +64,11 @@ Mass and inertia come ONLY from part masses and shapes. Modules are massless and
    - Rocket ("kind":"rocket", NO propeller fields): carries its own oxidiser, so thrust = maxThrust × throttle at any altitude, in vacuum too. Propellant flow = maxThrust / (isp × ${TUNING.standardGravity}) kg/s at full power (isp default ${TUNING.rocketDefaultIsp} s; ~250-320 kerosene/solid, ~450 hydrogen): about 10× a jet's burn, so give rocket craft big tanks. Ignition is quick (spoolTime default ${TUNING.rocketSpoolTime} s).
    - Reaction control ("rcsTorque", any engine, usually the rocket): thrusters that turn the craft from the pitch/roll/yaw stick with up to rcsTorque N·m per axis, burning a little fuel. Rate-command: full stick asks for ${TUNING.rcsMaxRate} rad/s, a centred stick holds the attitude still. Full authority below ${TUNING.rcsFullQ} Pa of dynamic pressure, fading out by ${TUNING.rcsFadeQ} Pa, where the control surfaces take over (they lose authority in thin air). ~1-2 N·m per kg of craft turns a spaceplane briskly.
    - Orbits: the planet is small (radius ${PLANET.radius} m, surface gravity ${PLANET.gravity} m/s²). Orbital speed is ~${Math.round(Math.sqrt(PLANET.gravity * PLANET.radius))} m/s at the surface but ~${Math.round(Math.sqrt((PLANET.gravity * PLANET.radius ** 2) / (PLANET.radius + 40000)))} m/s at 40 km, where the air is thin enough to stay up. A spaceplane needs a rocket, RCS, and wings and gear to land; climb steeply out of the thick air, then build horizontal speed and circularise at the apoapsis.
+   - Turbojet ("kind":"turbojet"): a turbofan with no bypass: keeps thrust to ~Mach 3-4 (afterburner allowed), thirstier. The fast jet engine.
+   - Ramjet ("kind":"ramjet"): NO static thrust. Works from ~Mach 0.5, full thrust at Mach 2.5-4 (maxThrust is that thrust at sea-level density; it scales with air density), gone by Mach 6. Needs a booster or a jet to get it going. ~2× a turbofan's fuel per newton.
+   - Scramjet ("kind":"scramjet"): nothing below ~Mach 3.5, full at Mach 6-9, gone by Mach 12; thrust scales with √(density), so it works high up. Needs a rocket or ramjet stage first.
+   - Solid booster ("kind":"solid","burnTime":s): lights when the throttle passes half and then burns at full thrust for burnTime (default 20 s) whatever the throttle; it cannot be shut down. Its propellant is in the part's mass (isp default 250 s). Use it to kick a ramjet up to speed, for a take-off boost, or for a sounding rocket.
+   - Thrust vectoring ("gimbalDeg": 0-20, any engine): the nozzle swivels with the pitch and yaw stick (the game picks the direction from the engine's place about the CoM). Gives control with no airflow: rockets, VTOL, very high or very slow flight.
    - Omitting both kind and propMaxSpeed gives a simple jet with flat thrust (density scaling only).
    If the craft has fuel tanks, engines burn fuel and stop when it runs out. Without tanks they run forever.
 3. Wheel (raycast suspension): {"type":"wheel","offset"?:[x,y,z],"radius":m,"restLength":m,"stiffness":N/m,"damping":N·s/m,"maxSteerDeg"?:deg,"brakes"?:boolean}
@@ -90,6 +96,17 @@ Mass and inertia come ONLY from part masses and shapes. Modules are massless and
 
 13. Stabilizer: {"type":"stabilizer","offset"?:[x,y,z],"strength":N·m/rad}. A gyro that keeps a two-wheeler upright and leaning into turns. REQUIRED on light cycles and any two-wheel vehicle; strength ≈ 10 × the craft mass.
 14. Light trail: {"type":"trail","offset"?:[x,y,z],"kind":"wall"|"contrail","height":m,"color":hex}. "wall": a jetwall of solid light laid from the ground up to height (cycles, cars, tanks: offset at the rear, low). "contrail": a thin energy path (aircraft wingtips). Its colour is the vehicle's circuit colour.
+
+15. Airbrake: {"type":"airbrake","offset"?:[x,y,z],"area":m²,"cd"?:1.2}. Panels that open into the airflow with the brake input (in the air or on the runway): drag = ½ρv²·cd·area. Fast jets need them to slow down and land.
+16. Drag chute: {"type":"chute","offset"?:[x,y,z],"cdA":m²,"deploySpeed"?:15,"maxSpeed"?:120,"cutSpeed"?:8}. Packed at the tail; streams out when the brake is pulled between deploySpeed and maxSpeed, cut away below cutSpeed. One use per flight. cdA ~10-40 for a jet, 2-6 for a ground racer.
+17. Weapon: {"type":"weapon","offset"?:[x,y,z],"kind":"gun"|"cannon"|"missile"|"bomb"|"laser"|"disc"|"pulse","ammo"?:n}. A weapon fitted to its part, drawn on the craft and fired from where it sits. The offset is the weapon's base; it points along the part's -Z (bomb bays drop straight down) and its barrel reaches forward of the offset (gun 1.1 m, cannon 2.5 m, missile rail 1 m either side, laser 0.5 m, pulse 0.85 m), so keep the barrel clear of the hull. Fit as many as you like: each one adds its own rate of fire (paired guns, two cannons, a missile rail under each wing, two bomb bays). Primary trigger: gun (600 rounds, fast, light), cannon (40 heavy shells), laser (an instant beam of light out to 1.5 km), disc (identity discs that ricochet off structures up to 3 times), pulse (tank bolts that bounce once). Secondary trigger: missile (6 per rail, rocket-boosted), bomb (8 per bay, front-heavy, they pitch nose-down as they fall). Weight per weapon (the part must carry it): gun 40 kg + 0.05 kg/round; cannon 150 + 12/round; missile rail 30 + 60/missile; bomb bay 60 + 250/bomb; laser 60; disc 25 + 4/disc; pulse 80 + 1/bolt. Fighters, gunships and tanks carry weapons; racers and transports usually don't.
+
+## Going fast
+- Nothing in the world caps speed below ~4 km/s; drag and engines decide. Wave drag rises steeply from each surface's criticalMach to a peak just past Mach 1, then falls supersonically; bodies roughly double their nose-on drag through Mach 1.
+- Thin wings: set "criticalMach" 0.85-0.95 on supersonic surfaces (less wave drag), small span and low aspect ratio (2-3), sharp cone noses and capsule fuselages with "body" cdFront 0.06-0.1.
+- Pick the engine for the speed: props to ~150 m/s, turbofans to ~Mach 1, turbojets with afterburner to Mach 2-3, ramjets Mach 2-5 (boosted), scramjets Mach 5-10 high up, rockets anywhere (thirsty). Combined cycles work: a turbojet or solid booster to get a ramjet lit, then a scramjet.
+- Carry fuel for it, add airbrakes and a drag chute to get back down, and remember the landing speed: high wing loading means long, fast landings.
+- Ground vehicles: top speed comes from drive force against drag; a jet or rocket on a ground racer works too (with a stabilizer and a chute to stop).
 
 ## Visual language (enforced by the game)
 The world is the original 1982 TRON digital world: monumental, geometric, electronic. Not synthwave, not realistic paint. Vehicles look like programs made of light:

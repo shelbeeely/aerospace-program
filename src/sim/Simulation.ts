@@ -19,6 +19,9 @@ import { LightningSystem, type LightningStrike, type StrikeTarget } from './ligh
 import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
 import { craftBounds, WeaponSystem, type WeaponHost, type WeaponImpact } from './weapons.ts';
+import { AiAirTraffic, type AiFlyer } from './aiTraffic.ts';
+import { WeaponMount } from '../modules/WeaponMount.ts';
+import { BOOM_DAMAGE, BOOM_DEREZ, BOOM_SHATTER, boomBite, boomOverpressure, boomReach, type BoomEvent } from './sonicBoom.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
 import { vehicleKind } from './vehicleTests.ts';
 import { nearestRoadPoint, siteSpawnPoint, type SpawnPoint, type SpawnSite } from '../world/spawnSites.ts';
@@ -98,6 +101,91 @@ export class Simulation {
     if (this.craters.length > 256) this.craters.splice(0, this.craters.length - 256);
   }
 
+  /** Sonic booms (newest last): where supersonic craft hit the ground and buildings with their shock. */
+  readonly booms: BoomEvent[] = [];
+  /** Blocks knocked out of structures by sonic booms so far (tests, stats). */
+  boomDamage = 0;
+  private boomAt = -Infinity;
+  private boomLengthFor: { def: CraftDef; length: number } | null = null;
+
+  /**
+   * A supersonic craft's shock sweeps the world around it (call ~4×/s per craft): structures
+   * where the overpressure tops BOOM_DAMAGE lose blocks on the face toward it (weaker booms only
+   * shatter surface shards), loose bodies are shoved away, riders under a strong boom derez.
+   * Returns the boom, or null below Mach 1.
+   */
+  boomFrom(src: { x: number; y: number; z: number; vx: number; vy: number; vz: number; length: number }): BoomEvent | null {
+    const speed = Math.hypot(src.vx, src.vy, src.vz);
+    const mach = speed / this.atmosphere.air(src.y).speedOfSound;
+    if (mach <= 1.02) return null;
+    const L = src.length;
+    const ground = isSea(src.x) ? 0 : terrainHeight(src.x, src.z);
+    const groundDp = boomOverpressure(mach, src.y - ground, L);
+    const reach = boomReach(mach, L, BOOM_SHATTER);
+    let blocks = 0, hits = 0, shards = 0;
+    if (src.y - ground < reach) {
+      for (const g of this.staticWorld.structures.groups) {
+        const x1 = g.x0 + g.size[0] * g.blockSize, z1 = g.z0 + g.size[2] * g.blockSize, y1 = g.size[1] * g.blockSize;
+        // The point of the structure nearest the craft: where the shock hits it first.
+        const px = Math.min(x1, Math.max(g.x0, src.x)), py = Math.min(y1, Math.max(0, src.y)), pz = Math.min(z1, Math.max(g.z0, src.z));
+        const d = Math.hypot(px - src.x, py - src.y, pz - src.z);
+        if (d > reach) continue;
+        const dp = boomOverpressure(mach, d, L);
+        if (dp >= BOOM_DAMAGE && hits < 3) {
+          blocks += this.staticWorld.blastAt(px, py, pz, boomBite(dp), this.time);
+          hits++;
+        } else if (dp >= BOOM_SHATTER && shards < 6) {
+          // Surface panels shatter: pale shards fall, the structure stands.
+          shards++;
+          this.chips.emit({ x: px, y: py, z: pz, radius: 3, vx: (px - src.x) / d * 6, vy: 2, vz: (pz - src.z) / d * 6, speed: 4, count: 30, size: 0.18, color: '#bfefff', persist: true });
+        }
+      }
+      for (const r of this.traffic.riders) {
+        if (r.derezAt !== null) continue;
+        if (boomOverpressure(mach, Math.hypot(r.x - src.x, 0.8 - src.y, r.z - src.z), L) >= BOOM_DEREZ) this.traffic.derez(r, this.time);
+      }
+      this.world.forEachRigidBody((b) => {
+        if (!b.isDynamic() || b === this.craft.body) return;
+        const t = b.translation();
+        const dx = t.x - src.x, dy = t.y - src.y, dz = t.z - src.z;
+        const d = Math.hypot(dx, dy, dz);
+        if (d > reach || d < 1) return;
+        const dv = Math.min(20, boomOverpressure(mach, d, L) / 300);
+        if (dv < 0.5) return;
+        b.applyImpulse({ x: (dx / d) * dv * b.mass(), y: (Math.abs(dy) / d) * dv * b.mass() * 0.5, z: (dz / d) * dv * b.mass() }, true);
+      });
+    }
+    this.boomDamage += blocks;
+    const e: BoomEvent = { x: src.x, y: src.y, z: src.z, time: this.time, mach, groundDp, blocks };
+    this.booms.push(e);
+    if (this.booms.length > 64) this.booms.splice(0, this.booms.length - 64);
+    return e;
+  }
+
+  /** An AI aircraft derezzes: a flash and voxels in its circuit colour, a splash if it was low. */
+  derezFlyer(f: AiFlyer): void {
+    if (f.derezAt !== null) return;
+    this.airTraffic.derez(f, this.time);
+    const p = f.pos;
+    this.explosions.push({ x: p.x, y: p.y, z: p.z, time: this.time, radius: 6 + f.radius, color: f.color, speed: f.speed });
+    if (this.explosions.length > 32) this.explosions.splice(0, this.explosions.length - 32);
+    const vx = Math.sin(f.heading) * f.speed * 0.4, vz = -Math.cos(f.heading) * f.speed * 0.4;
+    this.chips.emit({ x: p.x, y: p.y, z: p.z, radius: f.radius, vx, vy: 3, vz, speed: 12, count: 700, size: 0.28, color: f.color, persist: true });
+    this.version++;
+  }
+
+  /** The player's craft: a boom check four times a second while it flies faster than sound. */
+  private playerBoom(): void {
+    if (this.exploded || this.time - this.boomAt < 0.25) return;
+    this.boomAt = this.time;
+    if (this.boomLengthFor?.def !== this.craft.def) {
+      const b = craftBounds(this.craft.def);
+      this.boomLengthFor = { def: this.craft.def, length: Math.max(b.max.z - b.min.z, b.max.x - b.min.x) };
+    }
+    const v = this.linvel;
+    this.boomFrom({ x: this.position.x, y: this.position.y, z: this.position.z, vx: v.x, vy: v.y, vz: v.z, length: this.boomLengthFor.length });
+  }
+
   /** Guns, cannon, bombs and missiles (Rapier ray-swept projectiles); see sim/weapons.ts. */
   readonly weapons = new WeaponSystem();
   private dozeAt = -Infinity;
@@ -155,6 +243,8 @@ export class Simulation {
   readonly trails: TrailSystem;
   /** AI light-cycle traffic on the street grid (kinematic; colliders near the player). */
   readonly traffic: TrafficSystem;
+  /** AI aircraft flying around the player (built-ins and, in single player, the player's designs). */
+  readonly airTraffic: AiAirTraffic;
   readonly wrapShift = new THREE.Vector3();
   private readonly groundBody: RAPIER.RigidBody;
   private readonly groundMotion = new THREE.Vector3();
@@ -177,6 +267,13 @@ export class Simulation {
     assertValidCraft(craftDef);
 
     this.world = new RAPIER.World({ x: 0, y: -TUNING.gravity, z: 0 });
+    // Rapier clamps every body to 400 m/s × lengthUnit. Raise the unit so fast craft (ramjets,
+    // scramjets, re-entry) aren't capped near Mach 1.2, and scale the two normalised contact
+    // tolerances down by the same factor so contacts keep their millimetre accuracy.
+    const ip = this.world.integrationParameters;
+    ip.lengthUnit = TUNING.physicsLengthUnit;
+    ip.normalizedAllowedLinearError /= TUNING.physicsLengthUnit;
+    ip.normalizedPredictionDistance /= TUNING.physicsLengthUnit;
     this.world.timestep = this.dt;
     this.atmosphere = new Atmosphere(weather);
     this.ocean.surge = (x, z) => this.atmosphere.events.surgeHeight(x, z);
@@ -207,6 +304,7 @@ export class Simulation {
     this.trails = new TrailSystem(this.world);
     this.trails.chips = this.chips;
     this.traffic = new TrafficSystem(this.world, CITY.seed, this.chips);
+    this.airTraffic = new AiAirTraffic(this.world, CITY.seed);
     this.town = new Town(this.world);
     this.town.chips = this.chips;
     this.staticWorld = new StaticWorld(this.world, this.town);
@@ -227,6 +325,11 @@ export class Simulation {
     this.onContactForce((e) => this.staticWorld.onContact(e));
     this.onContactForce((e) => this.voxelHit(e));
     this.onContactForce((e) => this.traffic.onContact(e));
+    // Flying into an AI aircraft derezzes it (the player's craft takes the impact as usual).
+    this.onContactForce((e) => {
+      const f = this.airTraffic.byCollider(e.collider1) ?? this.airTraffic.byCollider(e.collider2);
+      if (f) this.derezFlyer(f);
+    });
 
     const self = this;
     this.ctx = {
@@ -403,11 +506,14 @@ export class Simulation {
   resetToRunway(): void {
     this.trails.clear();
     this.traffic.clear();
+    this.airTraffic.clear();
     this.staticWorld.reset();
     this.town.reset();
     this.chips.reset();
     this.explosions.length = 0;
     this.craters.length = 0;
+    this.booms.length = 0;
+    this.boomDamage = 0;
     this.lightning.reset(this.atmosphere.settings.seed);
     this.atmosphere.restart();
     this.groundMotion.set(0, 0, 0);
@@ -524,6 +630,7 @@ export class Simulation {
     this.craft.updateSoftCcd(this.dt);
     this.planetForces();
     this.traffic.step(this.dt, this.time, this.position, this.trails);
+    this.airTraffic.step(this.dt, this.time, this.position);
 
     this.world.step(this.events);
     this.readBodyState();
@@ -531,7 +638,9 @@ export class Simulation {
     this.trails.step(this.time, this.craft, this.rotation, this.position, this.linvel.length(), this.craft.wheels.some((w) => w.grounded));
     if (this.exploded) this.weapons.trigger.primary = this.weapons.trigger.secondary = false;
     this.weapons.step(this.weaponHost, this.dt, this.time);
+    this.syncWeaponMounts();
     this.bulldoze();
+    this.playerBoom();
     const resets = this.explosionResets;
     this.guardAgainstExplosion();
     // After an explosion reset the step's contacts belong to a craft that's gone: drop them.
@@ -607,7 +716,7 @@ export class Simulation {
       const shape = p.shape;
       const localRotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(...(p.rotationDeg ?? [0, 0, 0]).map((d) => d * Math.PI / 180) as [number, number, number]));
       const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.rotation.clone().multiply(localRotation).invert());
-      const axialProjection = shape.type === 'cylinder' ? up[shape.axis ?? 'y'] : 0;
+      const axialProjection = shape.type === 'cylinder' || shape.type === 'capsule' || shape.type === 'cone' ? up[shape.axis ?? 'y'] : 0;
       const height = shape.type === 'sphere' ? shape.radius : shape.type === 'box'
         ? (Math.abs(up.x) * shape.size[0] + Math.abs(up.y) * shape.size[1] + Math.abs(up.z) * shape.size[2]) / 2
         : Math.abs(axialProjection) * shape.length / 2 + Math.sqrt(Math.max(0, 1 - axialProjection ** 2)) * shape.radius;
@@ -780,6 +889,24 @@ export class Simulation {
     };
   })();
 
+  /** Fitted weapons: mirror each mount's rounds and last shot onto its module (the craft view shows them). */
+  private syncWeaponMounts(): void {
+    const mods = this.craft.modules.filter((m): m is WeaponMount => m instanceof WeaponMount);
+    if (!mods.length) return;
+    const fitted = this.weapons.loadout === 'fitted';
+    const used = new Set<WeaponMount>();
+    for (const mount of this.weapons.mounts) {
+      if (!mount.partId) continue;
+      const mod = mods.find((m) => !used.has(m) && m.partId === mount.partId && m.def.kind === mount.kind);
+      if (!mod) continue;
+      used.add(mod);
+      mod.ammo = mount.ammo;
+      mod.sinceFired = this.time - (mount.lastFired ?? -Infinity);
+    }
+    // Not using the fitted weapons (another loadout chosen): show them full and quiet.
+    if (!fitted) for (const m of mods) if (!used.has(m)) m.sinceFired = Infinity;
+  }
+
   /** Fire one round of a trigger group now (scripts, tests, the LLM pilot). */
   fireWeapon(group: 'primary' | 'secondary' = 'primary'): number {
     return this.exploded ? 0 : this.weapons.fireOnce(this.weaponHost, group, this.time);
@@ -794,11 +921,16 @@ export class Simulation {
     const p = h.point;
     const col = h.collider;
     if (col) this.traffic.derezCollider(col.handle, this.time); // a rider, or a rider's jetwall
+    // AI aircraft: hit directly, or caught in a blast.
+    const flyer = col ? this.airTraffic.byCollider(col.handle) : undefined;
+    if (flyer) this.derezFlyer(flyer);
+    if (h.blast >= 3) for (const f of this.airTraffic.flyers) if (f.derezAt === null && f.pos.distanceTo(p) < h.blast + f.radius) this.derezFlyer(f);
     if (h.blast >= 3) this.traffic.derezWithin(p.x, p.z, h.blast * 0.8, this.time);
     // Light walls break: a round that strikes one cuts a gap; a blast clears its radius.
     const wallHit = !!col && this.trails.isWall(col.handle);
     if (wallHit || h.blast >= 3) this.trails.cutAt(p.x, p.z, wallHit ? Math.max(2, h.blast * 0.8) : h.blast * 0.8);
-    const body = col?.parent();
+    // (An AI aircraft just hit has no body left to shove: it derezzed above.)
+    const body = flyer ? undefined : col?.parent();
     if (body && body.isDynamic()) {
       const k = h.mass * (h.kind === 'gun' ? 1.5 : 4);
       body.applyImpulseAtPoint({ x: h.vel.x * k, y: h.vel.y * k + h.blast * h.mass, z: h.vel.z * k }, { x: p.x, y: p.y, z: p.z }, true);

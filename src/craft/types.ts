@@ -10,7 +10,15 @@ export type Vec3Tuple = [number, number, number];
 export type ShapeDef =
   | { type: 'box'; size: Vec3Tuple }
   | { type: 'cylinder'; radius: number; length: number; axis?: 'x' | 'y' | 'z' }
-  | { type: 'sphere'; radius: number };
+  | { type: 'sphere'; radius: number }
+  /**
+   * Cone along an axis (nose cones, nozzles, intakes, spikes): base `radius`, `length` tip to
+   * base, centred on the part position. The tip points to the axis's negative end by default
+   * (a 'z' cone is a forward-pointing nose); `tip: 1` points it the other way.
+   */
+  | { type: 'cone'; radius: number; length: number; axis?: 'x' | 'y' | 'z'; tip?: 1 | -1 }
+  /** Capsule: a cylinder with hemispherical ends (rounded fuselages, pods, tanks); `length` is overall. */
+  | { type: 'capsule'; radius: number; length: number; axis?: 'x' | 'y' | 'z' };
 
 /** Which pilot input channel a control surface (or steering) responds to. */
 export type ControlChannel = 'pitch' | 'roll' | 'yaw' | 'flaps';
@@ -90,13 +98,26 @@ export interface EngineDef {
   /** Fuel burn at full thrust (kg/s). Default scales with maxThrust (see tuning). */
   fuelFlow?: number;
   /**
-   * Engine model. 'prop' (needs propMaxSpeed) or 'turbofan': thrust lapses with density
+   * Engine model. 'turbojet' is a turbofan with no bypass (keeps thrust to higher Mach, thirstier).
+   * 'ramjet': no static thrust; works from ~Mach 0.5, best Mach 2.5-4, fades by Mach 6 (needs a
+   * booster to get going). 'scramjet': works from ~Mach 4, best Mach 6-9, fades by Mach 12.
+   * 'solid': a solid booster: full thrust from ignition (throttle past half) for burnTime,
+   * no throttling, no shut-down, own propellant (include it in the part's mass).
+   * 'prop' (needs propMaxSpeed) or 'turbofan': thrust lapses with density
    * (σ^0.7) and with Mach (more for higher bypass ratios), and fuel per newton (TSFC) rises
    * with Mach. 'rocket': carries its own oxidiser, so thrust ignores air density (full thrust in
    * vacuum) and propellant flow is maxThrust / (isp · g0). Omit for the legacy models: prop if
    * propMaxSpeed is set, else flat jet thrust.
    */
-  kind?: 'prop' | 'turbofan' | 'rocket';
+  kind?: 'prop' | 'turbofan' | 'turbojet' | 'rocket' | 'ramjet' | 'scramjet' | 'solid';
+  /**
+   * Thrust vectoring: the nozzle swivels up to this many degrees, steered by the pitch and yaw
+   * stick (the tilt is chosen from the engine's position about the CoM, so it always turns the
+   * craft the way the stick asks). Rockets and fast jets; works with no airflow.
+   */
+  gimbalDeg?: number;
+  /** Solid booster: burn time (s) at full thrust once lit (default 20). It cannot be throttled or shut down. */
+  burnTime?: number;
   /** Rocket specific impulse (s): ~250-320 kerosene/solid, ~450 hydrogen. Default 300. */
   isp?: number;
   /**
@@ -206,6 +227,45 @@ export interface WheelDef {
   brakes?: boolean;
 }
 
+/**
+ * A weapon fitted to the part, firing from `offset` along the part's forward (-Z) axis (bomb bays
+ * drop downward). Fit as many as you like: two cannons, four gun pods, missile rails under each
+ * wing, several bomb bays. The part's mass must cover the weapon and its rounds.
+ */
+export interface WeaponModuleDef {
+  type: 'weapon';
+  offset?: Vec3Tuple;
+  /** gun, cannon, missile (rail), bomb (bay), laser (beam), disc (identity disc launcher), pulse (bolt emitter). */
+  kind: 'gun' | 'cannon' | 'bomb' | 'missile' | 'laser' | 'disc' | 'pulse';
+  /** Rounds (bombs, missiles, discs...) it carries. Default per kind. */
+  ammo?: number;
+}
+
+/** Airbrake / speed brake: panels that open into the airflow with the brake input. */
+export interface AirbrakeDef {
+  type: 'airbrake';
+  offset?: Vec3Tuple;
+  /** Panel area (m²) facing the flow when fully open. */
+  area: number;
+  /** Drag coefficient of the open panels (default 1.2). */
+  cd?: number;
+}
+
+/** Drag chute: one-shot, deploys on the brake at speed, cut away when slow. */
+export interface ChuteDef {
+  type: 'chute';
+  /** Where it's packed (usually the tail); it streams behind from there. */
+  offset?: Vec3Tuple;
+  /** Cd × canopy area (m²): ~10-40 for a jet, 2-6 for a ground racer. */
+  cdA: number;
+  /** Deploys when the brake is pulled above this speed (m/s, default 15). */
+  deploySpeed?: number;
+  /** Faster than this (m/s, default 120) it won't open (and tears off at 1.3×). */
+  maxSpeed?: number;
+  /** Cut away below this speed (m/s, default 8). */
+  cutSpeed?: number;
+}
+
 /** Simple quadratic drag blob (fuselage, gear legs...). */
 export interface DragDef {
   type: 'drag';
@@ -297,6 +357,9 @@ export interface TrailDef {
 }
 
 export type ModuleDef =
+  | WeaponModuleDef
+  | AirbrakeDef
+  | ChuteDef
   | AeroSurfaceDef
   | EngineDef
   | WheelDef

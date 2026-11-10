@@ -29,11 +29,15 @@ function shapeInertia(shape: ShapeDef, m: number): [number, number, number] {
       const i = 0.4 * m * shape.radius * shape.radius;
       return [i, i, i];
     }
-    case 'cylinder': {
+    case 'cylinder':
+    case 'cone':
+    case 'capsule': {
       const r = shape.radius;
       const h = shape.length;
-      const axial = 0.5 * m * r * r;
-      const radial = (m * (3 * r * r + h * h)) / 12;
+      // Cone (about its centroid): axial 3/10 m r², radial 3/20 m r² + 3/80 m h².
+      // Capsule: close to a cylinder of the same overall length.
+      const axial = shape.type === 'cone' ? 0.3 * m * r * r : 0.5 * m * r * r;
+      const radial = shape.type === 'cone' ? m * (0.15 * r * r + 0.0375 * h * h) : (m * (3 * r * r + h * h)) / 12;
       const axis = shape.axis ?? 'y';
       return axis === 'x' ? [axial, radial, radial] : axis === 'y' ? [radial, axial, radial] : [radial, radial, axial];
     }

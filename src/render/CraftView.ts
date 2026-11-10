@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { isBodyColor } from '../craft/style1982.ts';
+import { axisRotation } from '../craft/Craft.ts';
 import { abs, float, max, min, positionLocal, smoothstep } from 'three/tsl';
 import type { Craft } from '../craft/Craft.ts';
 import { partQuaternion } from '../craft/massProperties.ts';
@@ -9,7 +10,10 @@ import { AeroSurface } from '../modules/AeroSurface.ts';
 import { Engine } from '../modules/Engine.ts';
 import { Rotor } from '../modules/Rotor.ts';
 import { Wheel } from '../modules/Wheel.ts';
+import { Chute } from '../modules/Airbrake.ts';
+import { WeaponMount } from '../modules/WeaponMount.ts';
 import { NEON, glow, neonFillMaterial, neonize, neonTint, type TslNode } from './neon.ts';
+import { buildGrammar, driveGrammarLights, type GrammarModel } from './VehicleGrammarView.ts';
 
 export function geometryFor(shape: ShapeDef): THREE.BufferGeometry {
   switch (shape.type) {
@@ -24,6 +28,15 @@ export function geometryFor(shape: ShapeDef): THREE.BufferGeometry {
       if (shape.axis === 'z') g.rotateX(Math.PI / 2);
       return g;
     }
+    case 'cone':
+    case 'capsule': {
+      // Same frame as the collider: built along +Y (a cone's apex at +Y), then onto its axis.
+      const g = shape.type === 'cone'
+        ? new THREE.ConeGeometry(shape.radius, shape.length, 12)
+        : new THREE.CapsuleGeometry(shape.radius, Math.max(0.001, shape.length - 2 * shape.radius), 3, 12);
+      g.applyQuaternion(axisRotation(shape.axis ?? 'y', shape.type === 'cone' ? (shape.tip ?? -1) : 1));
+      return g;
+    }
   }
 }
 
@@ -31,12 +44,12 @@ export function geometryFor(shape: ShapeDef): THREE.BufferGeometry {
  * Fill colour for a part (1982 rules: large unlit surfaces, selective light): a body part shows
  * its dark navy / steel surface; a light part (accent strip, canopy, nozzle) glows in its colour.
  */
-function fillColor(color: string): THREE.Color {
+export function fillColor(color: string): THREE.Color {
   return isBodyColor(color) ? new THREE.Color(color).multiplyScalar(0.55) : neonTint(color).multiplyScalar(0.35);
 }
 
 /** Edge colour: dim structural seams on body parts; only light parts carry bright edges. */
-function edgeColor(color: string): THREE.Color {
+export function edgeColor(color: string): THREE.Color {
   return isBodyColor(color) ? neonTint(color).multiplyScalar(0.22) : neonTint(color);
 }
 
@@ -96,11 +109,50 @@ export class CraftView {
     }
     for (const m of craft.modules) {
       if (m instanceof AeroSurface && m.def.control) this.addFlap(m);
-      else if (m instanceof Engine) this.addProp(m);
+      else if (m instanceof Engine && (m.isProp || m.def.kind === 'prop')) this.addProp(m);
       else if (m instanceof Wheel) this.addWheel(m);
       else if (m instanceof Rotor) this.addRotor(m);
+      else if (m instanceof Chute) this.addChute(m);
+      else if (m instanceof WeaponMount) this.addWeapon(m);
     }
+    // Secondary and tertiary geometry from what each part does (the vehicle grammar).
+    this.grammar = buildGrammar(craft.def, this.root);
+    for (const [id, objs] of this.grammar.byPart) for (const o of objs) this.track(id, o);
+    this.engines = craft.modules.filter((m): m is Engine => m instanceof Engine);
+    this.rotors = craft.modules.filter((m): m is Rotor => m instanceof Rotor);
     this.hideParts(craft.detached);
+  }
+
+  private readonly grammar: GrammarModel;
+  private readonly engines: Engine[];
+  private readonly rotors: Rotor[];
+  private readonly lastPos = new THREE.Vector3();
+  private lastT = 0;
+  private speed = 0;
+  /** Set when the craft is wrecked or switched off: its lights go dark. */
+  inactive = false;
+
+  /** Pieces the vehicle grammar added (tests, debug). */
+  get grammarPieces(): number {
+    return this.grammar.pieces;
+  }
+
+  private driveLights(position: THREE.Vector3): void {
+    const now = performance.now() / 1000;
+    const dt = now - this.lastT;
+    if (this.lastT > 0 && dt > 0 && dt < 0.5) this.speed += (position.distanceTo(this.lastPos) / dt - this.speed) * Math.min(1, dt * 4);
+    this.lastT = now;
+    this.lastPos.copy(position);
+    let activity = Math.min(1, this.speed / 30);
+    for (const e of this.engines) activity = Math.max(activity, e.spool);
+    for (const r of this.rotors) activity = Math.max(activity, r.omega / Math.max(1, r.maxOmega));
+    driveGrammarLights(this.grammar, {
+      activity,
+      inactive: this.inactive,
+      time: now,
+      engine: (i) => this.engines[i],
+      integrity: (id) => (this.craft.detached.has(id) ? 0 : this.craft.voxels.get(id)?.integrity ?? 1),
+    });
   }
 
   private track(partId: string, o: THREE.Object3D): void {
@@ -267,10 +319,154 @@ export class CraftView {
   }
 
   /** Place the craft at an (interpolated) pose and animate moving parts. */
+  /**
+   * A fitted weapon, built from primitives in the 1982 language: a dark body with light only
+   * where it means something (muzzles, lenses, the disc's rim). Missile rails and bomb bays show
+   * their rounds, which disappear as they're fired; muzzles flash when they fire.
+   */
+  private readonly weapons: Array<{ m: WeaponMount; slots: THREE.Object3D[]; flash: THREE.Object3D | null }> = [];
+  private addWeapon(m: WeaponMount): void {
+    const dark = '#10284f';
+    const lit = this.craft.def.parts.find((p) => !isBodyColor(p.color))?.color ?? '#00d4ff';
+    const g = new THREE.Group();
+    g.position.copy(m.localPosition);
+    g.quaternion.copy(m.localRotation);
+    const add = (geo: THREE.BufferGeometry, color: string, at: [number, number, number]) => {
+      const mesh = this.neonPart(geo, color);
+      mesh.position.set(...at);
+      g.add(mesh);
+      return mesh;
+    };
+    const barrel = (r: number, len: number) => new THREE.CylinderGeometry(r, r, len, 8).rotateX(Math.PI / 2);
+    const slots: THREE.Object3D[] = [];
+    let flash: THREE.Object3D | null = null;
+    switch (m.def.kind) {
+      case 'gun':
+        add(new THREE.BoxGeometry(0.16, 0.14, 0.4), dark, [0, 0, 0.2]);
+        add(barrel(0.04, 1.1), dark, [0, 0, -0.55]);
+        flash = add(new THREE.CylinderGeometry(0.06, 0.06, 0.06, 8).rotateX(Math.PI / 2), lit, [0, 0, -1.12]);
+        break;
+      case 'cannon':
+        add(new THREE.BoxGeometry(0.36, 0.3, 0.7), dark, [0, 0, 0.35]);
+        add(barrel(0.11, 2.4), dark, [0, 0, -1.2]);
+        flash = add(new THREE.CylinderGeometry(0.17, 0.17, 0.22, 10).rotateX(Math.PI / 2), lit, [0, 0, -2.45]); // muzzle brake
+        break;
+      case 'laser':
+        add(barrel(0.14, 0.7), dark, [0, 0, -0.1]);
+        add(new THREE.CylinderGeometry(0.2, 0.2, 0.08, 12).rotateX(Math.PI / 2), dark, [0, 0, 0.25]);
+        flash = add(new THREE.CircleGeometry(0.11, 12).rotateY(Math.PI), lit, [0, 0, -0.46]); // the lens
+        break;
+      case 'disc': {
+        add(new THREE.BoxGeometry(0.5, 0.08, 0.6), dark, [0, -0.05, 0]);
+        const ring = this.neonPart(new THREE.TorusGeometry(0.32, 0.04, 6, 24).rotateX(Math.PI / 2), lit);
+        ring.position.set(0, 0.03, -0.05);
+        g.add(ring);
+        slots.push(ring); // the disc ready on the launcher
+        break;
+      }
+      case 'pulse':
+        for (const x of [-0.12, 0.12]) add(new THREE.BoxGeometry(0.06, 0.06, 0.9), dark, [x, 0, -0.35]);
+        flash = add(new THREE.SphereGeometry(0.09, 8, 6), lit, [0, 0, -0.75]);
+        break;
+      case 'missile': {
+        // A rail with up to four missiles under it.
+        add(new THREE.BoxGeometry(0.12, 0.06, 2.0), dark, [0, 0.06, 0]);
+        const shown = Math.min(4, m.ammo);
+        for (let i = 0; i < shown; i++) {
+          const ms = new THREE.Group();
+          const x = (i - (shown - 1) / 2) * 0.28;
+          ms.position.set(x, -0.12, 0);
+          const body = this.neonPart(barrel(0.09, 1.5), dark);
+          const nose = this.neonPart(new THREE.ConeGeometry(0.09, 0.35, 8).rotateX(-Math.PI / 2), lit);
+          nose.position.z = -0.92;
+          ms.add(body, nose);
+          for (const a of [0, Math.PI / 2]) {
+            const fin = this.neonPart(new THREE.BoxGeometry(0.34, 0.02, 0.2).rotateZ(a), dark);
+            fin.position.z = 0.65;
+            ms.add(fin);
+          }
+          g.add(ms);
+          slots.push(ms);
+        }
+        break;
+      }
+      case 'bomb': {
+        // A bay frame with up to four bombs hanging, nose forward.
+        add(new THREE.BoxGeometry(0.9, 0.05, 1.8), dark, [0, 0.12, 0]);
+        const shown = Math.min(4, m.ammo);
+        for (let i = 0; i < shown; i++) {
+          const b = this.bombModel(dark, lit);
+          b.position.set((i % 2 ? 0.22 : -0.22), -0.12, i < 2 ? -0.42 : 0.42);
+          g.add(b);
+          slots.push(b);
+        }
+        break;
+      }
+    }
+    if (flash) flash.visible = false;
+    this.root.add(g);
+    this.track(m.partId, g);
+    this.weapons.push({ m, slots, flash });
+  }
+
+  /** A bomb: a fat body tapering to a heavy nose, a lit band, a ring tail with four fins. */
+  private bombModel(dark: string, lit: string): THREE.Group {
+    const b = new THREE.Group();
+    const body = this.neonPart(new THREE.CapsuleGeometry(0.16, 0.5, 2, 8).rotateX(Math.PI / 2), dark);
+    const nose = this.neonPart(new THREE.ConeGeometry(0.16, 0.3, 8).rotateX(-Math.PI / 2), dark);
+    nose.position.z = -0.45;
+    const band = this.neonPart(new THREE.CylinderGeometry(0.165, 0.165, 0.05, 10).rotateX(Math.PI / 2), lit);
+    band.position.z = -0.18;
+    const tail = this.neonPart(new THREE.CylinderGeometry(0.1, 0.06, 0.25, 8).rotateX(Math.PI / 2), dark);
+    tail.position.z = 0.42;
+    b.add(body, nose, band, tail);
+    for (const a of [0, Math.PI / 2]) {
+      const fin = this.neonPart(new THREE.BoxGeometry(0.42, 0.02, 0.18).rotateZ(a), dark);
+      fin.position.z = 0.48;
+      b.add(fin);
+    }
+    return b;
+  }
+
+  /**
+   * A drag chute: a canopy (open cone, edges lit in the craft's circuit colour) with shroud lines,
+   * streaming behind its pack point, growing as it opens; hidden while packed or once cut away.
+   */
+  private readonly chutes: Array<{ m: Chute; g: THREE.Group }> = [];
+  private addChute(m: Chute): void {
+    const r = Math.sqrt(m.def.cdA / (Math.PI * 1.4)); // canopy radius from Cd ≈ 1.4
+    const g = new THREE.Group();
+    const canopy = new THREE.ConeGeometry(r, r * 0.9, 16, 1, true).rotateX(-Math.PI / 2); // mouth toward the craft
+    const accent = this.craft.def.parts.find((p) => !isBodyColor(p.color))?.color ?? '#00d4ff';
+    const mesh = this.neonPart(canopy, accent);
+    mesh.position.z = r * 3 + r * 0.45;
+    const lines = new THREE.BufferGeometry().setFromPoints(
+      Array.from({ length: 8 }, (_, i) => {
+        const a = (i / 8) * Math.PI * 2;
+        return [new THREE.Vector3(0, 0, 0), new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, r * 3)];
+      }).flat(),
+    );
+    g.add(mesh, new THREE.LineSegments(lines, new THREE.LineBasicNodeMaterial({ color: neonTint(accent).multiplyScalar(0.6) })));
+    g.position.copy(m.localPosition);
+    g.visible = false;
+    this.root.add(g);
+    this.track(m.partId, g);
+    this.chutes.push({ m, g });
+  }
+
   update(position: THREE.Vector3, rotation: THREE.Quaternion): void {
     this.root.position.copy(position);
     this.root.quaternion.copy(rotation);
+    for (const w of this.weapons) {
+      for (let i = 0; i < w.slots.length; i++) w.slots[i].visible = i < w.m.ammo;
+      if (w.flash) w.flash.visible = w.m.sinceFired < 0.06 || w.m.def.kind === 'laser';
+    }
+    for (const { m, g } of this.chutes) {
+      g.visible = m.state === 'deployed' && m.open > 0.02;
+      if (g.visible) g.scale.setScalar(0.2 + 0.8 * m.open);
+    }
     for (const a of this.animated) a.update();
+    this.driveLights(position);
     for (const v of this.voxelParts) if (v.voxels.version !== v.seen) this.rebuildVoxels(v);
   }
 
