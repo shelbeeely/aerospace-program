@@ -650,6 +650,12 @@ async function start() {
       callouts,
       /** Flight-test a craft in the worker (same path the Studio uses). */
       flightTest: runFlightTest,
+      /** Fly a built-in by id ('runner', 'crawler', ...), as the vehicle picker would. */
+      selectBuiltin: (id: string) => {
+        const b = BUILTINS.find((x) => x.id === id);
+        if (!b) throw new Error(`Unknown built-in "${id}"`);
+        select(builtinEntry(b));
+      },
       /** PNG of the current 3D view (GPU readback; works on WebGPU and WebGL2). */
       capture,
       takePhoto,
