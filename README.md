@@ -489,6 +489,13 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
 - **Autopilot (U / gamepad R3 / touch "Autopilot"):** holds heading, altitude and speed (hover,
   heading and forward speed on rotorcraft), takes off by itself from the runway, and climbs to
   clear buildings ahead. While engaged, stick pitch/roll and the throttle adjust its targets.
+- **Flight computer (J / touch More → "Flight computer"):** MechJeb-style modes on top of the
+  autopilot (`src/sim/flightAutopilot.ts`, navigation in `src/sim/nav.ts`): Hold (or a V/S
+  hold), Takeoff, Land (airplanes: join → initial fix → 3° glideslope and localizer → flare →
+  rollout on a runway long enough, at 1.3 × the design's stall speed; rotorcraft: any helipad,
+  rooftops included), Go to (every landing site, the hubs and the Grid Spire, clearing
+  buildings and terrain, then Orbit), Orbit and Level. The HUD shows approach guidance while
+  landing; a firm stick input takes over. The airplane test card ends with an autoland.
 
 Checks: `npm run city`, `npm run autopilot`, `npm run destruction`, `npm run design-pipeline`.
 
