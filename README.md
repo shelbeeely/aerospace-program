@@ -52,7 +52,8 @@ npm run build          # typecheck + production build
    entry records its provenance: every model that worked on it, prompt, score, rounds and cost.
 6. **Refine.** After flying, "Refine current" sends the craft, your instructions, and a
    summary of your flight (stalls, crashes, lift-off speed, g range) back to the crew.
-7. **Paint and score.** The **Painter** does a livery and the **Composer** a soundtrack.
+7. **Score.** The **Composer** writes a soundtrack (early-80s synth and orchestra presets).
+   There are no custom liveries: every vehicle wears the 1982 palette.
 
 ### The crew: one model per job, free first
 
@@ -60,7 +61,6 @@ npm run build          # typecheck + production build
 | --- | --- | --- | --- |
 | Designer | Nemotron 3 Ultra 550B | Nemotron 3 Nano Omni, Dots 3 Note | Drafts craft from your description |
 | Engineer | Dots 3 Note | Nemotron 3 Nano Omni, Nemotron 3 Ultra | Repairs designs from validator and flight-test feedback |
-| Painter | Cohere North Mini | Nemotron 3.5 Super, Dots 3 | Text models design a pattern (stripes, camo, sunburst…) that the game draws. Pick an image model to paint a texture instead (paid). |
 | Composer | Lyria 3 Clip | Lyria 3 Pro | Soundtrack clip (audio output) |
 
 - **Free only** is on by default, so the pickers show only free models. Turn it off to choose
@@ -74,7 +74,7 @@ npm run build          # typecheck + production build
 - **Lyria:** the Lyria models are listed at $0, but they don't have a `:free` id. OpenRouter
   refuses them on a key that is over its credit limit, so the key needs some headroom.
 - **Reasoning effort:** free reasoning models can spend their whole output budget thinking and
-  get cut off mid-answer. The Designer runs at medium effort, and the Engineer and Painter at
+  get cut off mid-answer. The Designer runs at medium effort, and the Engineer at
   low effort. The defaults were picked by testing each free model on a real repair; ones that still ran out
   of budget (Flint, Nemotron 3.5 Super, Cohere on long jobs) were dropped from those jobs.
 - **CLI:** `npm run design -- "..." --designer <id> --engineer <id>`.
@@ -124,7 +124,7 @@ stick expo, haptics, and touch controls auto/on/off.
 | C | chase / orbit camera |
 | [ / ] | previous / next craft |
 | F3 | debug: force vectors, CoM/CoL/CoT, stats, CoM slider, weather |
-| N | toggle the Studio (generate / refine / paint craft, hangar) |
+| N | toggle the Studio (generate / refine craft, hangar) |
 | H | controls & settings |
 | V (hold) | fire guns / cannon (armed craft: the tank by default) |
 | O (hold) | drop bombs / fire missiles |
@@ -280,7 +280,6 @@ src/
     openrouter.ts        browser/Node OpenRouter client: retries, cost tracking, JSON extraction
     catalog.ts           the crew: jobs -> capable models, free-first defaults + free backups
     craftDesigner.ts     designer prompt + generate/validate/flight-test/repair loop
-    livery.ts            painter: text model -> pattern spec -> canvas, or image model -> texture
     music.ts             composer: audio model (Lyria) -> soundtrack clip
     library.ts           hangar: saved craft with provenance (localStorage), import/export
   ui/Studio.ts           in-game generation workflow

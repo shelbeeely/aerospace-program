@@ -13,8 +13,6 @@ export interface Provenance {
   createdAt: string;
   /** Library id of the craft this one was refined from. */
   parentId?: string;
-  liveryModel?: string;
-  liveryPrompt?: string;
 }
 
 export interface LibraryEntry {
@@ -22,8 +20,6 @@ export interface LibraryEntry {
   name: string;
   craft: CraftDef;
   provenance: Provenance;
-  /** Small JPEG data URL. */
-  livery?: string;
 }
 
 const KEY = 'aerospace.library.v1';
@@ -37,6 +33,8 @@ export class Library {
       const raw = localStorage.getItem(KEY);
       const parsed = raw ? (JSON.parse(raw) as LibraryEntry[]) : [];
       this.entries = parsed.filter((e) => e && validateCraft(e.craft).length === 0);
+      // Custom liveries were removed: drop any saved paint jobs (and their storage).
+      for (const e of this.entries) delete (e as { livery?: unknown }).livery;
     } catch {
       this.entries = [];
     }
@@ -73,8 +71,8 @@ export class Library {
     try {
       localStorage.setItem(KEY, JSON.stringify(this.entries));
     } catch {
-      // Storage full or blocked: drop liveries from the oldest entries and retry once.
-      for (let i = this.entries.length - 1; i >= 0; i--) delete this.entries[i].livery;
+      // Storage full or blocked: drop the oldest entries and retry once.
+      this.entries.length = Math.max(1, Math.floor(this.entries.length / 2));
       try {
         localStorage.setItem(KEY, JSON.stringify(this.entries));
       } catch {

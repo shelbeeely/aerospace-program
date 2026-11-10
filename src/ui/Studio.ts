@@ -3,7 +3,6 @@ import type { CraftDef } from '../craft/types.ts';
 import { defaultModel, fallbacksFor, isFree, JOBS, modelsForJob, priceLabel, type JobId } from '../gen/catalog.ts';
 import { designCraft, type DesignResult } from '../gen/craftDesigner.ts';
 import { fromImportJson, toExportJson, type Library, type LibraryEntry } from '../gen/library.ts';
-import { paintLivery } from '../gen/livery.ts';
 import { composeMusic, MUSIC_STYLES } from '../gen/music.ts';
 import {
   DIRECT_BASE_URL,
@@ -26,8 +25,6 @@ export interface StudioHost {
   select(entry: LibraryEntry | null): void;
   /** Take the selected craft flying: switch to flight mode and reset to the runway. */
   fly(): void;
-  /** Apply a livery texture to the current craft (null removes it). */
-  applyLivery(dataUrl: string | null): void;
 }
 
 const SUGGESTIONS = [
@@ -74,8 +71,8 @@ function loadPrefs(): Prefs {
 
 /**
  * The generation workflow in-game. A crew of models, one per job (designer, engineer,
- * painter, composer), free by default. Describe a craft, watch it get designed, validated,
- * flight-tested and repaired, fly it, refine it with notes from your own flight, paint it,
+ * composer), free by default. Describe a craft, watch it get designed, validated,
+ * flight-tested and repaired, fly it, refine it with notes from your own flight,
  * score it. Every result lands in the hangar with its provenance.
  */
 export class Studio {
@@ -98,7 +95,6 @@ export class Studio {
     drafts: HTMLSelectElement;
     log: HTMLOListElement;
     result: HTMLElement;
-    liveryPrompt: HTMLInputElement;
     musicPrompt: HTMLInputElement;
     musicStyle: HTMLSelectElement;
     musicInfo: HTMLElement;
@@ -147,9 +143,6 @@ export class Studio {
     const designBtn = h('button', { class: 'primary', onclick: () => this.design(false) }, 'Generate aircraft');
     const refineBtn = h('button', { onclick: () => this.design(true), title: 'Modify the craft you are flying, using your flight as feedback' }, 'Refine current');
     const cancel = h('button', { class: 'hidden', onclick: () => this.busy?.abort() }, 'Cancel');
-    const liveryPrompt = h('input', { type: 'text', placeholder: 'e.g. racing stripes, red and cream' });
-    const paintBtn = h('button', { onclick: () => this.paint() }, 'Paint');
-    const unpaintBtn = h('button', { title: 'Remove livery', onclick: () => this.unpaint() }, '✕');
     const musicPrompt = h('input', { type: 'text', placeholder: 'extra direction, e.g. slower, with a guitar solo' });
     const musicStyle = h('select', { title: 'Genre', 'aria-label': 'Music genre' });
     for (const [id, s] of Object.entries(MUSIC_STYLES)) musicStyle.append(h('option', { value: id }, s.label));
@@ -178,12 +171,11 @@ export class Studio {
       drafts,
       log: h('ol', { class: 'studio-log' }),
       result: h('div', { class: 'studio-result hidden' }),
-      liveryPrompt,
       musicPrompt,
       musicStyle,
       musicInfo: h('div', { class: 'muted small' }),
       hangar: h('div', { class: 'studio-hangar' }),
-      buttons: [designBtn, refineBtn, paintBtn, composeBtn],
+      buttons: [designBtn, refineBtn, composeBtn],
       cancel,
     };
     settings.append(this.el.keyNote);
@@ -214,7 +206,6 @@ export class Studio {
         h('div', { class: 'row spread' }, h('h4', {}, 'Crew'), h('label', { class: 'inline' }, freeOnly, ' Free only')),
         crew, h('label', {}, 'Design and repair rounds', rounds), h('label', {}, 'Parallel first drafts (best one kept)', drafts),
       ),
-      h('section', {}, h('h4', {}, 'Livery'), h('div', { class: 'row' }, liveryPrompt, paintBtn, unpaintBtn)),
       h('section', {},
         h('h4', {}, 'Music'),
         h('div', { class: 'row' }, musicStyle, musicPrompt, composeBtn),
@@ -478,45 +469,6 @@ export class Studio {
     this.el.result.classList.remove('hidden');
   }
 
-  private async paint(): Promise<void> {
-    const painter = this.guard('painter');
-    if (!painter) return;
-    const cur = this.host.current();
-    const style = this.el.liveryPrompt.value.trim() || 'classic aviation stripes';
-    const imageModel = !!painter.info?.outputModalities.includes('image');
-    this.setStatus(`Painter (${shortName(painter.model)}) ${imageModel ? 'painting' : 'designing a pattern'}…`);
-    await this.run('Painting', async (signal) => {
-      const res = await paintLivery(this.host.client, {
-        model: painter.model,
-        fallbacks: painter.fallbacks,
-        imageModel,
-        prompt: style,
-        craftName: cur.craft.name,
-        signal,
-      });
-      this.host.applyLivery(res.image);
-      const e = cur.entryId ? this.host.library.get(cur.entryId) : undefined;
-      if (cur.entryId && e) {
-        this.host.library.update(cur.entryId, {
-          livery: res.image,
-          provenance: { ...e.provenance, liveryModel: res.model, liveryPrompt: style },
-        });
-      }
-      const how = res.spec ? ` (${res.spec.pattern}, ${res.spec.colors.length + 1} colours)` : '';
-      this.setStatus(
-        `Painted by ${shortName(res.model)}${how}, $${res.cost.toFixed(4)}.${e ? '' : " Built-in craft liveries aren't saved."}`,
-      );
-      this.renderHangar();
-    });
-  }
-
-  private unpaint(): void {
-    const cur = this.host.current();
-    this.host.applyLivery(null);
-    if (cur.entryId) this.host.library.update(cur.entryId, { livery: undefined });
-    this.renderHangar();
-  }
-
   private async compose(): Promise<void> {
     const composer = this.guard('composer');
     if (!composer) return;
@@ -586,7 +538,6 @@ export class Studio {
             if (!this.isCurrent(e.id)) this.host.select(e);
           },
         },
-          e.livery ? h('img', { src: e.livery, alt: '' }) : null,
           h('span', { class: 'name' }, e.name),
           h('span', { class: 'muted small' }, meta),
           h('button', { onclick: (ev) => { ev.stopPropagation(); this.flyEntry(e); } }, 'Fly'),

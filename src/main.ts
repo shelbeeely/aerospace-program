@@ -196,12 +196,10 @@ async function start() {
   let viewVersion = sim.version;
   let wrapsSeen = 0;
   let curvatureTick = 0;
-  let currentLivery: string | null = null;
   /** Rebuild the craft's visuals (new craft, or the sim rebuilt a broken one on reset). */
   const replaceCraftView = () => {
     const old = craftView;
     craftView = new CraftView(sim.craft);
-    craftView.setLivery(currentLivery);
     craftScene().add(craftView.root);
     debug.attach(craftView.root); // move the CoM/CoL markers before disposing the old view
     old.root.removeFromParent();
@@ -378,7 +376,6 @@ async function start() {
   /** Load a craft (null = built-in trainer): on the turntable in the hangar, on the runway in flight. */
   const select = (entry: LibraryEntry | null) => {
     sim.loadCraft(entry ? entry.craft : TEST_PLANE);
-    currentLivery = entry?.livery ?? null;
     replaceCraftView();
     viewVersion = sim.version;
     comSlider.value = '0';
@@ -679,10 +676,6 @@ async function start() {
       if (mode === 'hangar') select(entry);
     },
     fly: () => fly(),
-    applyLivery: (url) => {
-      currentLivery = url;
-      craftView.setLivery(url);
-    },
   });
 
   // Resize on window changes, phone rotation and mobile browser bars appearing/disappearing.

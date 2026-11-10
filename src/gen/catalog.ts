@@ -5,12 +5,12 @@ import type { ModelInfo } from './openrouter.ts';
  * Defaults are FREE models, each with free backups that OpenRouter fails over to when one is
  * rate-limited. Paid models stay one click away in the same pickers.
  */
-export type JobId = 'designer' | 'engineer' | 'painter' | 'composer';
+export type JobId = 'designer' | 'engineer' | 'composer';
 
 export interface JobInfo {
   label: string;
   description: string;
-  /** Output modality a model needs. A job may accept several (painter: image or text). */
+  /** Output modality a model needs. */
   outputs: string[];
   /** Free models in order of preference (checked against the live catalog). */
   free: string[];
@@ -43,14 +43,6 @@ export const JOBS: Record<JobId, JobInfo> = {
       'nvidia/nemotron-3-ultra-550b-a55b:free',
     ],
     paid: ['anthropic/claude-sonnet-5.5', 'openai/gpt-6.1-sol', 'google/gemini-3.8-flash'],
-  },
-  painter: {
-    label: 'Painter',
-    description:
-      'Paints liveries. Image models paint a texture; text models (free) design a pattern that the game draws.',
-    outputs: ['image', 'text'],
-    free: ['cohere/north-mini-code:free', 'nvidia/nemotron-3.5-super-vl:free', 'dots-studio/dots-3-note-preview:free'],
-    paid: ['google/gemini-3.1-flash-image', 'google/gemini-2.5-flash-image', 'openai/gpt-5-image-mini'],
   },
   composer: {
     label: 'Composer',
@@ -99,7 +91,7 @@ export function fallbacksFor(models: ModelInfo[], job: JobId, primary: string): 
     const m = byId.get(id);
     if (!m) return false;
     if (primaryFree && !isFree(m)) return false;
-    // Keep image painters with image painters, text with text.
+    // Keep image-output models with image-output models, text with text.
     return !p || p.outputModalities.includes('image') === m.outputModalities.includes('image');
   };
   return JOBS[job].free.filter((id) => id !== primary && sameKind(id)).slice(0, 2);

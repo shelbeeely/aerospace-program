@@ -26,10 +26,9 @@ export function geometryFor(shape: ShapeDef): THREE.BufferGeometry {
   }
 }
 
-/** Fill colour for a part: a whisper of its hue on black; lifted when a livery is shown on it. */
-function fillColor(color: string, livery: boolean): THREE.Color {
-  const tint = neonTint(color);
-  return livery ? tint.lerp(new THREE.Color('#ffffff'), 0.6).multiplyScalar(0.28) : tint.multiplyScalar(0.035);
+/** Fill colour for a part: a whisper of its hue on black (the light is in its edges). */
+function fillColor(color: string): THREE.Color {
+  return neonTint(color).multiplyScalar(0.035);
 }
 
 interface Animated {
@@ -60,13 +59,12 @@ interface VoxelPart {
 /**
  * Visual representation of a Craft built from the same data: one primitive per part, plus
  * moving bits driven by module state (flaps, prop, wheels/suspension). Neon style: near-black
- * fills (a livery shows faintly on them) with glowing edges in each part's colour.
+ * fills with glowing edges in each part's colour.
  */
 export class CraftView {
   readonly root = new THREE.Group();
   private readonly animated: Animated[] = [];
   private readonly materials = new Map<string, THREE.MeshStandardNodeMaterial>();
-  private livery: THREE.Texture | null = null;
   private readonly discMats: THREE.Material[] = [];
   /** Everything drawn for each part (its mesh and its modules' moving bits), for break-offs. */
   private readonly partObjects = new Map<string, THREE.Object3D[]>();
@@ -107,11 +105,11 @@ export class CraftView {
     for (const id of ids) for (const o of this.partObjects.get(id) ?? []) o.visible = false;
   }
 
-  /** Dark fill for parts of this colour (keyed by colour so a livery can tint per part). */
+  /** Dark fill for parts of this colour (keyed by colour). */
   private material(color: string): THREE.MeshStandardNodeMaterial {
     let m = this.materials.get(color);
     if (!m) {
-      m = neonFillMaterial(fillColor(color, false));
+      m = neonFillMaterial(fillColor(color));
       this.materials.set(color, m);
     }
     return m;
@@ -250,26 +248,6 @@ export class CraftView {
     });
   }
 
-  /**
-   * Apply a generated livery texture (data URL) to every part's fill, dimmed so the neon edges
-   * stay dominant, or remove it with null.
-   */
-  setLivery(url: string | null): void {
-    this.livery?.dispose();
-    this.livery = null;
-    const tex = url ? new THREE.TextureLoader().load(url) : null;
-    if (tex) {
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-      this.livery = tex;
-    }
-    for (const [color, m] of this.materials) {
-      m.map = tex;
-      m.color.copy(fillColor(color, !!tex));
-      m.needsUpdate = true;
-    }
-  }
-
   dispose(): void {
     this.root.traverse((o) => {
       if (o instanceof THREE.Mesh || o instanceof THREE.LineSegments) o.geometry.dispose();
@@ -277,7 +255,6 @@ export class CraftView {
     for (const m of this.materials.values()) m.dispose();
     for (const m of this.discMats) m.dispose();
     this.voxelMat?.dispose();
-    this.livery?.dispose();
   }
 
   /** Place the craft at an (interpolated) pose and animate moving parts. */
