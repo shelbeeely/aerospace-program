@@ -1,4 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
+import { OWN_WALL_GROUPS } from './collisionGroups.ts';
 import * as THREE from 'three';
 import type { Craft } from '../craft/Craft.ts';
 import type { TrailDef } from '../craft/types.ts';
@@ -130,6 +131,51 @@ export class TrailSystem {
     this.version++;
   }
 
+  /**
+   * A weapon breaks the light walls within `radius` of (x, z): the segments there shatter into
+   * voxels of the wall's colour and stop being solid, leaving a gap. A wall cut in the middle
+   * becomes two walls; the piece still attached to the vehicle keeps growing. Returns how many
+   * segments went.
+   */
+  cutAt(x: number, z: number, radius: number): number {
+    let cut = 0;
+    const r2 = radius * radius;
+    for (let i = this.trails.length - 1; i >= 0; i--) {
+      const t = this.trails[i];
+      if (t.kind !== 'wall' || t.derezAt !== null || t.points.length < 2) continue;
+      // Segment k runs from point k-1 to point k; it breaks if its midpoint or ends are in range.
+      const hit = (k: number) => {
+        const a = t.points[k - 1], b = t.points[k];
+        const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+        return [[a.x, a.z], [b.x, b.z], [mx, mz]].some(([px, pz]) => (px - x) ** 2 + (pz - z) ** 2 <= r2);
+      };
+      const broken: boolean[] = t.points.map((_, k) => k > 0 && hit(k));
+      if (!broken.some(Boolean)) continue;
+      // Split into the runs of intact segments.
+      const runs: TrailPoint[][] = [];
+      let run: TrailPoint[] = [t.points[0]];
+      for (let k = 1; k < t.points.length; k++) {
+        const p = t.points[k];
+        if (broken[k]) {
+          cut++;
+          this.dropCollider(p);
+          this.chips?.emit({ x: p.x, y: (p.y0 + p.y1) / 2, z: p.z, radius: (p.y1 - p.y0) / 2, vx: 0, vy: 2, vz: 0, speed: 5, count: 14, size: 0.22, color: t.color, persist: true });
+          if (run.length > 1) runs.push(run);
+          run = [{ ...p, collider: undefined }]; // the next run starts at the gap's far end
+        } else run.push(p);
+      }
+      runs.push(run); // the last run: still attached to the emitter if the trail is active
+      const tail = runs.pop()!;
+      t.points = tail;
+      for (const r of runs) {
+        if (r.length < 2) continue;
+        this.trails.push({ ...t, id: this.nextId++, points: r, active: false, emitter: t.emitter.clone() });
+      }
+    }
+    if (cut) this.version++;
+    return cut;
+  }
+
   /** A derezzing light wall shatters into voxels of its colour along its length, which stay on the Grid. */
   private shatter(t: Trail): void {
     if (!this.chips || t.kind !== 'wall' || t.points.length < 2) return;
@@ -239,7 +285,9 @@ export class TrailSystem {
     const desc = RAPIER.ColliderDesc.cuboid(WALL_THICKNESS / 2, (y1 - y0) / 2, len / 2)
       .setTranslation((a.x + b.x) / 2, (y0 + y1) / 2, (a.z + b.z) / 2)
       .setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) })
-      .setFriction(0.4).setRestitution(0.1);
+      .setFriction(0.4).setRestitution(0.1)
+      .setCollisionGroups(OWN_WALL_GROUPS) // deadly to everyone but the vehicle that laid it
+      .setSolverGroups(OWN_WALL_GROUPS);
     b.collider = this.world.createCollider(desc, this.body);
     this.colliderOwner.set(b.collider.handle, t);
   }

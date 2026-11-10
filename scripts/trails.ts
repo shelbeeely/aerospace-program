@@ -3,7 +3,9 @@
  * behind it, switching off or derezzing removes the walls, aircraft leave contrails.
  * Run with `npm run trails`.
  */
+import * as THREE from 'three';
 import { LIGHT_CYCLE } from '../src/craft/lightCycle.ts';
+import { LIGHT_CAR } from '../src/craft/lightCar.ts';
 import { BLIMP, HELICOPTER, QUADCOPTER } from '../src/craft/builtins.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
 import { Autopilot } from '../src/sim/autopilot.ts';
@@ -33,7 +35,7 @@ const wallLength = (sim: Simulation) => sim.trails.trails.filter((t) => t.kind =
   check(wallLength(sim) > 200 && sim.trails.colliderCount > 100, 'a jetwall stands behind the cycle', `${wallLength(sim).toFixed(0)} m, ${sim.trails.colliderCount} solid segments`);
   check(!sim.exploded && sim.failures.length === 0, 'the cycle never hits its own fresh wall');
 
-  // Ride back across the wall at speed: derez.
+  // Ride back across its own wall at speed: a vehicle never runs into its own jetwall.
   const pts = sim.trails.trails[0].points;
   const head = pts[Math.floor(pts.length / 2)];
   const b = sim.craft.body;
@@ -44,9 +46,14 @@ const wallLength = (sim: Simulation) => sim.trails.trails.filter((t) => t.kind =
   b.setTranslation({ x: head.x - px * 25, y: 1, z: head.z - pz * 25 }, true);
   b.setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }, true);
   b.setLinvel({ x: px * 40, y: 0, z: pz * 40 }, true);
+  const solid = sim.trails.colliderCount;
   for (let i = 0; i < 240; i++) sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 1, brake: 0 });
-  check(sim.exploded, 'riding into a jetwall at 40 m/s derezzes the cycle', `exploded ${sim.exploded}, failures ${sim.failures.length}`);
-  check(sim.trails.colliderCount === 0, 'its walls stop being solid at once');
+  const crossed = (sim.position.x - head.x) * px + (sim.position.z - head.z) * pz;
+  check(!sim.exploded && sim.failures.length === 0 && crossed > 5, 'riding back across its own jetwall at 40 m/s is safe: it passes through', `exploded ${sim.exploded}, ${crossed.toFixed(0)} m past it, ${solid} solid segments`);
+  // Its walls are still solid to everyone else (riders, debris, other players): a rider that
+  // meets one derezzes (see npm run traffic). When the vehicle derezzes, its light goes too.
+  sim.explode();
+  check(sim.trails.colliderCount === 0, 'when the vehicle derezzes, its walls stop being solid at once');
   for (let i = 0; i < (DEREZ_TIME + 0.2) * 120; i++) sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
   check(sim.trails.trails.filter((t) => t.kind === 'wall' && t.derezAt !== null).length === 0, 'and the light derezzes within a second');
 }
@@ -91,6 +98,17 @@ for (const def of [QUADCOPTER, HELICOPTER, BLIMP]) {
   sim.trails.cycleMode(sim.craft, false, sim.time); // wall -> ribbon (no change for aircraft)
   sim.trails.cycleMode(sim.craft, false, sim.time); // ribbon -> off: derez
   check(sim.trails.trails.every((tr) => tr.derezAt !== null), `${def.name}: L switches its ribbons off`);
+}
+
+// ---------------------------------------------------------------- reverse
+{
+  const sim = new Simulation(LIGHT_CAR);
+  for (let i = 0; i < 240; i++) sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(sim.rotation);
+  const p0 = sim.position.clone();
+  for (let i = 0; i < 360; i++) sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 0, reverse: 1 });
+  const moved = sim.position.clone().sub(p0).dot(fwd);
+  check(moved < -5 && !sim.exploded, 'a ground vehicle reverses', `${moved.toFixed(1)} m along its nose in 3 s`);
 }
 
 console.log(failures ? `\n${failures} trail check(s) failed` : '\nall trail checks passed');

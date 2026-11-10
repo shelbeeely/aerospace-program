@@ -17,6 +17,8 @@ export interface ControlInputs {
   brake: number;
   /** 0..1 flap setting (0 = up, 1 = fully down). Optional; defaults to 0. */
   flaps?: number;
+  /** 0..1 reverse drive (ground vehicles): driven wheels push backwards. Optional; defaults to 0. */
+  reverse?: number;
 }
 
 export function neutralControls(): ControlInputs {
@@ -41,5 +43,6 @@ export function sanitizeControls(c: ControlInputs): ControlInputs {
     throttle: clamp(c.throttle, 0, 1),
     brake: clamp(c.brake, 0, 1),
     flaps: clamp(c.flaps ?? 0, 0, 1),
+    reverse: clamp(c.reverse ?? 0, 0, 1),
   };
 }

@@ -183,6 +183,9 @@ export const TEST_PLANE: CraftDef = {
         { type: 'drag', cdA: 0.04 },
       ],
     },
+    // Gear struts: tie the main legs to the fuselage (visual; the legs carry the loads).
+    { id: 'gear.strut.left', kind: 'gear.strut', mass: 0.5, position: [-0.83, -0.55, 0.35], shape: { type: 'box', size: [0.7, 0.06, 0.06] }, collider: false, color: '#333333' },
+    { id: 'gear.strut.right', kind: 'gear.strut', mass: 0.5, position: [0.83, -0.55, 0.35], shape: { type: 'box', size: [0.7, 0.06, 0.06] }, collider: false, color: '#333333' },
     {
       id: 'gear.left',
       kind: 'gear',

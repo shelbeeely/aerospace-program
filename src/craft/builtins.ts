@@ -62,6 +62,9 @@ export const BLIMP: CraftDef = {
         { type: 'wheel', offset: [0, -0.6, 2], radius: 0.25, restLength: 0.3, stiffness: 3000, damping: 400, maxSteerDeg: 20 },
       ],
     },
+    // Pylons: the engine pods hang off the gondola (visual, no colliders).
+    { id: 'pylon.left', kind: 'pylon', mass: 0.5, position: [-1.22, 1.2, -1.0], shape: { type: 'box', size: [0.5, 0.12, 0.2] }, color: '#333333', collider: false },
+    { id: 'pylon.right', kind: 'pylon', mass: 0.5, position: [1.22, 1.2, -1.0], shape: { type: 'box', size: [0.5, 0.12, 0.2] }, color: '#333333', collider: false },
     {
       id: 'pod.left',
       kind: 'engine.prop',
@@ -169,6 +172,8 @@ export const QUADCOPTER: CraftDef = {
     { id: 'motor.fr', kind: 'drone.motor', mass: 2.5, position: [0.62, 0.5, -0.62], shape: { type: 'cylinder', radius: 0.06, length: 0.1 }, color: '#c94f3d', modules: [quadRotor(-1), quadMotor] },
     { id: 'motor.rl', kind: 'drone.motor', mass: 2.5, position: [-0.62, 0.5, 0.62], shape: { type: 'cylinder', radius: 0.06, length: 0.1 }, color: '#e8e4da', modules: [quadRotor(-1), quadMotor] },
     { id: 'motor.rr', kind: 'drone.motor', mass: 2.5, position: [0.62, 0.5, 0.62], shape: { type: 'cylinder', radius: 0.06, length: 0.1 }, color: '#e8e4da', modules: [quadRotor(1), quadMotor] },
+    { id: 'leg.left', kind: 'skid.leg', mass: 0.1, position: [-0.27, 0.18, 0], shape: { type: 'box', size: [0.1, 0.28, 0.04] }, color: '#222222', collider: false },
+    { id: 'leg.right', kind: 'skid.leg', mass: 0.1, position: [0.27, 0.18, 0], shape: { type: 'box', size: [0.1, 0.28, 0.04] }, color: '#222222', collider: false },
     { id: 'skid.left', kind: 'skid', mass: 0.5, position: [-0.3, 0.03, 0], shape: { type: 'box', size: [0.05, 0.05, 0.8] }, color: '#222222' },
     { id: 'skid.right', kind: 'skid', mass: 0.5, position: [0.3, 0.03, 0], shape: { type: 'box', size: [0.05, 0.05, 0.8] }, color: '#222222' },
   ],
@@ -251,6 +256,10 @@ export const HELICOPTER: CraftDef = {
     },
     { id: 'stabilizer', kind: 'tail.horizontal', mass: 3, position: [0, 1.9, 5.5], shape: { type: 'box', size: [1.2, 0.05, 0.4] }, color: '#e8e4da', modules: [{ type: 'aero', span: 1.2, chord: 0.4 }] },
     { id: 'fin', kind: 'tail.vertical', mass: 3, position: [0, 2.3, 5.9], rotationDeg: [0, 0, 90], shape: { type: 'box', size: [0.8, 0.05, 0.5] }, color: '#e8e4da', modules: [{ type: 'aero', span: 0.8, chord: 0.5 }] },
+    // Fairings and legs that join the tail and skids to the airframe (visual, no colliders).
+    { id: 'boom.root', kind: 'fairing', mass: 0.5, position: [0, 1.9, 1.15], shape: { type: 'box', size: [0.3, 0.3, 0.8] }, color: '#2f6fb3', collider: false },
+    { id: 'tail.gearbox', kind: 'fairing', mass: 0.3, position: [0.05, 1.95, 5.95], shape: { type: 'box', size: [0.3, 0.25, 0.4] }, color: '#2f6fb3', collider: false },
+    ...[-0.9, 0.9].flatMap((x) => [-0.5, 0.7].map((z) => ({ id: `skid.leg.${x < 0 ? 'l' : 'r'}${z < 0 ? 'f' : 'r'}`, kind: 'skid.leg', mass: 0.5, position: [x, 0.24, z] as [number, number, number], shape: { type: 'box' as const, size: [0.06, 0.32, 0.06] as [number, number, number] }, color: '#333333', collider: false }))),
     { id: 'skid.left', kind: 'skid', mass: 8, position: [-0.9, 0.05, 0.1], shape: { type: 'box', size: [0.08, 0.08, 2.4] }, color: '#333333' },
     { id: 'skid.right', kind: 'skid', mass: 8, position: [0.9, 0.05, 0.1], shape: { type: 'box', size: [0.08, 0.08, 2.4] }, color: '#333333' },
     { id: 'strut.front', kind: 'skid.strut', mass: 4, position: [0, 0.4, -0.5], shape: { type: 'box', size: [1.9, 0.06, 0.06] }, color: '#333333', collider: false },

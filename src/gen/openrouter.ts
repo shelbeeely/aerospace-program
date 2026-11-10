@@ -24,9 +24,28 @@ export type ChatContent =
   | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: ChatContent;
+  /** Assistant turn: the tools it called (OpenAI format). */
+  tool_calls?: ToolCall[];
+  /** Tool turn: which call this answers. */
+  tool_call_id?: string;
 }
+
+/** A function the model may call (OpenAI-compatible tool schema). */
+export interface ToolDef {
+  type: 'function';
+  function: { name: string; description: string; parameters: Record<string, unknown> };
+}
+
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+
+/** Can this model call tools (per the OpenRouter catalog)? */
+export const supportsTools = (m: ModelInfo | undefined): boolean => !!m?.supportedParameters.includes('tools');
 
 export interface ChatRequest {
   model: string;
@@ -44,8 +63,21 @@ export interface ChatRequest {
    * output budget thinking and get cut off before the answer.
    */
   reasoningEffort?: 'low' | 'medium' | 'high';
+  /** Tools the model may call; the reply's toolCalls lists what it called. */
+  tools?: ToolDef[];
+  toolChoice?: 'auto' | 'required' | 'none';
+  /**
+   * Stream the reply and report it as it arrives: reasoning, text, and tool calls with their
+   * arguments so far (the accumulated JSON text, possibly incomplete).
+   */
+  onDelta?: (d: ChatDelta) => void;
   signal?: AbortSignal;
 }
+
+export type ChatDelta =
+  | { kind: 'reasoning'; text: string }
+  | { kind: 'content'; text: string }
+  | { kind: 'tool'; index: number; name: string; args: string };
 
 export interface Usage {
   promptTokens: number;
@@ -65,6 +97,8 @@ export interface ChatResult {
   /** Reasoning text, if the model exposed it (some put their final answer here when cut off). */
   reasoning: string;
   usage: Usage;
+  /** Tools the model called this turn (empty if none). */
+  toolCalls: ToolCall[];
 }
 
 export class OpenRouterError extends Error {
@@ -166,15 +200,28 @@ export class OpenRouter {
     else body.model = req.model;
     if (req.format === 'json') body.response_format = { type: 'json_object' };
     if (req.modalities) body.modalities = req.modalities;
+    // Audio output only comes back on a stream, with an audio config (OpenRouter docs: Audio
+    // Output). Without these, music models answer with text and no audio at all.
+    const wantsAudio = !!req.modalities?.includes('audio');
+    const streaming = wantsAudio || !!req.onDelta;
+    if (streaming) body.stream = true;
+    if (wantsAudio) {
+      body.audio = { voice: 'alloy', format: /^openai\//.test(req.model) ? 'pcm16' : 'wav' };
+    }
     if (req.temperature !== undefined) body.temperature = req.temperature;
     if (req.maxTokens !== undefined) body.max_tokens = await this.clampMaxTokens(req.maxTokens, [req.model, ...fallbacks]);
     if (req.reasoningEffort) body.reasoning = { effort: req.reasoningEffort };
+    if (req.tools?.length) {
+      body.tools = req.tools;
+      if (req.toolChoice) body.tool_choice = req.toolChoice;
+      delete body.response_format; // tool calls and JSON mode don't mix on most providers
+    }
 
     let attempt = 0;
     let shrunk = false;
     for (;;) {
       try {
-        return await this.chatOnce(body, req.model, req.signal);
+        return await (streaming ? this.chatStream(body, req.model, req.signal, req.onDelta) : this.chatOnce(body, req.model, req.signal));
       } catch (e) {
         // A provider that rejects the reply budget gets one retry with the old safe default.
         if (!shrunk && e instanceof OpenRouterError && e.status === 400 && typeof body.max_tokens === 'number'
@@ -205,6 +252,105 @@ export class OpenRouter {
       if (m?.maxCompletionTokens) out = Math.min(out, m.maxCompletionTokens);
     }
     return Math.max(1000, out);
+  }
+
+  /**
+   * A streamed reply (server-sent events), for audio output: text deltas are joined, audio
+   * arrives as base64 chunks in delta.audio.data (decoded and concatenated), usage comes last.
+   */
+  private async chatStream(body: Record<string, unknown>, model: string, signal?: AbortSignal, onDelta?: (d: ChatDelta) => void): Promise<ChatResult> {
+    const r = await fetch(`${this.cfg.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!r.ok || !r.body) {
+      const text = await r.text();
+      let msg = `HTTP ${r.status}: ${text.slice(0, 200)}`;
+      try {
+        const j = JSON.parse(text);
+        msg = String(j.error?.metadata?.raw ?? j.error?.message ?? msg);
+      } catch { /* not JSON */ }
+      throw new OpenRouterError(msg, r.status, r.status === 429 || r.status >= 500);
+    }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    let content = '';
+    let transcript = '';
+    let reasoning = '';
+    let usedModel = model;
+    // Tool calls arrive in pieces: index → id, name, and argument text so far.
+    const calls: Array<{ id: string; name: string; args: string }> = [];
+    const chunks: Uint8Array[] = [];
+    const urls: string[] = [];
+    const usage: Usage = { promptTokens: 0, completionTokens: 0, cost: 0 };
+    const take = (a: any) => {
+      if (!a) return;
+      if (typeof a === 'string') { chunks.push(b64Bytes(a)); return; }
+      if (typeof a.transcript === 'string') transcript += a.transcript;
+      const url = a.url ?? a.audio_url?.url;
+      if (typeof url === 'string' && /^https?:/.test(url)) urls.push(url);
+      const data = a.data ?? a.b64_json ?? (typeof url === 'string' && url.startsWith('data:') ? url : undefined);
+      if (typeof data === 'string' && data) chunks.push(b64Bytes(data));
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (value) buf += dec.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith('data:')) continue; // comments (": OPENROUTER PROCESSING"), blank lines
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') continue;
+        let j: any;
+        try { j = JSON.parse(data); } catch { continue; }
+        if (j.error) {
+          const status = Number(j.error.code) || 500;
+          throw new OpenRouterError(String(j.error.metadata?.raw ?? j.error.message ?? 'stream error'), status, status === 429 || status >= 500);
+        }
+        if (j.model) usedModel = j.model;
+        if (j.usage) {
+          usage.promptTokens = num(j.usage.prompt_tokens);
+          usage.completionTokens = num(j.usage.completion_tokens);
+          usage.cost = num(j.usage.cost);
+        }
+        const d = j.choices?.[0]?.delta ?? j.choices?.[0]?.message ?? {};
+        // Reasoning: a plain string, or structured details (use those only when there's no string).
+        let think = typeof d.reasoning === 'string' ? d.reasoning : '';
+        if (!think && Array.isArray(d.reasoning_details)) for (const r of d.reasoning_details) if (typeof r?.text === 'string') think += r.text;
+        if (think) { reasoning += think; onDelta?.({ kind: 'reasoning', text: think }); }
+        if (typeof d.content === 'string' && d.content) onDelta?.({ kind: 'content', text: d.content });
+        for (const t of Array.isArray(d.tool_calls) ? d.tool_calls : []) {
+          const i = Number.isInteger(t?.index) ? t.index : calls.length;
+          const c = (calls[i] ??= { id: '', name: '', args: '' });
+          if (t.id) c.id = String(t.id);
+          if (t.function?.name) c.name += String(t.function.name);
+          if (t.function?.arguments !== undefined) c.args += typeof t.function.arguments === 'string' ? t.function.arguments : JSON.stringify(t.function.arguments);
+          onDelta?.({ kind: 'tool', index: i, name: c.name, args: c.args });
+        }
+        if (typeof d.content === 'string') content += d.content;
+        else if (Array.isArray(d.content)) for (const c of d.content) {
+          if (typeof c?.text === 'string') content += c.text;
+          if (/audio/.test(c?.type ?? '')) take(c.audio ?? c.input_audio ?? c);
+        }
+        take(d.audio);
+        for (const a of d.audios ?? []) take(a);
+      }
+      if (done) break;
+    }
+    this.spent += usage.cost;
+    const audio = [...urls];
+    if (chunks.length) {
+      const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+      let o = 0;
+      for (const c of chunks) { all.set(c, o); o += c.length; }
+      audio.unshift(audioDataUrl(all));
+    }
+    const toolCalls: ToolCall[] = calls.filter((c) => c && c.name).map((c, i) => ({ id: c.id || `call_${i}`, type: 'function' as const, function: { name: c.name, arguments: c.args } }));
+    return { model: usedModel, content: content || transcript, images: [], audio, reasoning, usage, toolCalls };
   }
 
   private async chatOnce(body: Record<string, unknown>, model: string, signal?: AbortSignal): Promise<ChatResult> {
@@ -241,8 +387,56 @@ export class OpenRouter {
     let content = msg.content;
     if (Array.isArray(content)) content = content.map((c: any) => c.text ?? '').join('');
     const reasoning = typeof msg.reasoning === 'string' ? msg.reasoning : '';
-    return { model: j.model ?? model, content: content ?? '', images, audio, reasoning, usage };
+    const toolCalls: ToolCall[] = (Array.isArray(msg.tool_calls) ? msg.tool_calls : [])
+      .filter((t: any) => t?.function?.name)
+      .map((t: any, i: number) => ({
+        id: String(t.id ?? `call_${i}`),
+        type: 'function' as const,
+        function: { name: String(t.function.name), arguments: typeof t.function.arguments === 'string' ? t.function.arguments : JSON.stringify(t.function.arguments ?? {}) },
+      }));
+    return { model: j.model ?? model, content: content ?? '', images, audio, reasoning, usage, toolCalls };
   }
+}
+
+/** Decode base64 (also URL-safe base64) to bytes. */
+function b64Bytes(s: string): Uint8Array {
+  const clean = s.replace(/^data:[^,]*,/, '').replace(/-/g, '+').replace(/_/g, '/').replace(/\s/g, '');
+  const bin = atob(clean + '='.repeat((4 - (clean.length % 4)) % 4));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function bytesB64(b: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+/** Raw 16-bit little-endian PCM (OpenAI's streamed audio: 24 kHz mono) in a WAV container. */
+function pcmToWav(pcm: Uint8Array, rate = 24000, channels = 1): Uint8Array {
+  const out = new Uint8Array(44 + pcm.length);
+  const v = new DataView(out.buffer);
+  const str = (o: number, t: string) => { for (let i = 0; i < t.length; i++) out[o + i] = t.charCodeAt(i); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + pcm.length, true); str(8, 'WAVE');
+  str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, channels, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * channels * 2, true); v.setUint16(32, channels * 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, pcm.length, true);
+  out.set(pcm, 44);
+  return out;
+}
+
+/** A playable data URL for audio bytes: the container is sniffed from its magic bytes. */
+export function audioDataUrl(bytes: Uint8Array): string {
+  const tag = String.fromCharCode(...bytes.subarray(0, 4));
+  let mime = '';
+  if (tag === 'RIFF') mime = 'audio/wav';
+  else if (tag === 'OggS') mime = 'audio/ogg';
+  else if (tag === 'fLaC') mime = 'audio/flac';
+  else if (tag.startsWith('ID3') || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)) mime = 'audio/mpeg';
+  else if (String.fromCharCode(...bytes.subarray(4, 8)) === 'ftyp') mime = 'audio/mp4';
+  if (!mime) return `data:audio/wav;base64,${bytesB64(pcmToWav(bytes))}`; // headerless: raw PCM
+  return `data:${mime};base64,${bytesB64(bytes)}`;
 }
 
 /**

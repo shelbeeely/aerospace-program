@@ -1,4 +1,5 @@
 import type { ControlInputs, ControlSource } from '../sim/controls.ts';
+import type { Telemetry } from '../sim/telemetry.ts';
 import { TUNING } from '../tuning.ts';
 import {
   loadInputSettings,
@@ -77,7 +78,11 @@ export class PlayerInput implements ControlSource {
     this.smoothed.pitch = this.smoothed.roll = this.smoothed.yaw = 0;
   }
 
-  sample(dt: number): ControlInputs {
+  /** Ground vehicles: reversing (S held from a stop) until W or a forward roll ends it. */
+  private reversing = false;
+
+  /** `t` (optional): telemetry, so a ground vehicle's S can switch from braking to reverse. */
+  sample(dt: number, t?: Telemetry): ControlInputs {
     const r = this.raw;
     const clamp1 = (v: number) => Math.max(-1, Math.min(1, v));
     const k = 1 - Math.exp(-TUNING.inputSmoothing * dt);
@@ -89,7 +94,15 @@ export class PlayerInput implements ControlSource {
     if (this.profile === 'ground') {
       // Ground vehicles: W/stick-forward accelerates, S/stick-back brakes, A/D (or Q/E) steer;
       // the throttle lever still sets a cruise power.
+      // S brakes while rolling forward; held from (nearly) a stop it drives backwards.
       const fwd = Math.max(0, -this.smoothed.pitch), back = Math.max(0, this.smoothed.pitch);
+      const h = ((t?.heading ?? 0) * Math.PI) / 180;
+      const vFwd = t ? t.velocity[0] * Math.sin(h) - t.velocity[2] * Math.cos(h) : 0;
+      if (back > 0.3 && vFwd < 1.0 && r.brake === 0) this.reversing = true;
+      if (back < 0.05 || fwd > 0.05) this.reversing = false;
+      if (this.reversing) {
+        return { pitch: 0, roll: 0, yaw: clamp1(this.smoothed.roll + this.smoothed.yaw), throttle: 0, brake: r.brake, flaps: 0, reverse: back };
+      }
       return {
         pitch: 0,
         roll: 0,

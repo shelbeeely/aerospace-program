@@ -5,12 +5,12 @@ import type { ModelInfo } from './openrouter.ts';
  * Defaults are FREE models, each with free backups that OpenRouter fails over to when one is
  * rate-limited. Paid models stay one click away in the same pickers.
  */
-export type JobId = 'designer' | 'engineer' | 'painter' | 'composer';
+export type JobId = 'designer' | 'engineer' | 'composer';
 
 export interface JobInfo {
   label: string;
   description: string;
-  /** Output modality a model needs. A job may accept several (painter: image or text). */
+  /** Output modality a model needs. */
   outputs: string[];
   /** Free models in order of preference (checked against the live catalog). */
   free: string[];
@@ -30,7 +30,8 @@ export const JOBS: Record<JobId, JobInfo> = {
       'dots-studio/dots-3-note-preview:free',
       'google/gemma-4-31b-it:free',
     ],
-    paid: ['anthropic/claude-sonnet-5.5', 'openai/gpt-6.1-sol', 'google/gemini-3.8-flash'],
+    // Muse Ember: cheap ($0.10/$0.50 per M), reasoning and reliable tool calls: a strong agent.
+    paid: ['meta/muse-ember', 'anthropic/claude-sonnet-5.5', 'openai/gpt-6.1-sol', 'google/gemini-3.8-flash'],
   },
   engineer: {
     label: 'Engineer',
@@ -44,14 +45,6 @@ export const JOBS: Record<JobId, JobInfo> = {
     ],
     paid: ['anthropic/claude-sonnet-5.5', 'openai/gpt-6.1-sol', 'google/gemini-3.8-flash'],
   },
-  painter: {
-    label: 'Painter',
-    description:
-      'Paints liveries. Image models paint a texture; text models (free) design a pattern that the game draws.',
-    outputs: ['image', 'text'],
-    free: ['cohere/north-mini-code:free', 'nvidia/nemotron-3.5-super-vl:free', 'dots-studio/dots-3-note-preview:free'],
-    paid: ['google/gemini-3.1-flash-image', 'google/gemini-2.5-flash-image', 'openai/gpt-5-image-mini'],
-  },
   composer: {
     label: 'Composer',
     description: 'Writes the soundtrack (audio output).',
@@ -60,6 +53,25 @@ export const JOBS: Record<JobId, JobInfo> = {
     paid: [],
   },
 };
+
+/**
+ * Free endpoints whose terms allow them ONLY through an agentic harness, with the provider's
+ * notice. They are offered for the Designer in Agent mode only: never as a fallback, never for
+ * a one-shot job (the fixed rounds, Add detail, the Engineer, the Composer).
+ */
+export const AGENTIC_ONLY: Record<string, string> = {
+  'thinkingmachines/inkling-2-small:free':
+    'Inkling 2 Small (free) may only be used through an agentic harness: it runs in Agent mode only. ' +
+    'Thinking Machines Lab logs prompts and outputs on this free endpoint and uses them (disassociated from your account) ' +
+    'to improve its models, under the TML Free Research API Terms of Service and its Privacy Notice. ' +
+    'Do not put confidential information or personal data in your descriptions.',
+};
+export const isAgenticOnly = (id: string | undefined): boolean => !!id && id in AGENTIC_ONLY;
+
+/** Refuse an agentic-only model outside the agent harness (one-shot calls). */
+export function assertNotAgenticOnly(id: string, what: string): void {
+  if (isAgenticOnly(id)) throw new Error(`${id} may only be used through the agent harness (Agent mode); ${what} is a one-shot call. Turn on Agent mode or pick another model.`);
+}
 
 export function isFree(m: ModelInfo): boolean {
   return m.id.endsWith(':free') || (m.pricing.prompt === 0 && m.pricing.completion === 0 && !m.id.startsWith('openrouter/auto'));
@@ -72,7 +84,11 @@ export function modelsForJob(models: ModelInfo[], job: JobId, freeOnly = false):
     .filter((m) => j.outputs.some((o) => m.outputModalities.includes(o)))
     // Audio/image jobs need that output; plain text-only routers can't paint pictures etc.
     .filter((m) => job !== 'composer' || m.outputModalities.includes('audio'))
+    // Speech models (gpt-audio) output audio but only talk: they can't compose music.
+    .filter((m) => job !== 'composer' || !/gpt-audio|tts|speech/i.test(m.id))
     .filter((m) => !m.id.endsWith(':batch') && !m.id.startsWith('openrouter/auto') && m.id !== 'openrouter/free')
+    // Agentic-only endpoints: the Designer (Agent mode) only.
+    .filter((m) => job === 'designer' || !isAgenticOnly(m.id))
     .filter((m) => !freeOnly || isFree(m))
     .sort((a, b) => b.created - a.created);
 }
@@ -82,7 +98,9 @@ export function defaultModel(models: ModelInfo[], job: JobId, freeOnly = true): 
   const ids = new Set(models.map((m) => m.id));
   const j = JOBS[job];
   const pref = [...j.free, ...(freeOnly ? [] : j.paid)].find((id) => ids.has(id));
-  return pref ?? modelsForJob(models, job, true)[0]?.id ?? modelsForJob(models, job, freeOnly)[0]?.id;
+  // Never default to an agentic-only endpoint: the player opts in after reading its terms.
+  const pick = (list: ModelInfo[]) => list.find((m) => !isAgenticOnly(m.id))?.id;
+  return pref ?? pick(modelsForJob(models, job, true)) ?? pick(modelsForJob(models, job, freeOnly));
 }
 
 /**
@@ -97,10 +115,10 @@ export function fallbacksFor(models: ModelInfo[], job: JobId, primary: string): 
     const m = byId.get(id);
     if (!m) return false;
     if (primaryFree && !isFree(m)) return false;
-    // Keep image painters with image painters, text with text.
+    // Keep image-output models with image-output models, text with text.
     return !p || p.outputModalities.includes('image') === m.outputModalities.includes('image');
   };
-  return JOBS[job].free.filter((id) => id !== primary && sameKind(id)).slice(0, 2);
+  return JOBS[job].free.filter((id) => id !== primary && sameKind(id) && !isAgenticOnly(id)).slice(0, 2);
 }
 
 /** Short price label like "$3.00 / $15.00 per M" or "free". */

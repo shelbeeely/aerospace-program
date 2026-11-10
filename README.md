@@ -17,6 +17,7 @@ npm run ground         # ground vehicles: flat ground, skid steering, Outlands h
 npm run arch           # digital world: five families vs the ten checks, districts, interiors, Outlands
 npm run drive          # road network: one graph, every destination by road, the flight computer driving
 npm run weapons        # weapons: mounts, cannon cratering, tank bulldozer, bombs, missiles, armour
+npm run craft          # vehicle rules: connected parts, the 1982 palette, ground-vehicle design loop (offline)
 npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
 ```
@@ -48,19 +49,57 @@ npm run build          # typecheck + production build
    seconds take about 5 s (in a Web Worker in the browser); a 200-part craft about twice that.
 4. **Repair.** The **Engineer** model (a different model) gets the errors or test report and
    fixes the design, until it passes or the round budget runs out.
+4b. **Detail.** Once it passes, the Designer gets one more round to add visual secondary and
+   tertiary geometry (armour plates, fairings, intakes, canopy frames, fender arcs, hubs,
+   struts, antennas, nozzle rings, panel seams and light lines), aiming at 30-90 parts.
+   `src/gen/detailer.ts` keeps the physics exactly as tested: every tested part is restored as
+   it was, new parts are forced visual-only (no collider, no modules, at most 2 kg each and 2%
+   of the craft's mass together) and must connect to the craft. The detailed craft is flown
+   again and kept only if it still passes. "Add detail" in the Studio does the same for the
+   craft you're in (built-ins too); the "Detail pass" box switches the automatic round off.
+4c. **Agent** (always, in the Studio; `npm run design -- "…" --agent [--effort low|medium|high] [--think]`). Instead of one
+   JSON reply per round, the designer runs the whole pipeline itself through tools
+   (`src/gen/agent.ts`): `submit_craft` (a full draft), `patch` (add / update / remove parts by
+   id, no rewrites), `check` (validation, floating parts), `analyze` (mass, CoM, static margin,
+   wing loading, T/W, stall speed, wheels), `flight_test`, `add_detail` (after a pass; physics
+   locked as in 4b) and `finish`. The harness owns the gates: every craft is validated,
+   auto-fixed, connectivity-checked and restyled before it counts, and the final craft must
+   pass a flight test the harness itself runs. Budgets: 28 model turns, 8 flight tests. Models
+   without tool calling (or that won't use the tools) run the fixed rounds instead (CLI; the
+   Studio lists only tool-calling models for the Designer, and Add detail is an agent job too).
+   **Live:** replies stream. The Studio's agent console shows the model's reasoning and text as
+   they arrive and every tool call and result, and the hangar turntable builds the vehicle as
+   its parts stream in through `submit_craft`, `patch` and `add_detail`. *Reasoning effort*
+   (Low / Medium / High) and the *flight-test budget* are in *Models & generation settings*.
+   Muse Ember (`meta/muse-ember`, paid but about $0.10 / $0.50 per million tokens) is a
+   recommended agent.
 5. **Fly.** The best design lands on the runway and in the **hangar** (localStorage). Each
    entry records its provenance: every model that worked on it, prompt, score, rounds and cost.
 6. **Refine.** After flying, "Refine current" sends the craft, your instructions, and a
    summary of your flight (stalls, crashes, lift-off speed, g range) back to the crew.
-7. **Paint and score.** The **Painter** does a livery and the **Composer** a soundtrack.
+7. **Score.** The **Composer** writes a soundtrack (early-80s synth and orchestra presets).
+   There are no custom liveries: every vehicle wears the 1982 palette.
 
 ### The crew: one model per job, free first
+
+**Model search:** the Studio's *Models & generation settings* searches the whole OpenRouter
+catalog by name, id or description; matches are listed first in every job's picker (the
+Designer jumps to the best hit). *Tools* keeps only models that can call tools (Agent mode);
+those are marked "tools" in the pickers.
+
+**Agentic-only endpoints.** Some free endpoints may only be used through an agentic harness.
+Inkling 2 Small (free, `thinkingmachines/inkling-2-small:free`) is one: it is offered for the
+Designer in Agent mode only (its own group in the picker, never a default or a fallback, never
+for the fixed rounds, Add detail, the Engineer or the Composer; `src/gen/catalog.ts`
+`AGENTIC_ONLY`). Its provider logs prompts and outputs on the free endpoint and uses them,
+disassociated from your account, to improve its models (TML Free Research API Terms of
+Service, Privacy Notice); the Studio shows that notice while it is selected. Don't put
+confidential information or personal data in descriptions sent to it.
 
 | Job | Default (free) | Free backups | What it does |
 | --- | --- | --- | --- |
 | Designer | Nemotron 3 Ultra 550B | Nemotron 3 Nano Omni, Dots 3 Note | Drafts craft from your description |
 | Engineer | Dots 3 Note | Nemotron 3 Nano Omni, Nemotron 3 Ultra | Repairs designs from validator and flight-test feedback |
-| Painter | Cohere North Mini | Nemotron 3.5 Super, Dots 3 | Text models design a pattern (stripes, camo, sunburst…) that the game draws. Pick an image model to paint a texture instead (paid). |
 | Composer | Lyria 3 Clip | Lyria 3 Pro | Soundtrack clip (audio output) |
 
 - **Free only** is on by default, so the pickers show only free models. Turn it off to choose
@@ -74,7 +113,7 @@ npm run build          # typecheck + production build
 - **Lyria:** the Lyria models are listed at $0, but they don't have a `:free` id. OpenRouter
   refuses them on a key that is over its credit limit, so the key needs some headroom.
 - **Reasoning effort:** free reasoning models can spend their whole output budget thinking and
-  get cut off mid-answer. The Designer runs at medium effort, and the Engineer and Painter at
+  get cut off mid-answer. The Designer runs at medium effort, and the Engineer at
   low effort. The defaults were picked by testing each free model on a real repair; ones that still ran out
   of budget (Flint, Nemotron 3.5 Super, Cohere on long jobs) were dropped from those jobs.
 - **CLI:** `npm run design -- "..." --designer <id> --engineer <id>`.
@@ -111,7 +150,7 @@ stick expo, haptics, and touch controls auto/on/off.
 
 | Key | Action |
 | --- | --- |
-| W / S | pitch down / up |
+| W / S | pitch down / up (ground vehicles: go / brake, and S from a stop reverses) |
 | A / D | roll |
 | Q / E | yaw (rudder + nose-wheel steering) |
 | Shift / Ctrl | throttle up / down |
@@ -124,7 +163,7 @@ stick expo, haptics, and touch controls auto/on/off.
 | C | chase / orbit camera |
 | [ / ] | previous / next craft |
 | F3 | debug: force vectors, CoM/CoL/CoT, stats, CoM slider, weather |
-| N | toggle the Studio (generate / refine / paint craft, hangar) |
+| N | toggle the Studio (generate / refine craft, hangar) |
 | H | controls & settings |
 | V (hold) | fire guns / cannon (armed craft: the tank by default) |
 | O (hold) | drop bombs / fire missiles |
@@ -280,7 +319,6 @@ src/
     openrouter.ts        browser/Node OpenRouter client: retries, cost tracking, JSON extraction
     catalog.ts           the crew: jobs -> capable models, free-first defaults + free backups
     craftDesigner.ts     designer prompt + generate/validate/flight-test/repair loop
-    livery.ts            painter: text model -> pattern spec -> canvas, or image model -> texture
     music.ts             composer: audio model (Lyria) -> soundtrack clip
     library.ts           hangar: saved craft with provenance (localStorage), import/export
   ui/Studio.ts           in-game generation workflow

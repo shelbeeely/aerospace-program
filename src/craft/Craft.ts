@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { CRAFT_GROUPS } from '../sim/collisionGroups.ts';
+import { style1982 } from './style1982.ts';
 import { PartVoxels } from './voxels.ts';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../tuning.ts';
@@ -53,6 +55,8 @@ export class Craft {
     position: THREE.Vector3,
     rotation: THREE.Quaternion,
   ) {
+    // Every craft wears the 1982 palette, whoever designed it (AGENTS.md §4-5).
+    def = style1982(def);
     this.def = def;
     this.parts = [...def.parts];
     for (const p of this.parts) this.voxels.set(p.id, new PartVoxels(p.shape));
@@ -84,7 +88,9 @@ export class Craft {
       if (part.collider === false) continue;
       const desc = colliderFor(part)
         .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
-        .setContactForceEventThreshold(eventThreshold);
+        .setContactForceEventThreshold(eventThreshold)
+        .setCollisionGroups(CRAFT_GROUPS) // never collides with its own light walls
+        .setSolverGroups(CRAFT_GROUPS);
       const col = world.createCollider(desc, this.body);
       this.colliders.set(part.id, col);
       this.partByCollider.set(col.handle, part.id);

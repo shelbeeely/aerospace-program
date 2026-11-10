@@ -15,6 +15,7 @@ const KEYBOARD: Array<[string, string]> = [
   ['L', 'cycle / car / tank trail: jetwall → light ribbon → off'],
   ['V (hold)', 'fire guns / cannon (armed craft; the tank is armed)'],
   ['O (hold)', 'drop bombs / fire missiles'],
+  ['S (ground vehicles)', 'brake; held from a stop: reverse'],
   ['I', 'weapons loadout: unarmed → guns → cannon → bombs → missiles → tank → full'],
   ['U', 'autopilot on / off (then W/S altitude, A/D heading, Shift/Ctrl speed)'],
   ['J', 'flight computer: hold, takeoff, land, go to, orbit, level (a firm stick input takes over)'],

@@ -42,6 +42,7 @@ import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
 import { updateSkyPlanet } from './render/neon.ts';
 import { ChipsView } from './render/ChipsView.ts';
 import { WeaponsView } from './render/WeaponsView.ts';
+import { CraterView } from './render/CraterView.ts';
 import { LOADOUT_ORDER, LOADOUTS, WEAPONS, type Loadout, type WeaponKind } from './sim/weapons.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
@@ -188,6 +189,7 @@ async function start() {
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
   const weaponsView = new WeaponsView(scene, sim.weapons);
+  const craterView = new CraterView(scene);
   let explosionHeardAt = -Infinity;
   let explodedAt: number | null = null;
   const _wind10 = new THREE.Vector3();
@@ -196,12 +198,10 @@ async function start() {
   let viewVersion = sim.version;
   let wrapsSeen = 0;
   let curvatureTick = 0;
-  let currentLivery: string | null = null;
   /** Rebuild the craft's visuals (new craft, or the sim rebuilt a broken one on reset). */
   const replaceCraftView = () => {
     const old = craftView;
     craftView = new CraftView(sim.craft);
-    craftView.setLivery(currentLivery);
     craftScene().add(craftView.root);
     debug.attach(craftView.root); // move the CoM/CoL markers before disposing the old view
     old.root.removeFromParent();
@@ -375,10 +375,12 @@ async function start() {
   const client = browserClient(stored(KEY_STORAGE), Number(stored(CAP_STORAGE) ?? 1));
   const library = new Library();
   let currentEntry: LibraryEntry | null = null;
+  /** While the agent builds a vehicle on the turntable: the craft that was there before. */
+  let previewSaved: CraftDef | null = null;
   /** Load a craft (null = built-in trainer): on the turntable in the hangar, on the runway in flight. */
   const select = (entry: LibraryEntry | null) => {
+    previewSaved = null; // a real selection ends any agent preview
     sim.loadCraft(entry ? entry.craft : TEST_PLANE);
-    currentLivery = entry?.livery ?? null;
     replaceCraftView();
     viewVersion = sim.version;
     comSlider.value = '0';
@@ -455,8 +457,14 @@ async function start() {
     };
     group('Built-in', list.filter((e) => e.id.startsWith('builtin:')));
     group('Your designs', list.filter((e) => !e.id.startsWith('builtin:')));
-    const cur = currentEntry?.id ?? 'builtin:trainer';
-    if (!list.some((e) => e.id === cur)) {
+    const cur = previewSaved ? 'building' : currentEntry?.id ?? 'builtin:trainer';
+    if (previewSaved) {
+      // The agent is building a vehicle on the turntable right now.
+      const o = document.createElement('option');
+      o.value = cur;
+      o.textContent = `Building: ${sim.craft.def.name}`;
+      sel.prepend(o);
+    } else if (!list.some((e) => e.id === cur)) {
       // An unsaved craft (fresh from the Studio): show it at the top.
       const o = document.createElement('option');
       o.value = cur;
@@ -679,11 +687,33 @@ async function start() {
       if (mode === 'hangar') select(entry);
     },
     fly: () => fly(),
-    applyLivery: (url) => {
-      currentLivery = url;
-      craftView.setLivery(url);
+    // The agent building a vehicle: show it on the turntable as its parts stream in. The craft
+    // that was there is remembered and comes back if the job is cancelled or fails.
+    preview: (def) => {
+      if (mode !== 'hangar') return;
+      if (def === null) {
+        if (previewSaved) {
+          const saved = previewSaved;
+          previewSaved = null;
+          showDef(saved);
+        }
+        return;
+      }
+      previewSaved ??= sim.craft.def;
+      showDef(def);
     },
   });
+  function showDef(def: CraftDef): void {
+    try {
+      sim.loadCraft(def);
+    } catch {
+      return; // a partial craft that doesn't validate yet: keep the last good frame
+    }
+    replaceCraftView();
+    viewVersion = sim.version;
+    rig.fitCraft(sim.craft.boundingRadius());
+    showOnTurntable();
+  }
 
   // Resize on window changes, phone rotation and mobile browser bars appearing/disappearing.
   const resize = () => {
@@ -961,6 +991,7 @@ async function start() {
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
     weaponsView.update();
+    craterView.update(sim.time, sim.craters);
     {
       const ammo = sim.weapons.ammo();
       const kinds = Object.keys(ammo) as WeaponKind[];

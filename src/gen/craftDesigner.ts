@@ -1,21 +1,28 @@
 import { BLIMP, HELICOPTER, QUADCOPTER } from '../craft/builtins.ts';
+import { LIGHT_CYCLE } from '../craft/lightCycle.ts';
+import { LIGHT_CAR } from '../craft/lightCar.ts';
+import { TANK } from '../craft/tank.ts';
+import { BODY_COOL, BODY_WARM, LIGHTS } from '../craft/style1982.ts';
 import { JET } from '../craft/jet.ts';
 import { ORBITER } from '../craft/orbiter.ts';
 import { TEST_PLANE } from '../craft/testPlane.ts';
 import { TWIN_PLANE } from '../craft/twinPlane.ts';
 import type { CraftDef } from '../craft/types.ts';
 import { validateCraft } from '../craft/validate.ts';
+import { connectivityErrors } from '../craft/connectivity.ts';
 import { autoFix } from './autofix.ts';
 import { TUNING } from '../tuning.ts';
 import { PLANET } from '../sim/layout.ts';
 import { flightTest, formatReport, type FlightReport } from '../sim/flightTest.ts';
 import { extractJson, type ChatMessage, type OpenRouter } from './openrouter.ts';
+import { detailCraft } from './detailer.ts';
+import { assertNotAgenticOnly, isAgenticOnly } from './catalog.ts';
 
 /**
  * The spec a designer model gets. It documents the craft format and the physics conventions
  * the sim actually uses, so a model can reason about where to put things.
  */
-export const DESIGNER_SYSTEM_PROMPT = `You are an aircraft designer for a physics sandbox game. You design craft (airplanes, multirotor drones, helicopters, blimps) as JSON part graphs. The game simulates them with real rigid-body physics, per-surface aerodynamics, blade-element rotors, buoyancy, wind, fuel burn and structural failure, so a badly balanced design really flies badly. Nothing is scripted.
+export const DESIGNER_SYSTEM_PROMPT = `You are a vehicle designer for a physics sandbox game set inside a 1982-style digital world. You design craft (airplanes, jets, spaceplanes, multirotor drones, helicopters, blimps, and ground vehicles: light cycles, cars, tanks, crawlers, walkers-on-wheels, anything that drives) as JSON part graphs. The game simulates them with real rigid-body physics, per-surface aerodynamics, blade-element rotors, buoyancy, wind, fuel burn and structural failure, so a badly balanced design really flies badly. Nothing is scripted.
 
 ## Coordinates and units
 SI units: metres, kilograms, newtons, degrees. Craft-local axes: +X = right, +Y = up, -Z = FORWARD (the nose points toward -Z, the tail is at +Z). The origin is arbitrary; the ground is flat.
@@ -63,6 +70,7 @@ Mass and inertia come ONLY from part masses and shapes. Modules are massless and
    Every collider must stay at least 0.2 m above that lowest point, or the airframe scrapes the ground.
    stiffness ≈ (weight on that wheel in N) / (0.3 × restLength); damping ≈ 0.11 × stiffness.
    Tricycle gear: a steerable nose wheel well ahead of the CoM, and two braked main wheels 0.3-0.8 m BEHIND the CoM, spread laterally (at least 2 m apart for a 10 m span).
+   Ground vehicles: "drive":N makes the wheel driven (the throttle pushes it along the ground with up to N newtons; reverse is automatic). "skid":1|-1 (the wheel's side, +1 right) gives tank-style skid steering: the yaw channel drives the two sides in opposite directions, so it turns on the spot.
 4. Drag: {"type":"drag","offset"?:[x,y,z],"cdA":m²}. Quadratic drag (Cd × area) for gear, struts and small pods.
 4b. Slender body: {"type":"body","offset"?:[x,y,z],"length":m,"diameter":m,"cdFront"?:number}. Use for fuselages, nacelles and hulls (axis along the part's Z). Gives nose-on drag, crossflow drag when yawed/pitched, and the destabilising Munk moment that the tail has to overcome. cdFront ≈ 0.1 streamlined, 0.25 boxy.
 5. Fuel tank: {"type":"fuel","offset"?:[x,y,z],"capacity":kg,"fill"?:0-1}. The fuel's mass sits at the tank, so burning it moves the CoM. Put tanks near the CoM.
@@ -80,6 +88,31 @@ Mass and inertia come ONLY from part masses and shapes. Modules are massless and
 11. Generator: {"type":"generator","ratedAmps":A,"minRpmFraction"?:0-1}. Alternator driven by the engine on its part (else the first engine): powers the bus and recharges the battery once the engine is above minRpmFraction (default 0.05).
 12. Avionics: {"type":"avionics","loadW":W,"essential"?:bool}. Electrical load. Non-essential loads are shed when no generator is online. If every essential avionics box loses power, the flight controller stops and the instruments go blank, so drones die when the battery cuts off. Battery-powered craft: give them a battery sized for the flight (hover power ≈ 100 W per kg for heavy-lift quads) plus a small essential avionics load.
 
+13. Stabilizer: {"type":"stabilizer","offset"?:[x,y,z],"strength":N·m/rad}. A gyro that keeps a two-wheeler upright and leaning into turns. REQUIRED on light cycles and any two-wheel vehicle; strength ≈ 10 × the craft mass.
+14. Light trail: {"type":"trail","offset"?:[x,y,z],"kind":"wall"|"contrail","height":m,"color":hex}. "wall": a jetwall of solid light laid from the ground up to height (cycles, cars, tanks: offset at the rear, low). "contrail": a thin energy path (aircraft wingtips). Its colour is the vehicle's circuit colour.
+
+## Visual language (enforced by the game)
+The world is the original 1982 TRON digital world: monumental, geometric, electronic. Not synthwave, not realistic paint. Vehicles look like programs made of light:
+- Bodies are large dark surfaces: near-black, navy, deep blue or desaturated metallic blue (${BODY_COOL.join(', ')}); red-team vehicles use warm near-blacks (${BODY_WARM.join(', ')}).
+- Light is selective and means something. Add a few thin accent parts (collider false, a few cm thick, kind "accent light") along edges, canopies, wing leading edges, wheel rims, intakes and nozzles, in ONE circuit colour plus at most one second accent: ${LIGHTS.join(', ')} (cyan, blue, red, orange, amber, white). Never make the whole vehicle glow: lit parts cover under a quarter of its surface.
+- The game snaps every colour to this palette and draws dark bodies with dim seams and only light parts glowing, so off-palette colours are wasted.
+- Form: strong geometric primitives and clean silhouettes (wedges, slabs, cylinders, spheres, rings of boxes, arches, fins, pods). No stickers, liveries or realistic detailing.
+
+## Structure (enforced by the game)
+- The craft is ONE connected piece: every part's shape must overlap or touch another part, and all parts together must form a single connected structure. Nothing floats. Join landing gear, skids, engine pods, rotors and tails to the body with struts, legs, pylons, booms or fairings (they can be light, collider false).
+- Every module sits on or within its own part (offsets inside the part's shape, or within a few cm of its surface).
+- A design with floating parts is rejected before it is tested.
+
+## Detail (three tiers, as the world's architecture)
+Real vehicles in this world read at three scales, so build them that way:
+- Primary geometry (2-5 masses): the silhouette. Hull, wings, cabin, tracks, booms.
+- Secondary geometry: what makes it a machine. Fairings, intake scoops, nacelle cowls, armour plates layered over the hull, canopy frames, fender arcs over wheels, wheel hubs, struts and braces, fin caps, sensor pods, antenna masts, nozzles and exhaust rings, steps and ledges, chamfers (angled boxes via rotationDeg).
+- Tertiary geometry: thin panel seams and light lines (a few cm thick) along edges, around canopies, intakes, nozzles and wheel rims.
+Secondary and tertiary parts are usually visual: "collider": false, small mass (0.01-2 kg), no modules, touching the part they decorate. Aim for 30-90 parts on a finished vehicle; the physics parts can stay few. Detail never covers everything: keep large calm surfaces between the details.
+
+## Be inventive
+Players want vehicles they have never seen: asymmetric racers, ring-winged fliers, canard deltas, flying wings, tandem-rotor lifters, six-wheeled crawlers, armoured skid-steer haulers, long-wheelbase cycles, hover-style sleds on low wheels. Take the request's concept seriously and give it a distinctive geometric identity, while the physics still works. Do not copy any vehicle from a film or game: invent your own.
+
 ## Design rules that matter in this sim
 Airplanes:
 - Pitch stability: the CoM must be AHEAD (more negative z) of the centre of lift, by 10-40% of the mean wing chord. The game computes the centre of lift as the lift-slope × area weighted average of all roughly horizontal surfaces, tail included.
@@ -96,6 +129,12 @@ Rotorcraft:
 - Put the CoM directly under the rotor (helicopter: under the mast; drone: centred between the rotors).
 - Rotor static thrust should be 1.8-2.6 × the weight. Skids (collider parts) at the bottom, spread wider than the CoM height.
 - Helicopters need a tail rotor whose thrust cancels the main rotor torque. The flight controller drives it.
+Ground vehicles:
+- Driven wheels with "drive" totalling about 0.3-0.6 × the weight in newtons (more for tanks and climbers); brakes on all wheels.
+- Steering: front wheels with maxSteerDeg 25-35 (cars, crawlers), a steered front wheel plus a stabilizer (cycles), or "skid" on every wheel (tanks, haulers: no steered wheels).
+- Low centre of mass: track width at least 1.4 × the CoM height, or the vehicle rolls in turns. Two-wheelers need the stabilizer instead.
+- Wheels: radius 0.3-0.6 m (bigger for rough ground), restLength 0.15-0.4 m, stiffness ≈ wheel load / (0.3 × restLength), damping ≈ 0.11 × stiffness. Body colliders stay 0.2 m above the lowest wheel point.
+- Give every ground vehicle a "trail" module of kind "wall" at the rear (height 1-2.5 m) in its circuit colour, plus a "drag" module (cdA 0.4-3).
 Blimps:
 - Make total mass about 98-100% of the gas lift (slightly heavy) and put the centre of buoyancy directly above the CoM: heavy gondola low and under the gas.
 - Cruciform tail fins with elevators and rudders far aft; the hull's own lift acts forward of its centre and is destabilising.
@@ -118,6 +157,7 @@ Every part is a grid of 0.25 m voxels. Hard contacts (buildings, the ground, deb
 - Airplane: rest on the runway, take off, climb to 140 m, turn 90°, fly hands-off.
 - Rotorcraft (has rotors + flight controller): lift off, hover 10 m, climb to 50 m, fly forward 150 m, yaw 90°, land softly.
 - Lighter-than-air (gas lifts >70% of the weight): rest, climb to 60 m under power, turn 90° with the rudder, fly hands-off.
+- Ground vehicle (has driven wheels): rest upright, accelerate to 25 m/s, turn to heading 090, brake to a stop, never tipping over.
 
 ## Reference designs (each flies well and scores 100/100 on its test card)
 Airplane: ${JSON.stringify(TEST_PLANE)}
@@ -134,6 +174,12 @@ Helicopter: ${JSON.stringify(HELICOPTER)}
 
 Blimp: ${JSON.stringify(BLIMP)}
 
+Light cycle (two wheels, stabilizer, jetwall): ${JSON.stringify(LIGHT_CYCLE)}
+
+Light car (front steering, rear drive): ${JSON.stringify(LIGHT_CAR)}
+
+Tank (skid steering, heavy, armoured): ${JSON.stringify(TANK)}
+
 ## Your output
 Reply with ONLY a JSON object: {"name": string, "notes": "one or two sentences on the design intent and balance", "craft": <the full craft object>}.
 Every reply must contain the COMPLETE craft, not a diff.`;
@@ -141,7 +187,7 @@ Every reply must contain the COMPLETE craft, not a diff.`;
 export interface DesignAttempt {
   iteration: number;
   /** Which job did this round, and which model actually answered (may be a fallback). */
-  role: 'designer' | 'engineer';
+  role: 'designer' | 'engineer' | 'detailer';
   model?: string;
   craft?: CraftDef;
   validationErrors?: string[];
@@ -173,6 +219,11 @@ export interface DesignRequest {
   maxIterations?: number;
   /** Independent designer drafts in round 1, tested in parallel; the best goes on (default 1). */
   drafts?: number;
+  /**
+   * After a design passes: a detail round where the designer adds visual secondary/tertiary
+   * geometry (physics kept exactly as tested, re-flown, kept only if it still passes). Default true.
+   */
+  detail?: boolean;
   onEvent?: (e: DesignEvent) => void;
   /** How to flight-test a candidate (the browser passes a Web Worker runner). */
   tester?: (craft: CraftDef) => Promise<FlightReport>;
@@ -222,9 +273,14 @@ type Outcome =
  * or the budget runs out. Returns the best design seen.
  */
 export async function designCraft(client: OpenRouter, req: DesignRequest): Promise<DesignResult> {
+  assertNotAgenticOnly(req.model, 'the fixed design rounds');
+  if (req.engineerModel) assertNotAgenticOnly(req.engineerModel, 'the Engineer');
   const emit = req.onEvent ?? (() => {});
   const maxIterations = req.maxIterations ?? 3;
   const drafts = Math.max(1, Math.min(4, Math.round(req.drafts ?? 1)));
+  // Agentic-only endpoints never ride along as backups for one-shot calls.
+  const clean = (l?: string[]) => l?.filter((m) => !isAgenticOnly(m));
+  req = { ...req, designerFallbacks: clean(req.designerFallbacks), engineerFallbacks: clean(req.engineerFallbacks) };
   const messages: ChatMessage[] = [{ role: 'system', content: DESIGNER_SYSTEM_PROMPT }];
 
   let userMsg = req.base
@@ -286,6 +342,8 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
       return { attempt, outcome: { kind: 'error', api: false, message: attempt.error } };
     }
     const errors = validateCraft(parsed.craft);
+    // One connected piece: no floating parts, every module on its own part.
+    if (!errors.length) errors.push(...connectivityErrors(parsed.craft as CraftDef));
     if (errors.length) {
       attempt.validationErrors = errors;
       emit({ type: 'attempt', attempt });
@@ -319,7 +377,8 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
     emit({ type: 'status', message: `${role === 'designer' ? 'Designer' : 'Engineer'} (${model}) working, round ${i}/${maxIterations}${n > 1 ? `, ${n} drafts in parallel` : ''}…` });
     // Parallel drafts vary the temperature so they explore different layouts.
     const results = await Promise.all(Array.from({ length: n }, (_, k) =>
-      attemptOnce(i, role, n > 1 ? 0.35 + 0.25 * k : 0.4, n > 1 ? ` (draft ${k + 1}/${n})` : '')));
+      // The designer gets room to be inventive; engineers stay precise.
+      attemptOnce(i, role, n > 1 ? 0.45 + 0.25 * k : role === 'designer' ? 0.7 : 0.35, n > 1 ? ` (draft ${k + 1}/${n})` : '')));
     const pick = results.reduce((a, b) => (rank(b.outcome) > rank(a.outcome) ? b : a));
     const o = pick.outcome;
     if (o.kind === 'error') {
@@ -356,6 +415,28 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
   }
 
   if (!best) throw new Error('The model never produced a valid craft. Try another model or a simpler request.');
+  if (req.detail !== false && best.report.passed) {
+    emit({ type: 'status', message: `Detailing "${best.name}"…` });
+    const attempt: DesignAttempt = { iteration: attempts.length + 1, role: 'detailer', cost: 0 };
+    attempts.push(attempt);
+    try {
+      const d = await detailCraft(client, {
+        model: req.model, fallbacks: req.designerFallbacks, craft: best.craft, concept: req.prompt,
+        tester: req.tester, baseReport: best.report, signal: req.signal,
+      });
+      attempt.model = d.model;
+      attempt.cost = d.cost;
+      totalCost += d.cost;
+      attempt.craft = d.craft;
+      attempt.fixes = [`${d.accepted ? `added ${d.added} detail parts` : 'no detail added'}${d.notes.length ? `: ${d.notes.join('; ')}` : ''}`];
+      if (d.report) attempt.report = d.report;
+      if (d.accepted && d.report) best = { ...best, craft: d.craft, report: d.report };
+    } catch (e) {
+      if (req.signal?.aborted) throw e;
+      attempt.error = `Detail round failed (kept the plain design): ${e instanceof Error ? e.message : e}`;
+    }
+    emit({ type: 'attempt', attempt });
+  }
   best.cost = totalCost;
   best.attempts = attempts;
   // Credit everyone who worked on it, in order (designer first, then engineers/fallbacks).

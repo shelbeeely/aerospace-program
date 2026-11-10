@@ -196,9 +196,9 @@ export class TrafficSystem {
     return this.byCollider.size + this.byWall.size;
   }
 
-  /** Derez the rider whose cycle owns this collider (a weapon hit). True if there was one. */
+  /** Derez the rider whose cycle (or jetwall) owns this collider (a weapon hit). True if there was one. */
   derezCollider(handle: number, time: number): boolean {
-    const r = this.byCollider.get(handle);
+    const r = this.byCollider.get(handle) ?? this.byWall.get(handle);
     if (r) this.derez(r, time);
     return !!r;
   }
@@ -207,7 +207,11 @@ export class TrafficSystem {
   derezWithin(x: number, z: number, radius: number, time: number): number {
     let n = 0;
     for (const r of this.riders) {
-      if (r.derezAt !== null || (r.x - x) ** 2 + (r.z - z) ** 2 > radius * radius) continue;
+      if (r.derezAt !== null) continue;
+      // The rider, or any corner of its jetwall, inside the blast: the light goes, and the rider with it.
+      const near = (r.x - x) ** 2 + (r.z - z) ** 2 <= radius * radius
+        || r.trail.some((c) => (c.x - x) ** 2 + (c.z - z) ** 2 <= radius * radius);
+      if (!near) continue;
       this.derez(r, time);
       n++;
     }
