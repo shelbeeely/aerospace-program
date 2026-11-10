@@ -42,7 +42,7 @@ import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
 import { updateSkyPlanet } from './render/neon.ts';
 import { ChipsView } from './render/ChipsView.ts';
 import { WeaponsView } from './render/WeaponsView.ts';
-import { LOADOUTS, WEAPONS, type WeaponKind } from './sim/weapons.ts';
+import { LOADOUT_ORDER, LOADOUTS, WEAPONS, type Loadout, type WeaponKind } from './sim/weapons.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
 import { FlightAutopilot, type AutopilotKind } from './sim/flightAutopilot.ts';
@@ -421,10 +421,7 @@ async function start() {
     const thrust = craft.engines.reduce((sum, e) => sum + e.def.maxThrust, 0);
     const tw = thrust > 0 ? (thrust / (mass * TUNING.gravity)).toFixed(2) : '—';
     const row = (k: string, v: string) => `<div class="row"><span>${k}</span><b>${v}</b></div>`;
-    const name = document.createElement('div');
-    name.className = 'card-name';
-    name.textContent = craft.def.name;
-    craftCard.replaceChildren(name);
+    craftCard.replaceChildren(craftPicker());
     craftCard.insertAdjacentHTML(
       'beforeend',
       row('TYPE', vehicleKind(sim)) +
@@ -432,7 +429,79 @@ async function start() {
         row('SPAN', `${(span * 2).toFixed(1)} m`) +
         row('T/W', tw),
     );
-    craftCard.append(spawnPicker(), reinforcePanel());
+    craftCard.append(spawnPicker(), loadoutPicker(), reinforcePanel());
+  };
+  /**
+   * Choose the craft on the main (hangar) screen: every built-in and saved design in one list,
+   * with ‹ › to step through them (the same list as [ / ]).
+   */
+  const craftPicker = () => {
+    const wrap = document.createElement('div');
+    wrap.className = 'card-name craft-pick';
+    const list = [...BUILTINS.map(builtinEntry), ...library.list()];
+    const sel = document.createElement('select');
+    sel.setAttribute('aria-label', 'Craft');
+    const group = (title: string, entries: LibraryEntry[]) => {
+      if (!entries.length) return;
+      const g = document.createElement('optgroup');
+      g.label = title;
+      for (const e of entries) {
+        const o = document.createElement('option');
+        o.value = e.id;
+        o.textContent = e.name;
+        g.append(o);
+      }
+      sel.append(g);
+    };
+    group('Built-in', list.filter((e) => e.id.startsWith('builtin:')));
+    group('Your designs', list.filter((e) => !e.id.startsWith('builtin:')));
+    const cur = currentEntry?.id ?? 'builtin:trainer';
+    if (!list.some((e) => e.id === cur)) {
+      // An unsaved craft (fresh from the Studio): show it at the top.
+      const o = document.createElement('option');
+      o.value = cur;
+      o.textContent = sim.craft.def.name;
+      sel.prepend(o);
+    }
+    sel.value = cur;
+    sel.addEventListener('change', () => {
+      const e = list.find((x) => x.id === sel.value);
+      if (e) select(e);
+      sel.blur();
+    });
+    const step = (label: string, dir: 1 | -1) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'craft-step';
+      b.textContent = label;
+      b.setAttribute('aria-label', dir > 0 ? 'Next craft' : 'Previous craft');
+      b.addEventListener('click', () => { cycleCraft(dir); b.blur(); });
+      return b;
+    };
+    wrap.append(step('‹', -1), sel, step('›', 1));
+    return wrap;
+  };
+  /** Weapons loadout for the craft (the same choice as I in flight). */
+  const loadoutPicker = () => {
+    const label = document.createElement('label');
+    label.className = 'spawn-at';
+    const name = document.createElement('span');
+    name.textContent = 'ARM';
+    const sel = document.createElement('select');
+    sel.setAttribute('aria-label', 'Weapons loadout');
+    for (const id of LOADOUT_ORDER) {
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = LOADOUTS[id].label;
+      sel.append(o);
+    }
+    sel.value = sim.weapons.loadout;
+    sel.addEventListener('change', () => {
+      sim.weapons.arm(sim.craft.def, sel.value as Loadout);
+      sel.blur();
+    });
+    label.append(name, sel);
+    return label;
   };
   /**
    * "Spawn at": any runway, any helipad, or (ground vehicles) the nearest street. The choice
