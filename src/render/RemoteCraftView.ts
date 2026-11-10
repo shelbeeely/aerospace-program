@@ -2,7 +2,8 @@ import * as THREE from 'three/webgpu';
 import { partQuaternion } from '../craft/massProperties.ts';
 import type { CraftDef, Vec3Tuple } from '../craft/types.ts';
 import { validateCraft } from '../craft/validate.ts';
-import { geometryFor } from './CraftView.ts';
+import { edgeColor, fillColor, geometryFor } from './CraftView.ts';
+import { style1982 } from '../craft/style1982.ts';
 import { glow, neonFillMaterial, neonize, neonTint } from './neon.ts';
 
 /**
@@ -20,16 +21,18 @@ export class RemoteCraftView {
   /** Craft bounding radius (m), for the beacon height and proximity checks. */
   readonly radius: number;
 
-  constructor(def: CraftDef, color: string) {
+  constructor(def: CraftDef, color: string, opts: { beacon?: boolean } = {}) {
     const ok = validateCraft(def).length === 0;
+    // The same 1982 palette and body/light edges as the player's craft.
+    if (ok) def = style1982(def);
     let radius = 2;
     if (ok) {
       for (const part of def.parts) {
         const geo = geometryFor(part.shape);
-        const fill = neonFillMaterial(neonTint(part.color).multiplyScalar(0.035));
+        const fill = neonFillMaterial(fillColor(part.color));
         this.fills.push(fill);
         const mesh = new THREE.Mesh(geo, fill);
-        mesh.add(neonize(geo, neonTint(part.color)));
+        mesh.add(neonize(geo, edgeColor(part.color)));
         mesh.position.set(...part.position);
         const q = partQuaternion(part);
         mesh.quaternion.copy(q);
@@ -53,8 +56,8 @@ export class RemoteCraftView {
       this.root.add(mesh);
     }
     this.radius = radius;
-    // Beacon: a thin vertical line of the player's colour above the craft.
-    const h = 40 + radius * 4;
+    // Beacon: a thin vertical line of the player's colour above the craft (players, not AI traffic).
+    const h = opts.beacon === false ? 0 : 40 + radius * 4;
     const beaconGeo = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([0, radius + 1, 0, 0, radius + 1 + h, 0], 3));
     this.beaconMat = new THREE.LineBasicMaterial({ color: glow(color, 2.4), transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending });
     const beacon = new THREE.LineSegments(beaconGeo, this.beaconMat);

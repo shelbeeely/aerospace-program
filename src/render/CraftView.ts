@@ -42,12 +42,12 @@ export function geometryFor(shape: ShapeDef): THREE.BufferGeometry {
  * Fill colour for a part (1982 rules: large unlit surfaces, selective light): a body part shows
  * its dark navy / steel surface; a light part (accent strip, canopy, nozzle) glows in its colour.
  */
-function fillColor(color: string): THREE.Color {
+export function fillColor(color: string): THREE.Color {
   return isBodyColor(color) ? new THREE.Color(color).multiplyScalar(0.55) : neonTint(color).multiplyScalar(0.35);
 }
 
 /** Edge colour: dim structural seams on body parts; only light parts carry bright edges. */
-function edgeColor(color: string): THREE.Color {
+export function edgeColor(color: string): THREE.Color {
   return isBodyColor(color) ? neonTint(color).multiplyScalar(0.22) : neonTint(color);
 }
 

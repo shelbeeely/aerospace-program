@@ -19,6 +19,7 @@ npm run drive          # road network: one graph, every destination by road, the
 npm run weapons        # weapons: mounts, cannon cratering, tank bulldozer, bombs, missiles, armour
 npm run craft          # vehicle rules: connected parts, the 1982 palette, ground-vehicle design loop (offline)
 npm run engines        # fast flight: compressibility, ramjet/scramjet/solid/turbojet, thrust vectoring, airbrake, chute, cone/capsule parts, weight floors
+npm run air            # AI air traffic: count, clearance, destinations and circling, shot down and replaced
 npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
 ```
@@ -230,6 +231,16 @@ air temperature, precipitation and cloud (IMC), and flags ICE, VORTEX RING and A
 What you see comes from the same model the physics flies through: rain and snow fall with the
 wind's drift, the cloud deck is drawn from the same drifting cells that make showers, thermals
 and icing, fog follows visibility, and the runway darkens when wet.
+
+## AI air traffic
+
+Other programs fly around you (`src/sim/aiTraffic.ts`): the built-in aircraft and, in single
+player, your own hangar designs (F3 → *AI air traffic*: how many, and whether yours fly too).
+Each picks a destination 1.5-6 km from you, flies there, circles for 30-90 s, then picks
+another; it scans its path 15 s ahead (and the whole circle before circling) and climbs over
+anything in the way. The flight model is a kinematic coordinated turn (banking into turns), so
+two dozen cost almost nothing; each carries a kinematic collider, so you can fly into one or
+shoot it down (it derezzes in its circuit colour and another takes its place).
 
 ## Going fast: engines, parts and modules
 

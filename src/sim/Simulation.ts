@@ -19,6 +19,7 @@ import { LightningSystem, type LightningStrike, type StrikeTarget } from './ligh
 import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
 import { craftBounds, WeaponSystem, type WeaponHost, type WeaponImpact } from './weapons.ts';
+import { AiAirTraffic, type AiFlyer } from './aiTraffic.ts';
 import { BOOM_DAMAGE, BOOM_DEREZ, BOOM_SHATTER, boomBite, boomOverpressure, boomReach, type BoomEvent } from './sonicBoom.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
 import { vehicleKind } from './vehicleTests.ts';
@@ -160,6 +161,18 @@ export class Simulation {
     return e;
   }
 
+  /** An AI aircraft derezzes: a flash and voxels in its circuit colour, a splash if it was low. */
+  derezFlyer(f: AiFlyer): void {
+    if (f.derezAt !== null) return;
+    this.airTraffic.derez(f, this.time);
+    const p = f.pos;
+    this.explosions.push({ x: p.x, y: p.y, z: p.z, time: this.time, radius: 6 + f.radius, color: f.color, speed: f.speed });
+    if (this.explosions.length > 32) this.explosions.splice(0, this.explosions.length - 32);
+    const vx = Math.sin(f.heading) * f.speed * 0.4, vz = -Math.cos(f.heading) * f.speed * 0.4;
+    this.chips.emit({ x: p.x, y: p.y, z: p.z, radius: f.radius, vx, vy: 3, vz, speed: 12, count: 700, size: 0.28, color: f.color, persist: true });
+    this.version++;
+  }
+
   /** The player's craft: a boom check four times a second while it flies faster than sound. */
   private playerBoom(): void {
     if (this.exploded || this.time - this.boomAt < 0.25) return;
@@ -229,6 +242,8 @@ export class Simulation {
   readonly trails: TrailSystem;
   /** AI light-cycle traffic on the street grid (kinematic; colliders near the player). */
   readonly traffic: TrafficSystem;
+  /** AI aircraft flying around the player (built-ins and, in single player, the player's designs). */
+  readonly airTraffic: AiAirTraffic;
   readonly wrapShift = new THREE.Vector3();
   private readonly groundBody: RAPIER.RigidBody;
   private readonly groundMotion = new THREE.Vector3();
@@ -288,6 +303,7 @@ export class Simulation {
     this.trails = new TrailSystem(this.world);
     this.trails.chips = this.chips;
     this.traffic = new TrafficSystem(this.world, CITY.seed, this.chips);
+    this.airTraffic = new AiAirTraffic(this.world, CITY.seed);
     this.town = new Town(this.world);
     this.town.chips = this.chips;
     this.staticWorld = new StaticWorld(this.world, this.town);
@@ -308,6 +324,11 @@ export class Simulation {
     this.onContactForce((e) => this.staticWorld.onContact(e));
     this.onContactForce((e) => this.voxelHit(e));
     this.onContactForce((e) => this.traffic.onContact(e));
+    // Flying into an AI aircraft derezzes it (the player's craft takes the impact as usual).
+    this.onContactForce((e) => {
+      const f = this.airTraffic.byCollider(e.collider1) ?? this.airTraffic.byCollider(e.collider2);
+      if (f) this.derezFlyer(f);
+    });
 
     const self = this;
     this.ctx = {
@@ -484,6 +505,7 @@ export class Simulation {
   resetToRunway(): void {
     this.trails.clear();
     this.traffic.clear();
+    this.airTraffic.clear();
     this.staticWorld.reset();
     this.town.reset();
     this.chips.reset();
@@ -607,6 +629,7 @@ export class Simulation {
     this.craft.updateSoftCcd(this.dt);
     this.planetForces();
     this.traffic.step(this.dt, this.time, this.position, this.trails);
+    this.airTraffic.step(this.dt, this.time, this.position);
 
     this.world.step(this.events);
     this.readBodyState();
@@ -878,11 +901,16 @@ export class Simulation {
     const p = h.point;
     const col = h.collider;
     if (col) this.traffic.derezCollider(col.handle, this.time); // a rider, or a rider's jetwall
+    // AI aircraft: hit directly, or caught in a blast.
+    const flyer = col ? this.airTraffic.byCollider(col.handle) : undefined;
+    if (flyer) this.derezFlyer(flyer);
+    if (h.blast >= 3) for (const f of this.airTraffic.flyers) if (f.derezAt === null && f.pos.distanceTo(p) < h.blast + f.radius) this.derezFlyer(f);
     if (h.blast >= 3) this.traffic.derezWithin(p.x, p.z, h.blast * 0.8, this.time);
     // Light walls break: a round that strikes one cuts a gap; a blast clears its radius.
     const wallHit = !!col && this.trails.isWall(col.handle);
     if (wallHit || h.blast >= 3) this.trails.cutAt(p.x, p.z, wallHit ? Math.max(2, h.blast * 0.8) : h.blast * 0.8);
-    const body = col?.parent();
+    // (An AI aircraft just hit has no body left to shove: it derezzed above.)
+    const body = flyer ? undefined : col?.parent();
     if (body && body.isDynamic()) {
       const k = h.mass * (h.kind === 'gun' ? 1.5 : 4);
       body.applyImpulseAtPoint({ x: h.vel.x * k, y: h.vel.y * k + h.blast * h.mass, z: h.vel.z * k }, { x: p.x, y: p.y, z: p.z }, true);

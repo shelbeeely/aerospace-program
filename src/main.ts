@@ -45,6 +45,7 @@ import { ChipsView } from './render/ChipsView.ts';
 import { WeaponsView } from './render/WeaponsView.ts';
 import { CraterView } from './render/CraterView.ts';
 import { BoomView } from './render/BoomView.ts';
+import { AiTrafficView } from './render/AiTrafficView.ts';
 import { terrainHeight } from './sim/terrain.ts';
 import { craftBounds } from './sim/weapons.ts';
 import { LOADOUT_ORDER, LOADOUTS, WEAPONS, type Loadout, type WeaponKind } from './sim/weapons.ts';
@@ -195,6 +196,7 @@ async function start() {
   const weaponsView = new WeaponsView(scene, sim.weapons);
   const craterView = new CraterView(scene);
   const boomView = new BoomView(scene);
+  const aiTrafficView = new AiTrafficView(scene, sim.airTraffic);
   let boomHeardAt = -Infinity;
   let wasSupersonic = false;
   let explosionHeardAt = -Infinity;
@@ -381,6 +383,20 @@ async function start() {
   // dev-server proxy holds the key. Default session cap: $1.
   const client = browserClient(stored(KEY_STORAGE), Number(stored(CAP_STORAGE) ?? 1));
   const library = new Library();
+  // AI air traffic: the built-in aircraft, plus your own designs in single player.
+  const aiCount = document.getElementById('w-ai-count') as HTMLInputElement | null;
+  const aiMine = document.getElementById('w-ai-mine') as HTMLInputElement | null;
+  const aiCountLabel = document.getElementById('w-ai-count-v');
+  const updateAirPool = () => {
+    const own = aiMine?.checked !== false && !net.connected ? library.list().map((e) => e.craft) : [];
+    sim.airTraffic.pool = [...BUILTINS.map((b) => b.craft), ...own];
+    sim.airTraffic.count = Number(aiCount?.value ?? 8);
+    if (aiCountLabel) aiCountLabel.textContent = String(sim.airTraffic.count);
+  };
+  aiCount?.addEventListener('input', updateAirPool);
+  aiMine?.addEventListener('change', updateAirPool);
+  updateAirPool();
+  setInterval(updateAirPool, 5000); // new designs join the traffic; multiplayer drops your own
   let currentEntry: LibraryEntry | null = null;
   /** While the agent builds a vehicle on the turntable: the craft that was there before. */
   let previewSaved: CraftDef | null = null;
@@ -1006,6 +1022,7 @@ async function start() {
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
     weaponsView.update();
+    aiTrafficView.update(dt);
     craterView.update(sim.time, sim.craters);
     {
       // Sonic booms: the Mach cone and vapour, ground shock rings, and the double crack when the

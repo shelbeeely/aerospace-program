@@ -11,6 +11,7 @@
     "weather": "node --experimental-transform-types --no-warnings scripts/weather.ts",
     "craft": "node --experimental-transform-types --no-warnings scripts/craft.ts",
     "engines": "node --experimental-transform-types --no-warnings scripts/engines.ts",
+    "air": "node --experimental-transform-types --no-warnings scripts/air.ts",
     "orbit": "node --experimental-transform-types --no-warnings scripts/orbit.ts",
     "weapons": "node --experimental-transform-types --no-warnings scripts/weapons.ts",
     "destruction": "node --experimental-transform-types --no-warnings scripts/destruction.ts",
