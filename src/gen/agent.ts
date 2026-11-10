@@ -31,8 +31,37 @@ export interface AgentRequest extends DesignRequest {
   maxTests?: number;
   /** How hard the model thinks each turn (default medium). */
   effort?: 'low' | 'medium' | 'high';
+  /** Called once per agent run (passed, failed or cancelled) with its full trace, for training data. */
+  onTrace?: (trace: AgentTrace) => void;
   /** Force the fixed pipeline (no tools). */
   noAgent?: boolean;
+}
+
+/**
+ * One agent run as training data: the whole conversation in OpenAI chat format with tools
+ * (system, user, assistant turns with their tool_calls and the model's `reasoning`, tool
+ * results), the tool definitions, and how it went, so runs can be filtered (passed, score).
+ */
+export interface AgentTrace {
+  messages: Array<ChatMessage & { reasoning?: string }>;
+  tools: ToolDef[];
+  metadata: {
+    model: string;
+    effort: string;
+    prompt: string;
+    startedAt: string;
+    seconds: number;
+    turns: number;
+    flightTests: number;
+    passed: boolean;
+    score: number | null;
+    vehicle: string | null;
+    parts: number | null;
+    name: string | null;
+    costUsd: number;
+    /** Set when the run failed or was cancelled. */
+    error?: string;
+  };
 }
 
 /** What the agent is doing, live: for the Studio's console and the turntable. */
@@ -304,81 +333,125 @@ export async function designWithAgent(client: OpenRouter, req: AgentRequest, onT
     onTool({ type: 'craft', craft, partial: true, turn });
   };
 
-  let nudges = 0;
-  let editsSinceTest = 0;
-  for (let turn = 1; turn <= maxTurns && !st.finished; turn++) {
-    let res;
-    try {
-      res = await client.chat({
-        // tool_choice is left at the provider default ('auto'): some endpoints don't accept the field.
-        model: req.model, fallbacks: req.designerFallbacks, messages, tools: AGENT_TOOLS,
-        temperature: turn === 1 ? 0.7 : 0.35, maxTokens: 64000, reasoningEffort: req.effort ?? 'medium', signal: req.signal,
-        onDelta: (d) => {
-          if (d.kind === 'reasoning') onTool?.({ type: 'thinking', text: d.text, turn });
-          else if (d.kind === 'content') onTool?.({ type: 'text', text: d.text, turn });
-          else {
-            onTool?.({ type: 'calling', name: d.name, bytes: d.args.length, turn });
-            preview(d.name, d.args, turn);
+  // Reasoning per assistant message (index into `messages`), for the trace.
+  const reasoningAt = new Map<number, string>();
+  let turns = 0;
+  let fellBack = false;
+  const startedAt = new Date();
+  const body = async (): Promise<DesignResult> => {
+    let nudges = 0;
+    let editsSinceTest = 0;
+    for (let turn = 1; turn <= maxTurns && !st.finished; turn++) {
+      turns = turn;
+      let res;
+      try {
+        res = await client.chat({
+          // tool_choice is left at the provider default ('auto'): some endpoints don't accept the field.
+          model: req.model, fallbacks: req.designerFallbacks, messages, tools: AGENT_TOOLS,
+          temperature: turn === 1 ? 0.7 : 0.35, maxTokens: 64000, reasoningEffort: req.effort ?? 'medium', signal: req.signal,
+          onDelta: (d) => {
+            if (d.kind === 'reasoning') onTool?.({ type: 'thinking', text: d.text, turn });
+            else if (d.kind === 'content') onTool?.({ type: 'text', text: d.text, turn });
+            else {
+              onTool?.({ type: 'calling', name: d.name, bytes: d.args.length, turn });
+              preview(d.name, d.args, turn);
+            }
+          },
+        });
+      } catch (e) {
+        if (req.signal?.aborted) throw e;
+        // A model that can't take tools at all: run the fixed pipeline instead.
+        if (turn === 1) {
+          emit({ type: 'status', message: `Agent mode unavailable (${e instanceof Error ? e.message.slice(0, 80) : e}); running the fixed pipeline.` });
+          fellBack = true;
+          return fixed(`failed on its first agent turn (${e instanceof Error ? e.message.slice(0, 120) : e})`);
+        }
+        break; // keep what we have
+      }
+      cost += res.usage.cost;
+      models.add(res.model);
+      messages.push({ role: 'assistant', content: res.content ?? '', ...(res.toolCalls.length ? { tool_calls: res.toolCalls } : {}) });
+      if (res.reasoning) reasoningAt.set(messages.length - 1, res.reasoning);
+      if (!res.toolCalls.length) {
+        // No tool call: a model that answers in prose/JSON only. Nudge twice, then fall back.
+        if (turn === 1 && !st.craft && nudges === 0 && /"parts"\s*:/.test(res.content)) {
+          try { admit(JSON.parse(res.content.slice(res.content.indexOf('{'), res.content.lastIndexOf('}') + 1)), st); } catch { /* ignore */ }
+        }
+        if (++nudges > 2) {
+          if (!st.craft) {
+            emit({ type: 'status', message: 'The model would not use tools; running the fixed pipeline.' });
+            fellBack = true;
+            return fixed('would not use the tools');
           }
+          break;
+        }
+        messages.push({ role: 'user', content: 'Use the tools: submit_craft / patch / check / analyze / flight_test / add_detail, then finish.' });
+        continue;
+      }
+      for (const call of res.toolCalls) {
+        const before = st.craft;
+        let out = await run(call);
+        // Keep the agent moving: editing over and over without testing wastes turns.
+        if (/^(submit_craft|patch)$/.test(call.function.name)) editsSinceTest++;
+        else if (call.function.name === 'flight_test') editsSinceTest = 0;
+        if (editsSinceTest >= 3 && /^(submit_craft|patch)$/.test(call.function.name)) {
+          out += `\nNOTE: ${editsSinceTest} edits in a row without a flight test. Stop rewriting: run analyze, then flight_test, and fix what the report says (${maxTurns - turn} turns left).`;
+        }
+        if (st.craft && st.craft !== before) onTool?.({ type: 'craft', craft: st.craft, partial: false, turn });
+        lastPreview = { name: '', count: -1, at: 0 };
+        onTool?.({ type: 'tool', name: call.function.name, summary: out.split('\n')[0].slice(0, 160), turn });
+        emit({ type: 'status', message: `Agent: ${call.function.name} → ${out.split('\n')[0].slice(0, 100)}` });
+        messages.push({ role: 'tool', tool_call_id: call.id, content: out });
+        if (st.finished) break;
+      }
+    }
+
+    // The harness's own gate: the final craft must have passed a test the harness ran.
+    if (st.craft && st.testedJson !== JSON.stringify(st.craft) && st.tests < maxTests + 2 && connectivityErrors(st.craft).length === 0) await test();
+    const pick = st.lastReport?.passed && st.testedJson === JSON.stringify(st.craft) ? { craft: st.craft!, report: st.lastReport } : st.passed ?? st.best;
+    if (!pick) throw new Error('The agent never produced a craft that could be flight-tested. Try another model.');
+    return {
+      craft: pick.craft,
+      name: st.finished?.name ?? pick.craft.name,
+      notes: st.finished?.notes ?? '',
+      report: pick.report,
+      attempts,
+      model: [...models].join(' + ') || req.model,
+      prompt: req.prompt,
+      cost,
+    };
+  };
+
+  let result: DesignResult | null = null;
+  let error: string | undefined;
+  try {
+    result = await body();
+    return result;
+  } catch (e) {
+    error = req.signal?.aborted ? 'cancelled' : e instanceof Error ? e.message : String(e);
+    throw e;
+  } finally {
+    if (req.onTrace && !fellBack && turns > 0) {
+      req.onTrace({
+        messages: messages.map((m, i) => (reasoningAt.has(i) ? { ...m, reasoning: reasoningAt.get(i)! } : { ...m })),
+        tools: AGENT_TOOLS,
+        metadata: {
+          model: [...models].join(' + ') || req.model,
+          effort: req.effort ?? 'medium',
+          prompt: req.prompt,
+          startedAt: startedAt.toISOString(),
+          seconds: Math.round((Date.now() - startedAt.getTime()) / 1000),
+          turns,
+          flightTests: st.tests,
+          passed: !!result?.report.passed,
+          score: result?.report.score ?? st.best?.report.score ?? null,
+          vehicle: result?.report.vehicle ?? null,
+          parts: result?.craft.parts.length ?? st.craft?.parts.length ?? null,
+          name: result?.name ?? null,
+          costUsd: cost,
+          ...(error ? { error } : {}),
         },
       });
-    } catch (e) {
-      if (req.signal?.aborted) throw e;
-      // A model that can't take tools at all: run the fixed pipeline instead.
-      if (turn === 1) {
-        emit({ type: 'status', message: `Agent mode unavailable (${e instanceof Error ? e.message.slice(0, 80) : e}); running the fixed pipeline.` });
-        return fixed(`failed on its first agent turn (${e instanceof Error ? e.message.slice(0, 120) : e})`);
-      }
-      break; // keep what we have
-    }
-    cost += res.usage.cost;
-    models.add(res.model);
-    messages.push({ role: 'assistant', content: res.content ?? '', ...(res.toolCalls.length ? { tool_calls: res.toolCalls } : {}) });
-    if (!res.toolCalls.length) {
-      // No tool call: a model that answers in prose/JSON only. Nudge twice, then fall back.
-      if (turn === 1 && !st.craft && nudges === 0 && /"parts"\s*:/.test(res.content)) {
-        try { admit(JSON.parse(res.content.slice(res.content.indexOf('{'), res.content.lastIndexOf('}') + 1)), st); } catch { /* ignore */ }
-      }
-      if (++nudges > 2) {
-        if (!st.craft) {
-          emit({ type: 'status', message: 'The model would not use tools; running the fixed pipeline.' });
-          return fixed('would not use the tools');
-        }
-        break;
-      }
-      messages.push({ role: 'user', content: 'Use the tools: submit_craft / patch / check / analyze / flight_test / add_detail, then finish.' });
-      continue;
-    }
-    for (const call of res.toolCalls) {
-      const before = st.craft;
-      let out = await run(call);
-      // Keep the agent moving: editing over and over without testing wastes turns.
-      if (/^(submit_craft|patch)$/.test(call.function.name)) editsSinceTest++;
-      else if (call.function.name === 'flight_test') editsSinceTest = 0;
-      if (editsSinceTest >= 3 && /^(submit_craft|patch)$/.test(call.function.name)) {
-        out += `\nNOTE: ${editsSinceTest} edits in a row without a flight test. Stop rewriting: run analyze, then flight_test, and fix what the report says (${maxTurns - turn} turns left).`;
-      }
-      if (st.craft && st.craft !== before) onTool?.({ type: 'craft', craft: st.craft, partial: false, turn });
-      lastPreview = { name: '', count: -1, at: 0 };
-      onTool?.({ type: 'tool', name: call.function.name, summary: out.split('\n')[0].slice(0, 160), turn });
-      emit({ type: 'status', message: `Agent: ${call.function.name} → ${out.split('\n')[0].slice(0, 100)}` });
-      messages.push({ role: 'tool', tool_call_id: call.id, content: out });
-      if (st.finished) break;
     }
   }
-
-  // The harness's own gate: the final craft must have passed a test the harness ran.
-  if (st.craft && st.testedJson !== JSON.stringify(st.craft) && st.tests < maxTests + 2 && connectivityErrors(st.craft).length === 0) await test();
-  const pick = st.lastReport?.passed && st.testedJson === JSON.stringify(st.craft) ? { craft: st.craft!, report: st.lastReport } : st.passed ?? st.best;
-  if (!pick) throw new Error('The agent never produced a craft that could be flight-tested. Try another model.');
-  return {
-    craft: pick.craft,
-    name: st.finished?.name ?? pick.craft.name,
-    notes: st.finished?.notes ?? '',
-    report: pick.report,
-    attempts,
-    model: [...models].join(' + ') || req.model,
-    prompt: req.prompt,
-    cost,
-  };
 }

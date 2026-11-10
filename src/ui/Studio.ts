@@ -7,7 +7,8 @@ import { composeMusic, MUSIC_STYLES } from '../gen/music.ts';
 import { deleteTheme, saveTheme, themeStyleForPrompt } from '../gen/tracks.ts';
 
 interface ComposedTheme { audio: string; model: string; cost: number }
-import { designWithAgent, type AgentEvent } from '../gen/agent.ts';
+import { designWithAgent, type AgentEvent, type AgentTrace } from '../gen/agent.ts';
+import { clearTraces, listTraces, saveTrace, toJsonl } from '../gen/traces.ts';
 import {
   DIRECT_BASE_URL,
   supportsTools,
@@ -116,6 +117,9 @@ export class Studio {
     log: HTMLOListElement;
     /** Live agent console: reasoning and text as they stream, tool calls and results. */
     console: HTMLElement;
+    /** "Download this run" after an agent run ends (its trace, for fine-tuning). */
+    traceRow: HTMLElement;
+    traceCount: HTMLElement;
     result: HTMLElement;
     musicPrompt: HTMLInputElement;
     musicStyle: HTMLSelectElement;
@@ -174,6 +178,7 @@ export class Studio {
     const designBtn = h('button', { class: 'primary', onclick: () => this.design(false) }, 'Generate vehicle');
     const detailBtn = h('button', { onclick: () => this.detailCurrent(), title: 'The agent adds visual detail (panels, plates, intakes, light lines) to the current craft. Its physics stay exactly as tested.' }, 'Add detail');
     const detailPass = h('input', { type: 'checkbox', checked: '' }) as HTMLInputElement;
+    const passedOnly = h('input', { type: 'checkbox' }) as HTMLInputElement;
     const themeBox = h('input', { type: 'checkbox', checked: '' }) as HTMLInputElement;
     const refineBtn = h('button', { onclick: () => this.design(true), title: 'Modify the craft you are flying, using your flight as feedback' }, 'Refine current');
     const cancel = h('button', { class: 'hidden', onclick: () => this.busy?.abort() }, 'Cancel');
@@ -202,6 +207,8 @@ export class Studio {
       prompt,
       log: h('ol', { class: 'studio-log' }),
       console: h('div', { class: 'agent-console hidden', 'aria-live': 'off' }),
+      traceRow: h('div', { class: 'row hidden' }),
+      traceCount: h('span', { class: 'muted small' }),
       result: h('div', { class: 'studio-result hidden' }),
       musicPrompt,
       musicStyle,
@@ -234,6 +241,7 @@ export class Studio {
         h('label', { class: 'muted small', title: 'Once the design passes, the agent adds visual detail (re-tested; physics unchanged)' }, detailPass, ' Add detail once it passes'),
         h('label', { class: 'muted small', title: 'The Composer writes a theme for the vehicle while the agent builds it; it is saved with the vehicle and plays when you fly it' }, themeBox, ' Compose a theme track for it'),
         this.el.console,
+        this.el.traceRow,
         this.el.log,
         this.el.result,
       ),
@@ -246,6 +254,16 @@ export class Studio {
         this.searchInfo,
         this.termsNote,
         crew, h('label', {}, 'Reasoning effort', effort), h('label', {}, 'Flight-test budget', tests),
+      ),
+      h('details', { class: 'settings' },
+        h('summary', {}, 'Training data'),
+        h('div', { class: 'muted small' }, 'Every agent run is kept in this browser (nothing is uploaded): the model\'s reasoning, each tool call and result, and how it went. Download as JSONL (OpenAI chat format with tools, reasoning on each assistant turn) to fine-tune a model.'),
+        h('div', { class: 'row' }, this.el.traceCount),
+        h('div', { class: 'row' },
+          h('label', { class: 'inline' }, passedOnly, ' Passed runs only'),
+          h('button', { onclick: () => this.downloadTraces(passedOnly.checked) }, 'Download all (JSONL)'),
+          h('button', { onclick: () => this.clearTraces() }, 'Clear'),
+        ),
       ),
       h('section', {},
         h('h4', {}, 'Music'),
@@ -262,6 +280,7 @@ export class Studio {
     document.body.append(this.root);
     this.renderHangar();
     this.updateSpend();
+    void this.updateTraceCount();
     void this.loadModels();
   }
 
@@ -473,6 +492,7 @@ export class Studio {
     this.el.log.replaceChildren();
     this.el.result.classList.add('hidden');
     this.consoleReset();
+    this.el.traceRow.classList.add('hidden');
     const prompt = kind === 'detail'
       ? `Keep this design exactly as it is (do not patch it). flight_test it, then add_detail with 25-80 visual detail parts in the 1982 style${text ? ` (direction: ${text})` : ''}, check, flight_test again and finish.`
       : kind === 'refine' ? (text || 'Fix whatever made it fly badly.') : text;
@@ -500,6 +520,7 @@ export class Studio {
         detail: kind === 'detail' || this.el.detailPass.checked,
         tester: runFlightTest,
         signal,
+        onTrace: (t) => this.keepTrace(t),
         onEvent: (e) => {
           if (e.type === 'status') this.setStatus(e.message);
           else if (e.attempt.report) {
@@ -545,6 +566,42 @@ export class Studio {
       this.setStatus(`"${entry.name}" is ready in the hangar. FLY ▸ to try it, then Refine with what you'd change.`);
     });
     if (!ok) this.host.preview(null); // cancelled or failed: back to the craft we had
+  }
+
+  // ---------------------------------------------------------------- training data
+
+
+
+  /** Keep a finished run's trace (IndexedDB) and offer it for download right away. */
+  private keepTrace(t: AgentTrace): void {
+
+    void saveTrace(t).then(() => this.updateTraceCount());
+    const m = t.metadata;
+    const name = `agent-run-${m.startedAt.replace(/[:.]/g, '-')}.jsonl`;
+    this.el.traceRow.replaceChildren(
+      h('button', { onclick: () => downloadText(name, toJsonl([t])), title: 'This run as one JSONL line: reasoning, tool calls, results and outcome' }, '⬇ Download this run'),
+      h('span', { class: 'muted small' }, `${m.turns} turns · ${m.flightTests} tests · ${m.passed ? `passed ${m.score}/100` : m.error ? m.error.slice(0, 60) : `best ${m.score ?? '–'}/100`}`),
+    );
+    this.el.traceRow.classList.remove('hidden');
+  }
+
+  private async updateTraceCount(): Promise<void> {
+    const all = await listTraces();
+    const passed = all.filter((t) => t.metadata.passed).length;
+    this.el.traceCount.textContent = `${all.length} run(s) stored, ${passed} passed.`;
+  }
+
+  private async downloadTraces(passedOnly: boolean): Promise<void> {
+    const all = await listTraces();
+    const lines = toJsonl(all, { passedOnly });
+    if (lines.trim() === '') return this.setStatus('No agent runs stored yet.', 'error');
+    downloadText(`agent-runs-${new Date().toISOString().slice(0, 10)}${passedOnly ? '-passed' : ''}.jsonl`, lines);
+  }
+
+  private async clearTraces(): Promise<void> {
+    if (!confirm('Delete every stored agent run from this browser?')) return;
+    await clearTraces();
+    void this.updateTraceCount();
   }
 
   private design(refine: boolean): Promise<void> {
@@ -791,4 +848,16 @@ function download(name: string, text: string): void {
   a.download = name.replace(/[^\w.-]+/g, '_');
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+/** Save text as a file (a download). */
+function downloadText(name: string, text: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/jsonl' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }

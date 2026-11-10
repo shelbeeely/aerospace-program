@@ -16,7 +16,8 @@ import type { CraftDef } from '../src/craft/types.ts';
 import { LIGHT_CAR } from '../src/craft/lightCar.ts';
 import { designCraft, DESIGNER_SYSTEM_PROMPT } from '../src/gen/craftDesigner.ts';
 import { mergeDetail } from '../src/gen/detailer.ts';
-import { designWithAgent, partialParts } from '../src/gen/agent.ts';
+import { designWithAgent, partialParts, type AgentTrace } from '../src/gen/agent.ts';
+import { toJsonl } from '../src/gen/traces.ts';
 import { OpenRouter as Client } from '../src/gen/openrouter.ts';
 import { defaultModel, fallbacksFor, modelsForJob } from '../src/gen/catalog.ts';
 import { detailCraft } from '../src/gen/detailer.ts';
@@ -167,7 +168,14 @@ console.log('\n--- agent harness');
     },
   } as unknown as OpenRouter;
   const tools: string[] = [];
-  const res = await designWithAgent(stub, { model: 'stub/agent', prompt: 'a light car' }, (e) => { if (e.type === 'tool') tools.push(`${e.name}: ${e.summary}`); });
+  let trace: AgentTrace | null = null;
+  const res = await designWithAgent(stub, { model: 'stub/agent', prompt: 'a light car', onTrace: (t) => (trace = t) }, (e) => { if (e.type === 'tool') tools.push(`${e.name}: ${e.summary}`); });
+  {
+    const line = trace ? JSON.parse(toJsonl([trace]).trim()) : null;
+    const roles = line?.messages.map((m: { role: string }) => m.role[0]).join('') ?? '';
+    check(!!line && line.metadata.passed && line.tools.length === 8 && /^su(at+)+/.test(roles) && line.messages.filter((m: { role: string }) => m.role === 'tool').length === 9,
+      'the run is kept as a JSONL training trace (messages, tool calls and results, tools, outcome)', `${roles.length} messages, passed ${line?.metadata.passed}, ${line?.metadata.turns} turns`);
+  }
   console.log('  ' + tools.join('\n  '));
   check(tools.some((t) => /^submit_craft:.*OK/.test(t)) && results.some((r) => /floating/.test(r)), 'the agent sees the floating part it submitted');
   check(res.report.passed && res.name === 'Agent Car', 'the agent runs check, analyze, test and detail, and finishes with a passing craft', `${res.report.vehicle} ${res.report.score}/100`);
