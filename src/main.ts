@@ -41,7 +41,9 @@ import { updateSkyPlanet } from './render/neon.ts';
 import { ChipsView } from './render/ChipsView.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
-import { FlightAutopilot } from './sim/flightAutopilot.ts';
+import { FlightAutopilot, type AutopilotKind } from './sim/flightAutopilot.ts';
+import { analyzeDesign } from './sim/flightTest.ts';
+import { AutopilotPanel } from './ui/AutopilotPanel.ts';
 import { initPhysics, Simulation } from './sim/Simulation.ts';
 import { WEATHER_PRESETS } from './sim/atmosphere.ts';
 import { TUNING } from './tuning.ts';
@@ -205,6 +207,32 @@ async function start() {
   };
   const autopilot = new FlightAutopilot(player);
   autopilot.onDisengage = (thr) => { player.throttle = thr; };
+  autopilot.fractured = sim.staticWorld.fractured;
+  // Flight computer: approach speeds come from the design's estimated stall speed.
+  let apPerf = { stallSpeed: 30 };
+  let apPerfVersion = -1;
+  const autopilotPerf = () => {
+    if (apPerfVersion !== sim.version) {
+      apPerf = { stallSpeed: analyzeDesign(sim).stallSpeed };
+      apPerfVersion = sim.version;
+    }
+    return apPerf;
+  };
+  const autopilotKind = (): AutopilotKind | null => {
+    const k = vehicleKind(sim);
+    return k === 'airplane' || k === 'rotorcraft' ? k : null;
+  };
+  const apPanel = new AutopilotPanel({
+    autopilot,
+    kind: autopilotKind,
+    telemetry: () => telemetry,
+    engage: (opts) => {
+      const kind = autopilotKind();
+      if (!kind) return;
+      autopilot.engage(telemetry, kind, autopilotPerf(), opts);
+    },
+    disengage: () => autopilot.disengage(),
+  });
   let pilot: ControlSource = autopilot;
 
   let debugOn = false;
@@ -496,6 +524,7 @@ async function start() {
     if (captureBusy) return;
     curveOn.value = m === 'flight' ? 1 : 0; // the hangar is flat
     autopilot.disengage();
+    if (m === 'hangar') apPanel.hide();
     mode = m;
     syncRenderControls();
     applyModeClass(m);
@@ -749,7 +778,7 @@ async function start() {
           const kind = vehicleKind(sim);
           if (kind === 'lighter-than-air' || kind === 'ground') toast('No autopilot for this craft');
           else {
-            autopilot.engage(telemetry, kind);
+            autopilot.engage(telemetry, kind, autopilotPerf());
             const st = autopilot.state;
             toast(`Autopilot on · HDG ${Math.round(st.heading).toString().padStart(3, '0')} · ${st.altitude.toFixed(0)} m${kind === 'airplane' ? ` · ${(st.speed * 1.944).toFixed(0)} kt` : ''} — stick and throttle adjust it`);
           }
@@ -766,6 +795,7 @@ async function start() {
       else if (a === 'reset') { reset(false); toast('New plane — the world stays as it is'); }
       else if (a === 'resetWorld') { reset(true); toast('World reset'); }
       else if (a === 'camera') rig.toggle(renderPos);
+      else if (a === 'apPanel') apPanel.toggle();
       else if (a === 'help') {
         controlsPanel.render(); // reflect the current profile / devices
         hud.toggleHelp();
@@ -891,6 +921,7 @@ async function start() {
 
     hud.update(telemetry, player.trim, telemetry.controls.brake > 0);
     hud.setAutopilot(autopilot.state.engaged ? autopilot.state : null);
+    apPanel.refresh();
     fpsFrames++;
     fpsTime += dt;
     if (fpsTime > 0.5) {

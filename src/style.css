@@ -403,6 +403,38 @@ body.touch-ui .lever-label { top: -46px; }
 /* Autopilot readout lights up while engaged. */
 #h-ap-row.ap-on b, #h-ap-row.ap-on small { color: #3dffb0; }
 
+/* ---------------------------------------------------------------- flight computer (J) */
+#ap-panel { right: 16px; top: 16px; width: 320px; max-height: calc(100dvh - 32px); overflow-y: auto; z-index: 18; border-color: rgba(0, 234, 255, 0.35); box-shadow: 0 0 14px rgba(0, 234, 255, 0.12); }
+#ap-panel .ap-modes { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 6px; }
+#ap-panel button { background: #0e1d2e; color: #cfeaff; border: 1px solid rgba(0, 234, 255, 0.35); border-radius: 4px; padding: 4px 9px; font: inherit; cursor: pointer; }
+#ap-panel button:hover { border-color: #00eaff; }
+#ap-panel .ap-modes button.active { background: rgba(0, 234, 255, 0.18); color: #fff; border-color: #00eaff; box-shadow: 0 0 6px rgba(0, 234, 255, 0.45); }
+#ap-panel .panel-close { margin-bottom: 6px; }
+#ap-panel .ap-fields { display: grid; gap: 5px; margin: 6px 0; }
+#ap-panel .ap-field { display: flex; align-items: center; gap: 6px; }
+#ap-panel .ap-field span { width: 92px; color: #9fb2c2; font-size: 11px; letter-spacing: 0.06em; }
+#ap-panel .ap-field input, #ap-panel .ap-field select { flex: 1; min-width: 0; width: 0; background: rgba(0, 0, 0, 0.4); color: #eaf2f8; border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 4px; padding: 3px 5px; font: inherit; }
+#ap-panel .ap-field small { width: 26px; color: #9fb2c2; }
+#ap-panel .ap-buttons { display: flex; gap: 6px; margin: 8px 0; }
+#ap-panel .ap-engage { flex: 1; background: rgba(0, 234, 255, 0.16); color: #fff; font-weight: bold; letter-spacing: 0.08em; }
+#ap-panel .ap-status { color: #9fb2c2; min-height: 2.6em; white-space: pre-line; }
+#ap-panel .ap-status.on { color: #3dffb0; }
+#ap-panel .ap-guidance td { padding: 1px 10px 1px 0; }
+#ap-panel .ap-guidance td:first-child { color: #9fb2c2; }
+#ap-panel .small { font-size: 11px; }
+body.mode-hangar #ap-panel { display: none !important; }
+body.touch-ui #ap-panel {
+  left: 50%; right: auto; top: max(8px, env(safe-area-inset-top)); transform: translateX(-50%);
+  width: min(92vw, 360px); max-height: 70dvh; z-index: 22;
+}
+body.touch-ui #ap-panel button, body.touch-ui #ap-panel input, body.touch-ui #ap-panel select { min-height: 36px; font-size: 14px; }
+
+/* Approach guidance block in the HUD (Land mode). */
+#h-appr { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(0, 234, 255, 0.35); }
+#h-appr .appr-site { color: #00eaff; font-size: 11px; letter-spacing: 0.08em; margin-bottom: 2px; text-shadow: 0 0 6px rgba(0, 234, 255, 0.5); }
+#h-appr b { color: #e8f6ff; }
+#h-appr b.appr-warn { color: #ffb347; }
+
 /* ---------------------------------------------------------------- multiplayer (Grid Link) */
 #mp-toggle {
   top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); z-index: 7;
