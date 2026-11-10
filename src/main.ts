@@ -26,7 +26,7 @@ import { OceanView } from './render/OceanView.ts';
 import { TownView } from './render/TownView.ts';
 import { FireView } from './render/FireView.ts';
 import { LightningView } from './render/LightningView.ts';
-import { WeatherView } from './render/WeatherView.ts';
+import { setCloudQuality, WeatherView } from './render/WeatherView.ts';
 import { AirportView } from './render/AirportView.ts';
 import { LandingSitesView } from './render/LandingSitesView.ts';
 import { DESKTOP_RANGES, DigitalWorldView, MOBILE_RANGES } from './render/arch/DigitalWorldView.ts';
@@ -118,6 +118,9 @@ async function start() {
   const hangarFX = new PostFX(renderer, hangarView.scene, hangarView.camera);
   flightFX.setQuality(quality);
   hangarFX.setQuality(quality);
+  // Volumetric clouds on medium/high (fewer march steps on phones); the flat deck on low.
+  weatherView.volumetric = quality !== 'low';
+  setCloudQuality(quality === 'high' ? 48 : mobile ? 18 : 32);
   /** The scene the craft is drawn in right now (flight world or hangar turntable). */
   const craftScene = () => (mode === 'hangar' ? hangarView.scene : scene);
 
@@ -722,6 +725,8 @@ async function start() {
         if (!QUALITIES.includes(q)) throw new Error(`Unknown quality "${q}"`);
         flightFX.setQuality(q);
         hangarFX.setQuality(q);
+        weatherView.volumetric = q !== 'low';
+        setCloudQuality(q === 'high' ? 48 : mobile ? 18 : 32);
       },
       worldEvents: sim.atmosphere.events,
       /** The digital world: architecture, terrain and route views, the inspector (K). */

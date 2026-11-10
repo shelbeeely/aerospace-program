@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
-import { abs, asin, clamp, color, cos, exp, float, length, max, mix, normalize, positionLocal, sin, smoothstep, step, uniform, vec3, atan } from 'three/tsl';
+import { abs, asin, atan, clamp, color, cos, exp, float, floor, fract, length, max, min, mix, normalize, positionLocal, sin, smoothstep, sqrt, step, uniform, vec3, vec4 } from 'three/tsl';
+import { PLANET } from '../../sim/layout.ts';
 import { wastelandAt } from '../../arch/DigitalTerrainGenerator.ts';
 import { cityRegionAt, REGION_PROFILES, terrainMixAt, TERRAIN_PROFILES, type Atmosphere } from '../../arch/WorldRegionManager.ts';
 import { GRID_SKY, NEON, SKY_PLANET, starField, type TslNode } from '../neon.ts';
@@ -19,6 +20,38 @@ export const SKY = {
   horizon: new THREE.Color('#0b3a7a'),
   band: new THREE.Color('#ffb347'),
 };
+
+/** Camera altitude (m) for the scattering (WorldView keeps it current). */
+export const SCATTER = { altitude: uniform(0), shell: 3000 };
+
+/**
+ * Stylised atmospheric scattering, after the analytic ray/sphere single-scattering of the
+ * volumetric atmosphere engine (see VolumetricClouds): the length of the view ray inside the
+ * air shell (stopping at the planet) gives an optical depth; instead of Rayleigh/Mie colour,
+ * that depth walks the region's painted palette (deep sky → horizon → luminous band) in soft
+ * posterised steps. Returns rgb (colour) and a (amount of air in front of space).
+ */
+export function scatterNode(dir: TslNode): TslNode {
+  const R = PLANET.radius, Ra = PLANET.radius + SCATTER.shell;
+  const hR: TslNode = SCATTER.altitude.add(R);
+  const b: TslNode = hR.mul(dir.y);
+  const discOut: TslNode = b.mul(b).sub(hR.mul(hR)).add(Ra * Ra);
+  const sq: TslNode = sqrt(max(discOut, 0));
+  const tIn: TslNode = max(b.negate().sub(sq), 0);
+  const tOut: TslNode = b.negate().add(sq);
+  const discG: TslNode = b.mul(b).sub(hR.mul(hR)).add(R * R);
+  const tG: TslNode = b.negate().sub(sqrt(max(discG, 0)));
+  const hitsGround: TslNode = step(0, discG).mul(step(0, tG));
+  const tEnd: TslNode = mix(tOut, min(tOut, tG), hitsGround);
+  const L: TslNode = max(tEnd.sub(tIn), 0).mul(step(0, discOut));
+  const amount: TslNode = float(1).sub(exp(L.div(SCATTER.shell * 2.2).negate()));
+  const bands = 5;
+  const q: TslNode = amount.mul(bands);
+  const banded: TslNode = floor(q).add(smoothstep(0.35, 0.65, fract(q))).div(bands);
+  const upr: TslNode = uniform(SKY.upper), hor: TslNode = uniform(SKY.horizon), bnd: TslNode = uniform(SKY.band);
+  const c: TslNode = mix(mix(upr.mul(1.6), hor.mul(1.3), smoothstep(0.1, 0.55, banded)), bnd, smoothstep(0.6, 0.98, banded));
+  return vec4(c, amount);
+}
 
 export function paintedSkyNode(): TslNode {
   const zen: TslNode = uniform(SKY.zenith), upr: TslNode = uniform(SKY.upper), hor: TslNode = uniform(SKY.horizon), bnd: TslNode = uniform(SKY.band);
@@ -42,13 +75,13 @@ export function paintedSkyNode(): TslNode {
   c = c.add(bnd.mul(strata.mul(exp(up.div(-0.12))).mul(0.06)));
   // Below the horizon: haze.
   c = mix(c, hor.mul(0.7).add(bnd.mul(0.1)), below.mul(smoothstep(0, 0.08, abs(d.y))));
-  // Space: near-black, stars, the planet's glowing limb.
-  const w: TslNode = SKY_PLANET.limbWidth;
-  const above: TslNode = max(a, float(0));
-  const onSky: TslNode = step(float(-0.002), a);
-  const limb: TslNode = (color(GRID_SKY.band) as TslNode).mul(exp(above.div(w).negate()).mul(onSky).mul(0.8))
-    .add((color(NEON.cyan) as TslNode).mul(exp(above.div(w.mul(0.2)).negate()).mul(onSky).mul(1.5)));
-  const space: TslNode = (color('#000208') as TslNode).add(limb).add(starField(d0).mul(smoothstep(0.03, 0.2, a)).mul(1.3));
+  // Space: near-black with sparse stars, seen through the air shell (stylised scattering):
+  // the planet's limb glows in banded palette colours where the view grazes the atmosphere.
+  const sc: TslNode = scatterNode(d0);
+  const stars: TslNode = starField(d0).mul(smoothstep(0.03, 0.2, a)).mul(1.3).mul(float(1).sub(sc.w));
+  const space: TslNode = (color('#000208') as TslNode).add(stars).add(sc.xyz.mul(sc.w.mul(1.4)));
+  void GRID_SKY;
+  void NEON;
   return mix(c, space, SKY_PLANET.space as unknown as TslNode);
 }
 

@@ -180,6 +180,14 @@ through every lattice.
 - Culling accounts for the planet's curvature drop; long faces are subdivided so the bend holds.
 - The sky and haze follow the region below (`atmosphereAt`), and weather dims them.
 - Kit towers draw with `KitTowersView` (centre plus registered planet chunks).
+- Clouds (`VolumetricClouds.ts`): a back-faced slab between cloud base and top, raymarched in
+  flat world space (32 steps, 48 on high, 18 on phones) through a baked 40³ tiling Perlin-Worley
+  texture; coverage and cell height from WeatherView's painting of `Atmosphere.cellValue`;
+  Beer's-law shadow toward the key light, powder edges, forward lobe; lighting posterised into
+  bands between deep navy and pale blue-white, rimmed in the region's band colour; haze with
+  distance. Ported in stylised form from leoawen/volumetric_cloud_atmosphere_scattering (MIT).
+- Scattering (`scatterNode`): ray/sphere path length through a 3 km air shell (stopping at the
+  planet) → optical depth → banded palette colour; drawn on the planet's limb from altitude.
 
 ## Debug interface
 
