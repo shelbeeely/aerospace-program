@@ -136,15 +136,24 @@ export class GroundDriver {
         this.lastReroute = t.time;
         this.blockedFor = 0;
         const [ax, i, j] = segmentAt(hit.x, hit.z);
-        this.blocked.set(`${ax ? 1 : 0},${i},${j}`, t.time);
+        const key = `${ax ? 1 : 0},${i},${j}`;
+        this.blocked.set(key, t.time);
         const gx = this.goal[0], gz = this.goal[1];
+        // Keep the current route if no other road gets there: wait at the wall (it may derez)
+        // rather than drop the route, which used to read as "arrived".
+        const keep = { route: this.route, path: this.path, cum: this.cum, idx: this.idx, endsAtRoad: this.endsAtRoad };
         if (this.plan(t.position[0], t.position[2], gx, gz)) return this.drive(dt, t, cruise);
+        Object.assign(this, keep);
+        this.blocked.delete(key);
       }
     } else this.blockedFor = 0;
     const ev = target - v;
     let throttle = Math.max(0, Math.min(1, 0.25 + ev * 0.18));
     let brake = 0;
     if (ev < -1.5) { throttle = 0; brake = Math.min(1, -ev / 6); }
+    // A light wall close ahead: stop hard once the stopping distance runs out (a proportional
+    // brake fades just as it matters most, and the car crept into the wall).
+    if (hit && (hit.d - 8 <= (v * v) / (2 * 3) || hit.d < 10)) { throttle = 0; brake = 1; }
     // Stuck: pushing but not moving.
     this.stuckTime = throttle > 0.5 && v < 0.6 ? this.stuckTime + dt : 0;
     return {
