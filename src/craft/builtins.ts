@@ -1,6 +1,7 @@
 import { JET } from './jet.ts';
 import { LIGHT_CAR } from './lightCar.ts';
 import { LIGHT_CYCLE } from './lightCycle.ts';
+import { LIGHT_CRAWLER, LIGHT_RUNNER, LIGHT_SNOWMOBILE, OUTLANDS_CYCLE } from './outlands.ts';
 import { TANK } from './tank.ts';
 import { ORBITER } from './orbiter.ts';
 import { TEST_PLANE } from './testPlane.ts';
@@ -278,4 +279,8 @@ export const BUILTINS: BuiltinCraft[] = [
   { id: 'cycle', label: 'Light Cycle', craft: LIGHT_CYCLE, hint: 'W to go, S to brake, A/D to steer. L: jetwall → light ribbon → off. Its trail derezzes with it.' },
   { id: 'car', label: 'Light Car', craft: LIGHT_CAR, hint: 'W to go, S to brake, A/D to steer the front wheels. L: jetwall → light ribbon → off.' },
   { id: 'tank', label: 'Program Tank', craft: TANK, hint: 'Heavy and tough. W to go, S to brake, A/D skid-steer (turns on the spot when stopped). L cycles its jetwall.' },
+  { id: 'crawler', label: 'Light Crawler (Outlands)', craft: LIGHT_CRAWLER, hint: 'Six-wheel drive rock crawler on long-travel suspension: slow and sure among the Outlands rubble. W/S, A/D steer (the rear wheels counter-steer).' },
+  { id: 'runner', label: 'Light Runner (Outlands)', craft: LIGHT_RUNNER, hint: 'Fast four-wheel drive on tall wheels: quick on Outlands highways, at home on ravine floors. W/S, A/D steer.' },
+  { id: 'sled', label: 'Light Snowmobile (Outlands)', craft: LIGHT_SNOWMOBILE, hint: 'Two skis steer, a driven track pushes: light and nimble over loose rubble. W/S, A/D steer.' },
+  { id: 'cycle-outlands', label: 'Light Cycle (Outlands)', craft: OUTLANDS_CYCLE, hint: 'The street cycle rebuilt for the wastelands: big wheels, long travel, two-wheel drive. The street Light Cycle is not built for rocky ground.' },
 ];

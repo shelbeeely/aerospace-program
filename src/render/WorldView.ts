@@ -4,7 +4,7 @@ import { COAST, PLANET, RUNWAYS, type LandingSite } from '../sim/layout.ts';
 import { CITY_LIGHTS_FROM, CITY_LIGHTS_GAIN, GLOBE_VIEW, GLOBE_VIEW_ALT, cityGroundNode, summary } from './cityGround.ts';
 import { terrainHeightNode } from './terrainNode.ts';
 import { curveOrigin, flatWorld } from './curvature.ts';
-import { OffGridView } from './OffGridView.ts';
+import { OutlandsView } from './OutlandsView.ts';
 import { GRID_SKY, NEON, SKY_PLANET, glow, synthSkyNode, type TslNode } from './neon.ts';
 
 const HORIZON = new THREE.Color(GRID_SKY.horizon);
@@ -46,8 +46,8 @@ export class WorldView {
   groundMat!: THREE.MeshBasicNodeMaterial;
   runwayMat!: THREE.MeshBasicNodeMaterial;
   private readonly ground: THREE.Mesh;
-  /** The Off-Grid's solids near the camera as real geometry (the disc stays flat under them). */
-  readonly offGrid: OffGridView;
+  /** The Outlands' landforms near the camera as real geometry (the disc stays flat under them). */
+  readonly outlands: OutlandsView;
   /** 1: the ground leaves a hole for the ocean mesh; 0 (from orbit, where the ocean is hidden
    *  rather than z-fight 1.8 m under the ground at a 20 km+ clip range): it draws the sea. */
   private readonly oceanCut = uniform(1);
@@ -106,11 +106,11 @@ export class WorldView {
     const inOcean: TslNode = step(float(COAST.x), sx).mul(step(sx, float(COAST.x + COAST.width)));
     this.groundMat.opacityNode = float(1).sub(inOcean.mul(this.oceanCut));
     this.groundMat.alphaTest = 0.5;
-    // Off-Grid mountains: near the camera they are instanced solids (crisp planar faces); beyond
+    // Outlands landforms: near the camera they are instanced solids (crisp planar faces); beyond
     // that range the disc is displaced by the same terrain the physics uses.
-    this.offGrid = new OffGridView(scene);
+    this.outlands = new OutlandsView(scene);
     const wp: TslNode = modelWorldMatrix.mul(vec4(positionLocal, 1)).xyz;
-    this.groundMat.positionNode = positionLocal.add(vec3(0, terrainHeightNode(summary(), wp.x, wp.z, this.offGrid.exclusion), 0));
+    this.groundMat.positionNode = positionLocal.add(vec3(0, terrainHeightNode(summary(), wp.x, wp.z, this.outlands.exclusion), 0));
     this.ground = new THREE.Mesh(groundDisc(PLANET.radius * Math.PI * 0.97), this.groundMat);
     this.ground.frustumCulled = false;
     scene.add(this.ground);
@@ -173,7 +173,7 @@ export class WorldView {
     CITY_LIGHTS_GAIN.value = 1 + 0.25 * Math.min(1, Math.max(0, (alt - 3000) / 20000));
     this.sky.position.copy(camera.position);
     this.ground.position.set(camera.position.x, 0, camera.position.z);
-    this.offGrid.update(camera.position);
+    this.outlands.update(camera.position);
     this.sun.target.position.copy(focus);
     this.sun.position.copy(focus).addScaledVector(SUN_DIR, 300);
   }

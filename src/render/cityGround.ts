@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
-import { abs, cameraPosition, color, distance, float, floor, fract, fwidth, hash, max, min, mix, smoothstep, step, texture, uniform, vec2 } from 'three/tsl';
+import { abs, cameraPosition, color, distance, float, floor, fract, fwidth, hash, max, min, mix, mod, smoothstep, step, texture, uniform, vec2 } from 'three/tsl';
 import { CITY } from '../sim/layout.ts';
+import { OUTLANDS } from '../sim/terrain.ts';
 import { blockSummary, GRID } from '../world/planetCity.ts';
 import { flatWorld } from './curvature.ts';
 import { terrainEdgesNode } from './terrainNode.ts';
@@ -61,7 +62,7 @@ const GLOW_SCALE = 4;
 
 /**
  * The far LOD as a mipmapped, linearly filtered texture (one texel per block): rgb = the
- * block's city lights averaged over the block (streets dark, interior sparkling), a = Off-Grid.
+ * block's city lights averaged over the block (streets dark, interior sparkling), a = Outlands.
  * From altitude a pixel covers many blocks; sampling this (rather than the nearest-texel block
  * data and 9 m sparkle cells) averages them, so the planet glows steadily instead of shimmering.
  */
@@ -125,16 +126,24 @@ export function cityGroundNode(): TslNode {
   const bj: TslNode = floor(p.z.sub(gz0).div(pitch));
   const uv: TslNode = vec2(bi.add(0.5).div(GRID.blocks), bj.add(0.5).div(GRID.blocks));
   const block: TslNode = texture(summary(), uv);
-  const kind: TslNode = block.b; // 0 city, 0.25 Off-Grid, 0.5 open, 0.75 airfield, 1 sea
+  const kind: TslNode = block.b; // 0 city, 0.25 Outlands, 0.5 open, 0.75 airfield, 1 sea
   const isCity: TslNode = float(1).sub(step(0.125, kind));
-  const offGrid: TslNode = step(0.125, kind).mul(float(1).sub(step(0.375, kind)));
-  const noRoads: TslNode = max(step(0.6, kind), offGrid); // airfields, sea and the Off-Grid have no streets
+  const outlandsMask: TslNode = step(0.125, kind).mul(float(1).sub(step(0.375, kind)));
+  // Outlands highways: every OUTLANDS.highwayEvery-th street line runs on through the Outlands.
+  const hw = GRID.pitch * OUTLANDS.highwayEvery;
+  const tx: TslNode = mod(p.x.sub(gx0), hw), tz: TslNode = mod(p.z.sub(gz0), hw);
+  const outX: TslNode = step(min(tx, float(hw).sub(tx)), float(S / 2));
+  const outZ: TslNode = step(min(tz, float(hw).sub(tz)), float(S / 2));
+  const outlandRoad: TslNode = max(outX, outZ).mul(outlandsMask);
+  // Airfields, sea and the Outlands have no streets (but the Outlands highways cross them).
+  const noRoads: TslNode = max(step(0.6, kind), outlandsMask.mul(float(1).sub(outlandRoad)));
 
   const pad: TslNode = mix(color('#040820'), color('#0b1a5a'), gridLines(p.xz, 10, 1).mul(0.6));
   const asphalt: TslNode = color('#020311');
   let c: TslNode = mix(pad, asphalt, street);
-  c = c.add(color('#ff8a1f').mul(max(centreX.mul(majorX.mul(2).add(1)), centreZ.mul(majorZ.mul(2).add(1))).mul(2.2)));
-  c = c.add(color('#00eaff').mul(max(laneX.mul(majorX.mul(1.5).add(1)), laneZ.mul(majorZ.mul(1.5).add(1))).mul(1.4)));
+  const majX: TslNode = max(majorX, outX), majZ: TslNode = max(majorZ, outZ);
+  c = c.add(color('#ff8a1f').mul(max(centreX.mul(majX.mul(2).add(1)), centreZ.mul(majZ.mul(2).add(1))).mul(2.2)));
+  c = c.add(color('#00eaff').mul(max(laneX.mul(majX.mul(1.5).add(1)), laneZ.mul(majZ.mul(1.5).add(1))).mul(1.4)));
   c = c.add(color('#2a5cff').mul(curb.mul(1.8)));
   c = mix(c, color('#040820'), noRoads);
 
@@ -147,7 +156,7 @@ export function cityGroundNode(): TslNode {
   const far: TslNode = smoothstep(CITY_LIGHTS_FROM, CITY_LIGHTS_FROM.mul(1.3), distance(p.xz, cameraPosition.xz));
   const lights: TslNode = tint.mul(height.mul(5).add(0.6)).mul(sparkle).mul(interior).mul(isCity).mul(far).mul(CITY_LIGHTS_GAIN);
 
-  // The Off-Grid, outside the system: black and deep-blue ground under a faint electric-blue
+  // The Outlands, outside the system: black and deep-blue ground under a faint electric-blue
   // survey grid; its geometric solids are drawn by light in the contrasting palette: amber
   // square contours every 40 m, ridgelines and base outlines glowing orange to red at the apex.
   const h: TslNode = max(p.y, float(0));
@@ -160,24 +169,25 @@ export function cityGroundNode(): TslNode {
     .add(color('#1f6bff').mul(survey))
     .add(color('#ffb347').mul(contour.mul(0.9)))
     .add(hot.mul(edges.mul(2.6)));
-  const near: TslNode = mix(c.add(lights), waste, offGrid);
+  const near: TslNode = mix(c.add(lights), waste, outlandsMask.mul(float(1).sub(outlandRoad)));
 
   // Footprint LOD: once a pixel covers more ground than a lane, a sparkle cell or a contour
   // line, the patterns above only alias (from altitude, and near the horizon). Fade to their
   // averages: dark streets under a faint blue grid glow, block lights from the mipmapped glow
-  // texture, and the Off-Grid as a steady amber glow.
+  // texture, and the Outlands as a steady amber glow.
   const fp: TslNode = max(fwidth(p.x), fwidth(p.z));
   const avg: TslNode = smoothstep(3, 14, fp);
   const guv: TslNode = vec2(p.x.sub(gx0).div(pitch * GRID.blocks), p.z.sub(gz0).div(pitch * GRID.blocks));
   const g: TslNode = texture(glowTexture(), guv);
   // Structure stays drawn by light: the data highways as cyan lines on the city, an amber
-  // survey grid on the Off-Grid, a faint cyan swell grid on the sea (pixel-wide, so they hold
+  // survey grid on the Outlands, a faint cyan swell grid on the sea (pixel-wide, so they hold
   // from orbit and fade to their mean once the cells shrink below a few pixels).
   const hwy: TslNode = gridLines(vec2(p.x.sub(gx0), p.z.sub(gz0)), pitch * n, 1).mul(isCity);
   const cityFar: TslNode = (color('#030719') as TslNode).add(color('#1f4bff').mul(0.03)).add(color('#00eaff').mul(hwy.mul(0.35)));
   const lightsFar: TslNode = g.rgb.mul(GLOW_SCALE).mul(far).mul(CITY_LIGHTS_GAIN);
   const wasteFar: TslNode = (color('#020414') as TslNode).add(color('#ff8a1f').mul(0.025))
-    .add(color('#ffb347').mul(gridLines(p.xz, 400, 1).mul(0.7)));
+    .add(color('#ffb347').mul(gridLines(p.xz, 400, 1).mul(0.7)))
+    .add(color('#00eaff').mul(gridLines(vec2(p.x.sub(gx0), p.z.sub(gz0)), hw, 1).mul(0.5)));
   const seaFar: TslNode = (color('#020919') as TslNode).add(color('#00eaff').mul(gridLines(p.xz, 500, 1).mul(0.12)));
   const farC: TslNode = mix(mix(cityFar.add(lightsFar), wasteFar, g.a), seaFar, step(0.875, kind));
   return mix(near, farC, avg);

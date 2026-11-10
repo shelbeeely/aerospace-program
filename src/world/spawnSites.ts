@@ -46,7 +46,7 @@ function streetClear(x: number, z: number, axis: 'x' | 'z'): boolean {
     const px = axis === 'x' ? x + d : x;
     const pz = axis === 'z' ? z + d : z;
     const h = terrainHeight(px, pz);
-    // Level ground (not on the face of an Off-Grid solid) with nothing standing on it.
+    // Level ground (not on the face of an Outlands solid) with nothing standing on it.
     if (Math.abs(h - ground) > 0.3 || obstacleTop(px, pz) > h + 0.5) return false;
   }
   return true;

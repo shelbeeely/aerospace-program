@@ -13,7 +13,7 @@ npm run dev            # http://localhost:5173, press N for the Studio
 npm run design -- "a twin-boom cargo plane" --model anthropic/claude-sonnet-5.5
 npm run sim            # headless physics regression (takeoff, turn, stalls, CoM shift, crash)
 npm run weather        # weather impact checks (rain, icing, ground effect, vortex ring, wet runway)
-npm run ground         # light car / tank: flat ground, skid steering, Off-Grid solids, spawn sites
+npm run ground         # ground vehicles: flat ground, skid steering, Outlands highways and rubble, spawn sites
 npm run build          # typecheck + production build
 ```
 
@@ -454,10 +454,18 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
 - **Earthquakes** bring the city down: intact structures within 1.2 km of the craft whose tops
   would shake past their strength (tall, slender towers and raised highways first) fracture,
   then the shaking knocks blocks out and whatever they held up falls as rubble.
-- **The Off-Grid.** Wasteland between the cities (~25% of the land): geometric solids
-  (pyramids and flat-topped mesas, planar faces, straight ridgelines) lit in the contrasting
-  palette, amber contours and orange-to-red ridges over an electric-blue survey grid. Physics
-  uses one convex hull per solid, so you hit exactly what you see.
+- **The Outlands.** Vast wastelands outside the cities' boundaries (~25% of the land), craggy
+  and treacherous: sheer-walled buttes up to 320 m split by deep, straight ravines, needle crags
+  on their tops and sharp rubble strewn over ravine floors and basins. Lit in the contrasting
+  palette: amber strata up the walls, orange-to-red rims and ridgelines over an electric-blue
+  survey grid. Outlands highways (every 37th street line, both ways) cut clean through, so it
+  all stays drivable: highways, ravine floors and basins are at street level. Physics uses one
+  convex hull per landform, so you hit exactly what you see (`src/sim/terrain.ts`).
+- **Outlands vehicles.** Street light cycles are not built for rocky ground. Built for it: the
+  **Light Crawler** (six-wheel drive, counter-steering rear axle), the **Light Runner** (fast
+  four-wheel drive on tall wheels), the **Light Snowmobile** (two steering skis and a driven
+  track) and the **Outlands Light Cycle** (big wheels, long travel, two-wheel drive). All on
+  long-travel suspension; `npm run ground` drives them across an Outlands rubble field.
 - **The system boundary.** The edge of the Grid sits at 100 km, above every orbit: anything
   that crosses it derezzes. The HUD warns from 85 km (`TUNING.systemBoundary`).
 - **Light cycles and trails (Rule 4: movement produces visible information).** The Light Cycle
@@ -475,7 +483,7 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
   reinforced, on six road wheels per side, and lays a red jetwall. It **skid-steers**: a wheel
   with `skid: 1 | -1` (its side) is driven by the yaw channel, the two sides in opposite
   directions, so A/D turns it on the spot. Both score 100/100 on the ground card in calm and
-  moderate weather and drive up and over the Off-Grid solids. Check: `npm run ground`.
+  moderate weather and drive down the Outlands highways. Check: `npm run ground`.
 - **Spawn anywhere (hangar → craft card → Spawn).** Any runway (its threshold, facing down the
   strip), any helipad (its centre, at pad height: rooftops too) or, for ground vehicles,
   **Nearest street** (a clear point on the street grid nearest to where the craft was). The

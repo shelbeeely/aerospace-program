@@ -1,18 +1,21 @@
 /**
  * Ground vehicle checks: the light car and the program tank never get stuck on flat ground,
- * the tank skid-steers on the spot, both cross a small Off-Grid solid without coming apart,
+ * the tank skid-steers on the spot, every ground vehicle drives an Outlands highway, the
+ * Outlands vehicles cross a rubble field without coming apart,
  * and craft spawn where they're told (runway thresholds, helipads at pad height, the nearest
  * street) and stay there through respawns and world resets. Run with `npm run ground`.
  */
 import { LIGHT_CAR } from '../src/craft/lightCar.ts';
 import { TANK } from '../src/craft/tank.ts';
+import { LIGHT_CYCLE } from '../src/craft/lightCycle.ts';
+import { LIGHT_CRAWLER, LIGHT_RUNNER, LIGHT_SNOWMOBILE, OUTLANDS_CYCLE } from '../src/craft/outlands.ts';
 import { QUADCOPTER } from '../src/craft/builtins.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
 import type { CraftDef } from '../src/craft/types.ts';
 import type { ControlInputs } from '../src/sim/controls.ts';
 import { CITY, PLANET, wrapCoord } from '../src/sim/layout.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
-import { solidCell, TERRAIN, terrainHeight } from '../src/sim/terrain.ts';
+import { butteCell, highwayDistance, OUTLANDS, TERRAIN, terrainHeight, wastelandAt } from '../src/sim/terrain.ts';
 import { GroundPilot } from '../src/sim/vehicleTests.ts';
 import { landingSite, landingSites } from '../src/world/landingSites.ts';
 import { STREET_SITE } from '../src/world/spawnSites.ts';
@@ -37,6 +40,7 @@ const hold = (c: Partial<ControlInputs>) => () => ({ pitch: 0, roll: 0, yaw: 0, 
 const r1 = (x: number) => x.toFixed(1);
 
 const VEHICLES: Array<[string, CraftDef]> = [['light car', LIGHT_CAR], ['tank', TANK]];
+const OUTLAND_VEHICLES: Array<[string, CraftDef]> = [['light crawler', LIGHT_CRAWLER], ['light runner', LIGHT_RUNNER], ['light snowmobile', LIGHT_SNOWMOBILE], ['outlands light cycle', OUTLANDS_CYCLE]];
 
 // --- Flat ground: go, stop, go again; never stuck.
 for (const [name, def] of VEHICLES) {
@@ -71,54 +75,73 @@ for (const [name, def] of VEHICLES) {
   check(Math.abs(((c1 - c0 + 540) % 360) - 180) < 1, 'light car: steering alone does not turn it in place (front steer, rear drive)');
 }
 
-// --- Off-Grid: drive over a small geometric solid (a low pyramid or mesa on the small lattice).
-{
-  const C = PLANET.circumference;
-  const n = TERRAIN.smallCells;
-  const cell = C / n;
-  let target: { cx: number; cz: number; H: number } | null = null;
-  for (let ix = 0; ix < n && !target; ix++) for (let iz = 0; iz < n && !target; iz++) {
-    const s = solidCell(ix, iz, n, 211);
-    if (!s) continue;
-    const H = s.height * 0.3 * TERRAIN.peak;
-    if (H < 3 || H > 9) continue;
-    // Flat approach and run-off along +Z/-Z (no big solid in the way): the small solid is all there is.
-    let ok = true;
-    for (let d = -cell * 1.5; d <= cell * 1.5 && ok; d += 4) {
-      const h = terrainHeight(s.cx, s.cz + d);
-      if (Math.abs(d) > cell * 0.5 && h > 0.01) ok = false;
-      if (h > H + 0.01) ok = false;
-    }
-    // Keep the whole run inside the canonical square (no wrap mid-test).
-    const wx = wrapCoord(s.cx), wz = wrapCoord(s.cz);
-    if (ok && Math.abs(wz) < C / 2 - cell * 3) target = { cx: wx, cz: wz, H };
+// --- The Outlands: highways run clean through them; the Outlands vehicles cross rubble fields.
+const C = PLANET.circumference;
+/** Drive `def` from (x, z) along heading (0 north = -Z, 90 east = +X) for `dist` m at `speed`. */
+function drive(def: CraftDef, x: number, z: number, heading: number, dist: number, speed: number) {
+  const sim = new Simulation(def);
+  sim.traffic.enabled = false;
+  const yaw = (-heading * Math.PI) / 180;
+  sim.craft.reset({ x, y: sim.craft.restingHeight() + 0.2, z } as never, { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) } as never);
+  sim.staticWorld.stream(x, z, true);
+  run(sim, 2, hold({ brake: 1 }));
+  const pilot = new GroundPilot(heading, speed);
+  let t = sim.telemetry();
+  let worst = 0;
+  const along = () => (t.position[0] - x) * Math.sin((heading * Math.PI) / 180) - (t.position[2] - z) * Math.cos((heading * Math.PI) / 180);
+  for (let i = 0; i < (dist / speed + 40) * 120 && along() < dist; i++) {
+    sim.step(pilot.sample(sim.dt, t));
+    t = sim.telemetry();
+    worst = Math.max(worst, Math.abs(t.roll));
+    if (i % 120 === 0) sim.staticWorld.stream(t.position[0], t.position[2]);
   }
-  check(target !== null, 'found a small Off-Grid solid to cross', target ? `${r1(target.H)} m high at (${target.cx.toFixed(0)}, ${target.cz.toFixed(0)})` : '');
-  if (target) {
-    for (const [name, def] of VEHICLES) {
-      const sim = new Simulation(def);
-      // Start on the flat 1.2 cells south of the solid, facing north (-Z) across its apex.
-      const start = { x: target.cx, z: target.cz + cell * 1.2 };
-      const h = sim.craft.restingHeight();
-      sim.craft.reset({ x: start.x, y: h + 0.2, z: start.z } as never, { x: 0, y: 0, z: 0, w: 1 } as never);
-      sim.staticWorld.stream(start.x, start.z, true);
-      run(sim, 2, hold({ brake: 1 }));
-      const pilot = new GroundPilot(0, 12);
-      let maxY = 0;
-      let worst = 0;
-      let t = sim.telemetry();
-      for (let i = 0; i < 30 * 120 && t.position[2] > target.cz - cell * 0.8; i++) {
-        sim.step(pilot.sample(sim.dt, t));
-        t = sim.telemetry();
-        maxY = Math.max(maxY, t.position[1]);
-        worst = Math.max(worst, Math.abs(t.roll));
-        if (i % 120 === 0) sim.staticWorld.stream(t.position[0], t.position[2]);
+  return { done: along() >= dist, intact: !sim.exploded && sim.failures.length === 0 && worst < 60, worst, sim, t };
+}
+{
+  // A highway corridor deep in the Outlands, buttes on both sides, 600 m of it.
+  const big = C / TERRAIN.bigCells;
+  let site: { x: number; z: number } | null = null;
+  for (let j = 0; j < 370 && !site; j += OUTLANDS.highwayEvery) {
+    const lx = wrapCoord(CITY.x0 + j * (C / 370));
+    for (let z = -C / 2 + 2000; z < C / 2 - 2000 && !site; z += big) {
+      if (wastelandAt(lx, z) < 0.9 || wastelandAt(lx, z + 600) < 0.9) continue;
+      let walls = 0, clear = true;
+      for (let d = 0; d <= 600; d += 5) {
+        if (terrainHeight(lx, z + d) > 0 || terrainHeight(lx + 12, z + d) > 0 || terrainHeight(lx - 12, z + d) > 0) clear = false;
+        if (terrainHeight(lx + 60, z + d) > 40 || terrainHeight(lx - 60, z + d) > 40) walls++;
       }
-      const crossed = t.position[2] < target.cz - cell * 0.8;
-      check(crossed && !sim.exploded && sim.failures.length === 0 && worst < 50 && maxY > target.H * 0.5,
-        `${name}: drives up and over the solid in one piece`,
-        `crossed ${crossed}, climbed to ${r1(maxY)} m, max roll ${Math.round(worst)}°, ${sim.failures.length} parts lost, exploded ${sim.exploded}`);
+      if (clear && walls > 40) site = { x: lx, z };
     }
+  }
+  check(site !== null, 'found an Outlands highway between butte walls', site ? `x ${site.x.toFixed(0)}, z ${site.z.toFixed(0)}` : '');
+  if (site) for (const [name, def] of [...VEHICLES, ['light cycle', LIGHT_CYCLE], ...OUTLAND_VEHICLES] as Array<[string, CraftDef]>) {
+    // Lane on the right of the centre line, heading south (+Z).
+    const r = drive(def, site.x - 3.5, site.z, 180, 550, 15);
+    check(r.done && r.intact, `${name}: drives 550 m down an Outlands highway`, `done ${r.done}, max roll ${Math.round(r.worst)}°, ${r.sim.failures.length} parts lost`);
+  }
+}
+{
+  // A basin (no butte) deep in the Outlands, strewn with rubble: cross 250 m of it.
+  const n = TERRAIN.bigCells, big = C / n, fine = C / OUTLANDS.rubbleCells;
+  let site: { x: number; z: number; rocks: number } | null = null;
+  for (let i = 0; i < n && !site; i++) for (let j = 0; j < n && !site; j++) {
+    const cx = (i + 0.5) * big, cz = (j + 0.5) * big;
+    if (butteCell(i, j) || wastelandAt(cx, cz) < 0.6) continue;
+    const wz = wrapCoord(cz);
+    if (Math.abs(wz) > C / 2 - 2000 || highwayDistance(cx, CITY.x0) < 60 || highwayDistance(cz, CITY.z0) < 160) continue;
+    // Count shards the 3 m wide track runs over; the start must be on bare ground.
+    const x = cx + fine / 2 + 1.5, rocks = new Set<string>(); // through rubble cell centres, not along their edges
+    for (let d = -125; d <= 125; d += 1) if (terrainHeight(x, cz + d) > 0.3) rocks.add(`${Math.floor(x / fine)},${Math.floor((cz + d) / fine)}`);
+    if (terrainHeight(x, cz + 125) === 0 && rocks.size >= 3) site = { x: wrapCoord(x), z: wz + 125, rocks: rocks.size };
+  }
+  check(site !== null, 'found a rubble basin in the Outlands', site ? `${site.rocks} rocks on a 250 m line at (${site.x.toFixed(0)}, ${site.z.toFixed(0)})` : '');
+  if (site) {
+    for (const [name, def] of OUTLAND_VEHICLES) {
+      const r = drive(def, site.x, site.z, 0, 250, 9);
+      check(r.done && r.intact, `${name}: crosses 250 m of Outlands rubble at 9 m/s in one piece`, `done ${r.done}, max roll ${Math.round(r.worst)}°, ${r.sim.failures.length} parts lost, exploded ${r.sim.exploded}`);
+    }
+    const street = drive(LIGHT_CYCLE, site.x, site.z, 0, 250, 9);
+    console.log(`     advisory: the street light cycle over the same rubble: done ${street.done}, max roll ${Math.round(street.worst)}°, exploded ${street.sim.exploded}`);
   }
 }
 

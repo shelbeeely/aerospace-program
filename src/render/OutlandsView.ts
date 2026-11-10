@@ -1,39 +1,39 @@
 import * as THREE from 'three/webgpu';
-import { attribute, color, float, fract, fwidth, max, min, mix, smoothstep, uniform } from 'three/tsl';
+import { attribute, color, float, fract, fwidth, max, min, mix, positionLocal, smoothstep, uniform, vec3 } from 'three/tsl';
 import { PLANET } from '../sim/layout.ts';
-import { solidCell, TERRAIN } from '../sim/terrain.ts';
+import { butteCell, cragCell, OUTLANDS, rubbleCell, TERRAIN } from '../sim/terrain.ts';
 import { flatWorld } from './curvature.ts';
 import { gridLines, type TslNode } from './neon.ts';
 
 /**
- * The Off-Grid's geometric solids near the camera as real geometry (Rule 1): every pyramid and
- * mesa of both lattices whose cell centre lies within OFFGRID_RANGE of the anchor is one
- * instance of a unit mesh, so faces are exact planes and edges are crisp at any distance. The
- * instances use the same cells, heights and footprints as sim/terrain.ts solidHulls (what the
- * physics collides with). The ground disc is left flat under them (terrainHeightNode's `near`
- * exclusion) and keeps its displacement only beyond the range.
+ * The Outlands' landforms near the camera as real geometry (Rule 1): every butte, crag and
+ * rubble shard (sim/terrain.ts butteCell / cragCell / rubbleCell, the same cells and sizes the
+ * physics hulls use) is one instance of a unit mesh, so the sheer walls are exact planes and
+ * every edge is crisp. The ground disc is left flat under the instanced buttes and crags
+ * (terrainHeightNode's `near` exclusion) and keeps its displacement only beyond the range.
  *
- * Light defines the structure (Rule 2): every edge (ridgelines, base outline, mesa rim) glows
- * orange to red with height, amber square contours every 40 m, dark faces under the faint
- * electric-blue survey grid: the same look cityGround gives the far Off-Grid on the disc.
+ * Light defines the structure (Rule 2): every edge (butte rims and wall corners, crag
+ * ridgelines) glows orange to red with height, amber strata every 40 m up the walls, dark faces
+ * under the faint electric-blue survey grid: the same look cityGround gives the far Outlands.
  */
 const C = PLANET.circumference;
-/** Cells whose centre is within this distance (m) of the anchor are drawn as instances. */
-export const OFFGRID_RANGE = 8000;
+/** Buttes and crags whose cell centre is within this distance (m) of the anchor are drawn as instances. */
+export const OUTLANDS_RANGE = 8000;
+/** Rubble is drawn this far (m): small, and only seen up close. */
+const RUBBLE_RANGE = 2500;
 /** Lattice cells examined per frame while rebuilding. */
-const CELLS_PER_FRAME = 4000;
-/** Mesa top half-size as a fraction of the base half-size (terrain.ts: mesa = 0.6). */
-const MESA_TOP = 1 - 0.6;
-/** Both lattices of solids (terrain.ts terrainHeight); the small ones' edges glow dimmer. */
-const LATTICES = [
-  { n: TERRAIN.bigCells, seed: 101, scale: 1, glow: 2.6 },
-  { n: TERRAIN.smallCells, seed: 211, scale: 0.3, glow: 1.1 },
-] as const;
+const CELLS_PER_FRAME = 6000;
+type Kind = 'butte' | 'crag' | 'rubble';
+const LATTICES: ReadonlyArray<{ kind: Kind; n: number; range: number; glow: number }> = [
+  { kind: 'butte', n: TERRAIN.bigCells, range: OUTLANDS_RANGE, glow: 2.6 },
+  { kind: 'crag', n: TERRAIN.smallCells, range: OUTLANDS_RANGE, glow: 2.0 },
+  { kind: 'rubble', n: OUTLANDS.rubbleCells, range: RUBBLE_RANGE, glow: 1.2 },
+];
 const mod = (v: number, m: number) => ((v % m) + m) % m;
 
 /** Upper bound on cells in range for one lattice (the square around the range circle). */
-function maxCells(n: number): number {
-  const side = 2 * (Math.ceil(OFFGRID_RANGE / (C / n)) + 1) + 1;
+function maxCells(n: number, range: number): number {
+  const side = 2 * (Math.ceil(range / (C / n)) + 1) + 1;
   return side * side;
 }
 
@@ -72,11 +72,23 @@ function unitSolid(top: number): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('edge', new THREE.Float32BufferAttribute(edge, 3));
+  // Which way each vertex leans in with height (buttes: the wall batter, see buttePosition).
+  const corner: number[] = [];
+  for (let i = 0; i < pos.length; i += 3) corner.push(pos[i], pos[i + 2]);
+  g.setAttribute('corner', new THREE.Float32BufferAttribute(corner, 2));
   return g;
 }
 
-function solidMaterial(glow: number): THREE.MeshBasicNodeMaterial {
+/**
+ * Butte walls batter in by OUTLANDS.batter m per metre of height: after the instance transform
+ * (scale (half-width, H, half-depth)) each vertex moves in by batter × its height, toward the
+ * centre, so every butte has the physics hull's exact top whatever its size.
+ */
+const buttePosition: TslNode = positionLocal.sub(vec3(attribute('corner', 'vec2').x, 0, attribute('corner', 'vec2').y).mul(positionLocal.y.mul(OUTLANDS.batter)));
+
+function solidMaterial(glow: number, butte: boolean): THREE.MeshBasicNodeMaterial {
   const mat = new THREE.MeshBasicNodeMaterial();
+  if (butte) mat.positionNode = buttePosition;
   const p: TslNode = flatWorld;
   const h: TslNode = max(p.y, float(0));
   // Edges: anti-aliased ~1.5 px lines where any barycentric reaches 0, dimmed where the face is
@@ -98,20 +110,18 @@ function solidMaterial(glow: number): THREE.MeshBasicNodeMaterial {
   return mat;
 }
 
-/** One lattice's instances: a pyramid mesh and a mesa mesh, and the staging arrays for a rebuild. */
+/** One lattice's instances and the staging array for a rebuild. */
 interface LatticeSet {
-  pyramids: THREE.InstancedMesh;
-  mesas: THREE.InstancedMesh;
-  pyr: Float32Array;
-  mesa: Float32Array;
-  pyrN: number;
-  mesaN: number;
+  mesh: THREE.InstancedMesh;
+  staged: Float32Array;
+  count: number;
 }
 
-export class OffGridView {
+export class OutlandsView {
   /**
-   * Uniforms the ground disc reads to stay flat under the instanced solids: the canonical
-   * anchor (x, z) of the shown set and the radius (m) within which cell centres are instanced.
+   * Uniforms the ground disc reads to stay flat under the instanced buttes and crags: the
+   * canonical anchor (x, z) of the shown set and the radius (m) within which butte centres are
+   * instanced.
    */
   readonly exclusion = { anchor: uniform(new THREE.Vector2()), radius: uniform(-1) };
   private readonly sets: LatticeSet[];
@@ -122,26 +132,16 @@ export class OffGridView {
   private build: { ax: number; az: number; lattice: number; ix: number; iz: number } | null = null;
 
   constructor(scene: THREE.Scene) {
-    const pyramid = unitSolid(0), mesa = unitSolid(MESA_TOP);
+    const box = unitSolid(1), pyramid = unitSolid(0);
     this.sets = LATTICES.map((l) => {
-      const cap = maxCells(l.n);
-      const mat = solidMaterial(l.glow);
-      const set: LatticeSet = {
-        pyramids: new THREE.InstancedMesh(pyramid, mat, cap),
-        mesas: new THREE.InstancedMesh(mesa, mat, cap),
-        pyr: new Float32Array(cap * 16),
-        mesa: new Float32Array(cap * 16),
-        pyrN: 0,
-        mesaN: 0,
-      };
-      for (const m of [set.pyramids, set.mesas]) {
-        m.count = 0;
-        m.frustumCulled = false; // bent by curvature and spread over the whole range
-        m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-        m.name = 'off-grid-solids';
-        scene.add(m);
-      }
-      return set;
+      const cap = maxCells(l.n, l.range);
+      const mesh = new THREE.InstancedMesh(l.kind === 'butte' ? box : pyramid, solidMaterial(l.glow, l.kind === 'butte'), cap);
+      mesh.count = 0;
+      mesh.frustumCulled = false; // bent by curvature and spread over the whole range
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.name = `outlands-${l.kind}`;
+      scene.add(mesh);
+      return { mesh, staged: new Float32Array(cap * 16), count: 0 };
     });
   }
 
@@ -153,27 +153,37 @@ export class OffGridView {
     const target = this.build ?? { ax: this.shownX, az: this.shownZ };
     if (ax !== target.ax || az !== target.az) {
       this.build = { ax, az, lattice: 0, ix: NaN, iz: NaN };
-      for (const s of this.sets) s.pyrN = s.mesaN = 0;
+      for (const s of this.sets) s.count = 0;
     }
     if (this.build) this.step(this.build);
     // Place the shown set at the whole-circumference image nearest the camera.
     if (!Number.isNaN(this.shownX)) {
       const ox = this.shownX + Math.round((camera.x - this.shownX) / C) * C;
       const oz = this.shownZ + Math.round((camera.z - this.shownZ) / C) * C;
-      for (const s of this.sets) {
-        s.pyramids.position.set(ox, 0, oz);
-        s.mesas.position.set(ox, 0, oz);
-      }
+      for (const s of this.sets) s.mesh.position.set(ox, 0, oz);
     }
   }
 
-  private step(b: NonNullable<OffGridView['build']>): void {
+  /** Stage one instance: scale (sx, sy, sz), then translate (tx, ty, tz) (column-major). */
+  private put(set: LatticeSet, sx: number, sy: number, sz: number, tx: number, ty: number, tz: number): void {
+    const a = set.staged, o = set.count++ * 16;
+    a.fill(0, o, o + 16);
+    a[o] = sx;
+    a[o + 5] = sy;
+    a[o + 10] = sz;
+    a[o + 12] = tx;
+    a[o + 13] = ty;
+    a[o + 14] = tz;
+    a[o + 15] = 1;
+  }
+
+  private step(b: NonNullable<OutlandsView['build']>): void {
     let budget = CELLS_PER_FRAME;
     while (b.lattice < LATTICES.length && budget > 0) {
-      const { n, seed, scale } = LATTICES[b.lattice];
+      const { kind, n, range } = LATTICES[b.lattice];
       const set = this.sets[b.lattice];
       const cell = C / n;
-      const reach = Math.ceil(OFFGRID_RANGE / cell) + 1;
+      const reach = Math.ceil(range / cell) + 1;
       const ci = Math.floor(b.ax / cell), cj = Math.floor(b.az / cell);
       if (Number.isNaN(b.ix)) {
         b.ix = ci - reach;
@@ -183,23 +193,16 @@ export class OffGridView {
         for (; b.iz <= cj + reach && budget > 0; b.iz++, budget--) {
           // Cell centre in the anchor's frame (indices unwrapped, so continuous around it).
           const cx = (b.ix + 0.5) * cell, cz = (b.iz + 0.5) * cell;
-          if (Math.hypot(cx - b.ax, cz - b.az) >= OFFGRID_RANGE) continue;
-          const s = solidCell(b.ix, b.iz, n, seed);
-          if (!s) continue;
-          const H = s.height * scale * TERRAIN.peak;
-          if (H < 0.5) continue; // solidHulls skips these too
-          const base = 0.45 * cell;
-          const pyramid = s.mesa >= 1;
-          const arr = pyramid ? set.pyr : set.mesa;
-          const o = (pyramid ? set.pyrN++ : set.mesaN++) * 16;
-          // Scale (base, H, base) then translate, relative to the anchor (column-major).
-          arr.fill(0, o, o + 16);
-          arr[o] = base;
-          arr[o + 5] = H;
-          arr[o + 10] = base;
-          arr[o + 12] = cx - b.ax;
-          arr[o + 14] = cz - b.az;
-          arr[o + 15] = 1;
+          if (Math.hypot(cx - b.ax, cz - b.az) >= range) continue;
+          // Canonical → anchor frame: the cell's canonical centre sits at (cx, cz) here.
+          const ox = cx - (mod(b.ix, n) + 0.5) * cell, oz = cz - (mod(b.iz, n) + 0.5) * cell;
+          if (kind === 'butte') {
+            const t = butteCell(b.ix, b.iz);
+            if (t) this.put(set, (t.x1 - t.x0) / 2, t.H, (t.z1 - t.z0) / 2, (t.x0 + t.x1) / 2 + ox - b.ax, 0, (t.z0 + t.z1) / 2 + oz - b.az);
+          } else {
+            const p = kind === 'crag' ? cragCell(b.ix, b.iz) : rubbleCell(b.ix, b.iz);
+            if (p) this.put(set, p.half, p.H, p.half, p.cx + ox - b.ax, p.y0, p.cz + oz - b.az);
+          }
         }
         if (b.iz <= cj + reach) break; // out of budget mid-column: resume here next frame
       }
@@ -211,23 +214,20 @@ export class OffGridView {
     if (b.lattice < LATTICES.length) return;
     // Done: swap the new set in, together with the disc's exclusion.
     for (const s of this.sets) {
-      s.pyramids.instanceMatrix.array.set(s.pyr.subarray(0, s.pyrN * 16));
-      s.mesas.instanceMatrix.array.set(s.mesa.subarray(0, s.mesaN * 16));
-      s.pyramids.count = s.pyrN;
-      s.mesas.count = s.mesaN;
-      s.pyramids.instanceMatrix.needsUpdate = true;
-      s.mesas.instanceMatrix.needsUpdate = true;
+      s.mesh.instanceMatrix.array.set(s.staged.subarray(0, s.count * 16));
+      s.mesh.count = s.count;
+      s.mesh.instanceMatrix.needsUpdate = true;
     }
     this.shownX = b.ax;
     this.shownZ = b.az;
     this.exclusion.anchor.value.set(b.ax, b.az);
     // A hair inside the instanced range: a borderline cell is drawn twice rather than not at all.
-    this.exclusion.radius.value = OFFGRID_RANGE - 2;
+    this.exclusion.radius.value = OUTLANDS_RANGE - 2;
     this.build = null;
   }
 
-  /** Number of instanced solids shown (tests, debugging). */
+  /** Number of instanced landforms shown (tests, debugging). */
   get count(): number {
-    return this.sets.reduce((a, s) => a + s.pyramids.count + s.mesas.count, 0);
+    return this.sets.reduce((a, s) => a + s.mesh.count, 0);
   }
 }

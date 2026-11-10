@@ -9,7 +9,7 @@ import { DEREZ_TIME, type TrailPoint, type TrailSystem } from './trails.ts';
 /**
  * AI light-cycle traffic: programs riding the planet's street grid (Rule 4: each lays a short
  * jetwall behind it). Purely kinematic and deterministic: riders keep their lane, favour the
- * data highways, turn 90° only at intersections and never onto airfields, sea or the Off-Grid.
+ * data highways, turn 90° only at intersections and never onto airfields, sea or the Outlands.
  *
  * - **Streaming.** The planet is cut into cells of TRAFFIC.cellBlocks² blocks; every cell within
  *   TRAFFIC.radius of the player holds a quota of riders (from its highway and street segments).
@@ -98,11 +98,11 @@ const mod = (v: number, m: number) => ((v % m) + m) % m;
 export const lineX = (i: number) => GRID.x0 + i * P;
 export const lineZ = (j: number) => GRID.z0 + j * P;
 
-/** Block kind byte (0 city, 64 Off-Grid, 128 open, 192 airfield, 255 sea), from blockSummary. */
+/** Block kind byte (0 city, 64 Outlands, 128 open, 192 airfield, 255 sea), from blockSummary. */
 export function blockKind(gi: number, gj: number): number {
   return blockSummary()[(mod(gj, N) * N + mod(gi, N)) * 4 + 2];
 }
-/** Blocks with streets around them (the ground shader draws none on airfields, sea, Off-Grid). */
+/** Blocks with streets around them (the ground shader draws none on airfields, sea, Outlands). */
 export const roadBlock = (gi: number, gj: number) => {
   const k = blockKind(gi, gj);
   return k === 0 || k === 128;

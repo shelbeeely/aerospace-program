@@ -1,6 +1,6 @@
 /**
  * AI light-cycle traffic checks: riders keep to street lanes, follow the grid (turning only at
- * intersections), stay off airfields, sea and the Off-Grid, derez riding into the player's
+ * intersections), stay off airfields, sea and the Outlands, derez riding into the player's
  * jetwall (or when the player hits them), steer clear of it when they can, stay bounded while
  * the player moves around the planet, and are deterministic for a given seed.
  * Run with `npm run traffic`.
@@ -68,7 +68,7 @@ const roadKind = (k: number) => k === 0 || k === 128;
   check(traffic.active > 250, 'the streamed disc fills with riders', `${traffic.active} riding`);
   check(offLane === 0, 'riders keep to their lane centres', `${samples} samples, ${offLane} off${worst ? ` (${worst})` : ''}`);
   check(turns > 50 && badTurns === 0, 'riders turn only at intersections', `${turns} turns, ${badTurns} elsewhere`);
-  check(offRoad === 0, 'riders stay off airfields, sea and the Off-Grid', `${offRoad} off-road samples`);
+  check(offRoad === 0, 'riders stay off airfields, sea and the Outlands', `${offRoad} off-road samples`);
   const highway = traffic.riders.filter((r) => isHighwayLine(r.line)).length;
   check(highway > traffic.riders.length * 0.4, 'the data highways carry most of the traffic', `${highway} of ${traffic.riders.length} on highways (1 line in 6)`);
   const trailLen = Math.max(...traffic.riders.map((r) => {
