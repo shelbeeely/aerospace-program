@@ -284,6 +284,9 @@ body.mode-flight #studio, body.mode-flight #hangar-bar { display: none !importan
 #craft-card .row { display: flex; align-items: baseline; gap: 8px; }
 #craft-card .row span { width: 52px; color: #9fb2c2; font-size: 11px; letter-spacing: 0.08em; }
 #craft-card .row b { font-variant-numeric: tabular-nums; }
+#craft-card .spawn-at { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+#craft-card .spawn-at span { width: 52px; color: #9fb2c2; font-size: 11px; letter-spacing: 0.08em; }
+#craft-card .spawn-at select { flex: 1; min-width: 0; max-width: 190px; background: rgba(0,0,0,0.35); color: #eaf2f8; border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; font: inherit; font-size: 12px; padding: 1px 4px; }
 #craft-card .reinforce { margin-top: 6px; }
 #craft-card .reinforce summary { cursor: pointer; font-size: 11px; letter-spacing: 0.08em; color: #ffb36b; }
 #craft-card .reinforce-list { max-height: 34dvh; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
@@ -399,3 +402,93 @@ body.touch-ui .lever-label { top: -46px; }
 
 /* Autopilot readout lights up while engaged. */
 #h-ap-row.ap-on b, #h-ap-row.ap-on small { color: #3dffb0; }
+
+/* ---------------------------------------------------------------- flight computer (J) */
+#ap-panel { right: 16px; top: 16px; width: 320px; max-height: calc(100dvh - 32px); overflow-y: auto; z-index: 18; border-color: rgba(0, 234, 255, 0.35); box-shadow: 0 0 14px rgba(0, 234, 255, 0.12); }
+#ap-panel .ap-modes { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 6px; }
+#ap-panel button { background: #0e1d2e; color: #cfeaff; border: 1px solid rgba(0, 234, 255, 0.35); border-radius: 4px; padding: 4px 9px; font: inherit; cursor: pointer; }
+#ap-panel button:hover { border-color: #00eaff; }
+#ap-panel .ap-modes button.active { background: rgba(0, 234, 255, 0.18); color: #fff; border-color: #00eaff; box-shadow: 0 0 6px rgba(0, 234, 255, 0.45); }
+#ap-panel .panel-close { margin-bottom: 6px; }
+#ap-panel .ap-fields { display: grid; gap: 5px; margin: 6px 0; }
+#ap-panel .ap-field { display: flex; align-items: center; gap: 6px; }
+#ap-panel .ap-field span { width: 92px; color: #9fb2c2; font-size: 11px; letter-spacing: 0.06em; }
+#ap-panel .ap-field input, #ap-panel .ap-field select { flex: 1; min-width: 0; width: 0; background: rgba(0, 0, 0, 0.4); color: #eaf2f8; border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 4px; padding: 3px 5px; font: inherit; }
+#ap-panel .ap-field small { width: 26px; color: #9fb2c2; }
+#ap-panel .ap-buttons { display: flex; gap: 6px; margin: 8px 0; }
+#ap-panel .ap-engage { flex: 1; background: rgba(0, 234, 255, 0.16); color: #fff; font-weight: bold; letter-spacing: 0.08em; }
+#ap-panel .ap-status { color: #9fb2c2; min-height: 2.6em; white-space: pre-line; }
+#ap-panel .ap-status.on { color: #3dffb0; }
+#ap-panel .ap-guidance td { padding: 1px 10px 1px 0; }
+#ap-panel .ap-guidance td:first-child { color: #9fb2c2; }
+#ap-panel .small { font-size: 11px; }
+body.mode-hangar #ap-panel { display: none !important; }
+body.touch-ui #ap-panel {
+  left: 50%; right: auto; top: max(8px, env(safe-area-inset-top)); transform: translateX(-50%);
+  width: min(92vw, 360px); max-height: 70dvh; z-index: 22;
+}
+body.touch-ui #ap-panel button, body.touch-ui #ap-panel input, body.touch-ui #ap-panel select { min-height: 36px; font-size: 14px; }
+
+/* Approach guidance block in the HUD (Land mode). */
+#h-appr { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(0, 234, 255, 0.35); }
+#h-appr .appr-site { color: #00eaff; font-size: 11px; letter-spacing: 0.08em; margin-bottom: 2px; text-shadow: 0 0 6px rgba(0, 234, 255, 0.5); }
+#h-appr b { color: #e8f6ff; }
+#h-appr b.appr-warn { color: #ffb347; }
+
+/* ---------------------------------------------------------------- multiplayer (Grid Link) */
+#mp-toggle {
+  top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); z-index: 7;
+  color: #eaf2f8; font: inherit; font-size: 11px; letter-spacing: 0.12em; cursor: pointer; padding: 6px 10px;
+}
+#mp-toggle:hover { background: rgba(30, 50, 72, 0.8); }
+.mp-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #3b4b5c; vertical-align: 0; }
+.mp-dot[data-status="connected"] { background: #00eaff; box-shadow: 0 0 8px #00eaff; }
+.mp-dot[data-status="connecting"] { background: #ffb000; box-shadow: 0 0 8px #ffb000; animation: blink 0.8s steps(2) infinite; }
+.mp-dot[data-status="error"] { background: #ff4a3d; }
+#mp-panel {
+  top: calc(max(16px, env(safe-area-inset-top)) + 38px); left: max(16px, env(safe-area-inset-left)); z-index: 7;
+  width: min(300px, calc(100vw - 32px)); max-height: calc(100dvh - 80px); overflow-y: auto; user-select: text;
+  background: rgba(4, 10, 18, 0.9); border-color: rgba(0, 234, 255, 0.35); box-shadow: 0 0 18px rgba(0, 234, 255, 0.12);
+}
+#mp-panel .mp-head { display: flex; align-items: center; justify-content: space-between; }
+#mp-panel .mp-head h3 { margin: 0; color: #00eaff; }
+#mp-panel .mp-close { background: none; border: 0; color: #9fb2c2; font: inherit; cursor: pointer; min-width: 32px; min-height: 32px; }
+#mp-panel .mp-status { color: #9fb2c2; font-size: 11px; margin: 2px 0 8px; }
+#mp-panel .mp-status.mp-connected { color: #9ff3ff; }
+#mp-panel .mp-status.mp-connecting { color: #ffcf6e; }
+#mp-panel .mp-status.mp-error { color: #ff8a7a; }
+#mp-panel .mp-field { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; font-size: 11px; color: #9fb2c2; letter-spacing: 0.06em; }
+#mp-panel input[type=text] {
+  background: rgba(0, 0, 0, 0.45); color: #eaf2f8; border: 1px solid rgba(0, 234, 255, 0.3); border-radius: 4px;
+  padding: 6px; font: inherit; font-size: 13px; width: 100%;
+}
+#mp-panel input[type=text]:focus { outline: none; border-color: #00eaff; box-shadow: 0 0 6px rgba(0, 234, 255, 0.4); }
+#mp-panel .mp-colors { display: flex; gap: 6px; margin: 4px 0 6px; }
+#mp-panel .mp-swatch {
+  width: 22px; height: 22px; border-radius: 4px; cursor: pointer; background: #050a10;
+  border: 2px solid var(--c); box-shadow: inset 0 0 6px var(--c);
+}
+#mp-panel .mp-swatch[aria-checked="true"] { background: var(--c); box-shadow: 0 0 10px var(--c); }
+#mp-panel .mp-actions { display: flex; gap: 8px; margin: 8px 0; }
+#mp-panel .mp-btn {
+  flex: 1; min-height: 36px; cursor: pointer; font: inherit; font-size: 12px; letter-spacing: 0.1em; border-radius: 4px;
+  color: #eaf2f8; background: rgba(0, 234, 255, 0.08); border: 1px solid rgba(0, 234, 255, 0.45);
+}
+#mp-panel .mp-btn:hover { background: rgba(0, 234, 255, 0.18); }
+#mp-panel .mp-btn.mp-primary { color: #001014; background: #00eaff; border-color: #9ff3ff; font-weight: bold; }
+#mp-panel .mp-btn.mp-leave { color: #ffcf6e; border-color: rgba(255, 176, 0, 0.5); background: rgba(255, 176, 0, 0.08); }
+#mp-panel .mp-room { display: flex; align-items: baseline; gap: 10px; }
+#mp-panel .mp-room span { color: #9fb2c2; font-size: 11px; letter-spacing: 0.12em; }
+#mp-panel .mp-room b { font-size: 26px; letter-spacing: 0.3em; color: #ffb000; text-shadow: 0 0 10px rgba(255, 176, 0, 0.6); }
+#mp-panel h4 { margin: 10px 0 4px; font-size: 11px; letter-spacing: 0.1em; color: #9fd0ff; }
+#mp-panel .mp-players { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+#mp-panel .mp-players li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#mp-panel .mp-players b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+#mp-panel .mp-players small { color: #9fb2c2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#mp-panel .mp-pdot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+#mp-panel .mp-chat { margin: 8px 0 4px; max-height: 120px; overflow-y: auto; font-size: 12px; overflow-wrap: anywhere; }
+#mp-panel .small { font-size: 11px; }
+/* The hangar shows only join / create; roster and chat are for flight. */
+body.mode-hangar #mp-panel .mp-online-only { display: none; }
+body.touch-ui #mp-toggle { top: auto; bottom: max(8px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); }
+body.touch-ui #mp-panel { top: auto; bottom: calc(max(8px, env(safe-area-inset-bottom)) + 40px); left: 50%; transform: translateX(-50%); max-height: 60dvh; }

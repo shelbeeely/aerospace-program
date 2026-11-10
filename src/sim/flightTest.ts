@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import type { CraftDef } from '../craft/types.ts';
 import { TUNING } from '../tuning.ts';
-import type { WeatherSettings } from './atmosphere.ts';
+import { calmWeather, WEATHER_PRESETS, type WeatherSettings } from './atmosphere.ts';
 import { Autopilot } from './autopilot.ts';
-import { LAYOUT } from './layout.ts';
+import { FlightAutopilot } from './flightAutopilot.ts';
+import { LAYOUT, RUNWAYS } from './layout.ts';
+import { approachFrame } from './nav.ts';
 import { Simulation } from './Simulation.ts';
 import type { Telemetry } from './telemetry.ts';
 import { groundCard, lighterThanAirCard, rotorcraftCard, vehicleKind, type VehicleKind } from './vehicleTests.ts';
@@ -45,12 +47,25 @@ export interface FlightReport {
   maxAltitude: number;
   turned: boolean;
   handsOffStable: boolean;
+  /** Autoland at Grid International: on the runway, gentle, stopped before the end. */
+  landed: boolean;
+  /** Touchdown numbers, when it touched down. */
+  touchdown?: { speed: number; sinkRate: number; along: number; cross: number; stoppedAt?: number };
   crashed: boolean;
   /** Parts that broke off during the test. */
   failures: Array<{ partId: string; load: number; strength: number; cause?: string }>;
   /** Actionable problems, phrased so a designer (human or model) can fix them. */
   issues: string[];
   /** Short timeline of what happened. */
+  log: string[];
+  /** Advisory re-fly of the same card in a gusty crosswind (only with `gusty: true`). Never affects score/passed. */
+  gusty?: GustyResult;
+}
+
+/** Outcome of the advisory gusty-crosswind flight (WEATHER_PRESETS.breezy). */
+export interface GustyResult {
+  score: number;
+  issues: string[];
   log: string[];
 }
 
@@ -59,6 +74,23 @@ export interface FlightTestOptions {
   yieldEvery?: number;
   /** Weather to fly the card in (default: calm). */
   weather?: WeatherSettings;
+  /** Also fly the card in a gusty crosswind and attach `report.gusty` (advisory: score/passed stay the calm ones). */
+  gusty?: boolean;
+}
+
+/** The weather the advisory gusty flight uses: calm defaults plus the 'breezy' preset (9 m/s from 090, gusts 6). */
+export function gustyWeather(): WeatherSettings {
+  return { ...calmWeather(), ...WEATHER_PRESETS.breezy.settings };
+}
+
+function gustyConditions(): string {
+  const w = gustyWeather();
+  return `a ${w.windSpeed} m/s wind from ${String(Math.round(w.windFromDeg)).padStart(3, '0')} with ${w.gustStrength} m/s gusts`;
+}
+
+/** Attaches the gusty flight's result to a calm report as advisory data; the headline score is untouched. */
+export function withGusty(calm: FlightReport, gusty: FlightReport): FlightReport {
+  return { ...calm, gusty: { score: gusty.score, issues: gusty.issues, log: gusty.log } };
 }
 
 const r1 = (x: number) => Math.round(x * 10) / 10;
@@ -108,7 +140,14 @@ export function analyzeDesign(sim: Simulation): DesignMetrics {
  * Runs headless, ~150 simulated seconds in well under a second.
  */
 export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): Promise<FlightReport> {
+  const calm = await flyCard(def, opts);
+  if (!opts.gusty) return calm;
+  return withGusty(calm, await flyCard(def, { yieldEvery: opts.yieldEvery, weather: gustyWeather() }));
+}
+
+async function flyCard(def: CraftDef, opts: FlightTestOptions): Promise<FlightReport> {
   const sim = new Simulation(def, opts.weather);
+  sim.traffic.enabled = false; // test cards fly a clean world (no AI light-cycle traffic)
   const design = analyzeDesign(sim);
   const kind = vehicleKind(sim);
   const issues: string[] = [];
@@ -200,6 +239,7 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
       maxAltitude: card.maxAltitude,
       turned: passedNamed('yaw') || passedNamed('turn'),
       handsOffStable: passedNamed('hover') || passedNamed('hands-off'),
+      landed: passedNamed('land'),
       crashed,
       failures,
       issues,
@@ -305,6 +345,18 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
       issues.push(`Unstable hands-off (max pitch ${Math.round(worstPitch)}°, roll ${Math.round(worstRoll)}°${stalled ? ', stalled' : ''}). Increase static margin, horizontal tail area/arm, dihedral, or fin area.`);
   }
 
+  // 6. Land: the flight computer's Land mode brings it back to Grid International (approach at
+  //    1.3 × the estimated stall speed, 3° glideslope, flare, brakes).
+  let landed = false;
+  let touchdown: FlightReport['touchdown'];
+  if (turned && !crashed) {
+    const r = await landingPhase(sim, design, step, () => crashed);
+    landed = r.landed && !crashed;
+    touchdown = r.touchdown;
+    log.push(...r.log);
+    if (!crashed) issues.push(...r.issues);
+  }
+
   if (crashed) {
     log.push(`CRASH: ${crashNote}`);
     issues.push(`Crashed: ${crashNote}.`);
@@ -316,10 +368,11 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
 
   let score = 0;
   if (restsLevel) score += 10;
-  if (tookOff) score += 30;
-  if (reachedAltitude) score += 20;
-  if (turned) score += 20;
-  if (handsOffStable) score += 20;
+  if (tookOff) score += 25;
+  if (reachedAltitude) score += 15;
+  if (turned) score += 15;
+  if (handsOffStable) score += 15;
+  if (landed) score += 20;
   if (crashed) score = Math.max(0, score - 15);
   if (failures.length) score = Math.max(0, score - 10);
 
@@ -336,11 +389,72 @@ export async function flightTest(def: CraftDef, opts: FlightTestOptions = {}): P
     maxAltitude: r1(maxAltitude),
     turned,
     handsOffStable,
+    landed,
+    touchdown,
     crashed,
     failures,
     issues,
     log,
   };
+}
+
+type StepFn = (pilot: (t: Telemetry) => Parameters<Simulation['step']>[0], seconds: number, until?: (t: Telemetry) => boolean) => Promise<Telemetry>;
+
+/**
+ * Landing phase: engage the flight computer's Land mode to Grid International and watch the
+ * touchdown (on the runway, sink under 3 m/s) and the rollout (stopped before the end).
+ */
+async function landingPhase(sim: Simulation, design: DesignMetrics, step: StepFn, crashed: () => boolean): Promise<{ landed: boolean; touchdown?: FlightReport['touchdown']; log: string[]; issues: string[] }> {
+  const log: string[] = [];
+  const issues: string[] = [];
+  const site = RUNWAYS[0];
+  const hands = { sample: (_dt: number, t: Telemetry) => ({ pitch: 0, roll: 0, yaw: 0, throttle: t.throttle, brake: 0 }) };
+  const fc = new FlightAutopilot(hands);
+  fc.engage(sim.telemetry(), 'airplane', { stallSpeed: design.stallSpeed }, { mode: 'land', destination: site.id });
+  const vapp = fc.approachSpeed;
+  let prev = sim.telemetry();
+  let td: { speed: number; sinkRate: number; along: number; cross: number } | null = null;
+  let offRunway = false;
+  let maxCross = 0;
+  const halfWidth = site.width / 2;
+  const t = await step((tt) => {
+    if (!td && tt.onGround) {
+      const ap = approachFrameFor(fc, tt);
+      td = { speed: r1(prev.airspeed), sinkRate: r1(-Math.min(prev.verticalSpeed, tt.verticalSpeed)), along: Math.round(ap.along), cross: r1(ap.cross) };
+    }
+    if (td) {
+      const ap = approachFrameFor(fc, tt);
+      maxCross = Math.max(maxCross, Math.abs(ap.cross));
+      if (Math.abs(ap.cross) > halfWidth || ap.along > site.length) offRunway = true;
+    }
+    prev = tt;
+    return fc.sample(sim.dt, tt);
+  }, 420, (tt) => fc.state.phase === 'landed' && tt.groundSpeed < 0.5);
+  const ap = approachFrameFor(fc, t);
+  const stopped = fc.state.phase === 'landed' && t.groundSpeed < 0.5;
+  const tdr = td as { speed: number; sinkRate: number; along: number; cross: number } | null;
+  if (!tdr) {
+    log.push(`land: never touched down (phase ${fc.state.phase}, ${fc.state.status})`);
+    if (!crashed()) issues.push(`Autoland did not reach the runway (stuck in ${fc.state.phase}): the craft may lack the speed range or control authority to fly a ${r1(vapp)} m/s approach (1.3 × est. stall ${design.stallSpeed} m/s).`);
+    return { landed: false, log, issues };
+  }
+  const onRunway = tdr.along >= 0 && tdr.along <= site.length && Math.abs(tdr.cross) <= halfWidth;
+  const soft = tdr.sinkRate < 3;
+  const stoppedOnRunway = stopped && ap.along <= site.length && !offRunway;
+  const touchdown = { ...tdr, stoppedAt: stopped ? Math.round(ap.along) : undefined };
+  log.push(`land: touchdown ${tdr.along} m past the threshold, ${tdr.cross} m off centre, ${tdr.speed} m/s (approach ${r1(vapp)}), sink ${tdr.sinkRate} m/s; ${stopped ? `stopped at ${Math.round(ap.along)} m of ${site.length}` : `still rolling at ${r1(t.groundSpeed)} m/s`}`);
+  if (!onRunway) issues.push(tdr.along < 0 ? `Landed short: touched down ${-tdr.along} m before the runway.` : tdr.along > site.length ? 'Landed long: touched down past the end of the runway.' : `Drifted off the runway at touchdown (${Math.abs(tdr.cross)} m off centre): give the rudder and ailerons more authority, or the craft more directional stability.`);
+  if (!soft) issues.push(`Hard landing: sank at ${tdr.sinkRate} m/s at touchdown (limit 3). The elevator may lack authority to flare: enlarge it or move the CoM aft a little.`);
+  if (onRunway && tdr.along > site.length / 2) issues.push(`Long landing: floated ${tdr.along} m down the runway before touching down. A slippery design floats in the flare: add drag or flaps, or lower the wing loading.`);
+  if (tdr.speed > vapp * 1.25) issues.push(`Fast touchdown: ${tdr.speed} m/s against a ${r1(vapp)} m/s approach. Flaps or more drag would slow it.`);
+  if (!stopped) issues.push(`Did not stop: still rolling at ${r1(t.groundSpeed)} m/s. Brakes on the main wheels (wheel "brake") or a lower approach speed would help.`);
+  else if (!stoppedOnRunway) issues.push(offRunway && maxCross > halfWidth ? `Ran off the side of the runway on the rollout (${r1(maxCross)} m off centre): check nose-wheel steering and the main wheels' track.` : `Overran the runway: stopped ${Math.round(ap.along - site.length)} m past the end. Stronger brakes or a slower approach would help.`);
+  return { landed: onRunway && soft && stoppedOnRunway, touchdown, log, issues };
+}
+
+function approachFrameFor(fc: FlightAutopilot, t: Telemetry): { along: number; cross: number } {
+  const ap = fc.landingApproach;
+  return ap ? approachFrame(ap, t.position[0], t.position[2]) : { along: NaN, cross: NaN };
 }
 
 /** Plain-text report, used both in the UI and as feedback to a designer model. */
@@ -351,5 +465,11 @@ export function formatReport(r: FlightReport): string {
     r.vehicle !== 'airplane' ? `Design: mass ${d.mass} kg` : `Design: mass ${d.mass} kg, wing area ${d.wingArea} m², loading ${d.wingLoading} kg/m², T/W ${d.thrustToWeight}, static margin ${d.staticMargin} chords, est. stall ${d.stallSpeed} m/s`,
     ...r.log.map((l) => `- ${l}`),
     ...(r.issues.length ? ['Issues:', ...r.issues.map((i) => `* ${i}`)] : ['No issues found.']),
+    ...(r.gusty
+      ? [
+          `Gusty crosswind (advisory): score ${r.gusty.score}/100 in ${gustyConditions()}. Does not affect the score above; worth improving if cheap.`,
+          ...(r.gusty.issues.length ? r.gusty.issues.map((i) => `* ${i}`) : ['No issues in gusts.']),
+        ]
+      : []),
   ].join('\n');
 }

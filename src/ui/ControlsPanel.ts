@@ -10,10 +10,11 @@ const KEYBOARD: Array<[string, string]> = [
   ['B or Space', 'brakes'],
   ['T / G, Y', 'trim down / up, reset'],
   [', / . (F6 / F7)', 'flaps up / down a notch'],
-  ['R', 'new plane on the runway (wreckage stays)'],
+  ['R', 'new craft at the spawn site (hangar card: Spawn at; wreckage stays)'],
   ['Backspace', 'reset the whole world'],
-  ['L', 'light cycle trail: jetwall → light ribbon → off'],
+  ['L', 'cycle / car / tank trail: jetwall → light ribbon → off'],
   ['U', 'autopilot on / off (then W/S altitude, A/D heading, Shift/Ctrl speed)'],
+  ['J', 'flight computer: hold, takeoff, land, go to, orbit, level (a firm stick input takes over)'],
   ['C', 'chase / orbit camera'],
   ['[ / ]', 'previous / next craft'],
   ['N', 'Hangar / flight'],
@@ -28,13 +29,14 @@ const TOUCH: Array<[string, string]> = [
   ['BRAKE', 'hold to brake'],
   ['Hangar', 'choose a craft or open Create / Studio'],
   ['Camera', 'switch chase / orbit view'],
-  ['More', 'new plane, reset world, craft selection, weather, flaps, sound and photos'],
+  ['More', 'new plane, reset world, craft selection, autopilot, flight computer (land, go to, orbit), weather, flaps, sound and photos'],
 ];
 
 const PROFILE_TIPS: Record<string, string> = {
   airplane: 'Full throttle, roll down the runway, pull back gently around 60 kt.',
   rotorcraft: 'Raise collective to the middle (≈ hover), then a little more to climb. The flight controller holds the tilt you ask for.',
   'lighter-than-air': 'Slightly heavy: add power and pitch up to climb on hull lift. Steer with yaw.',
+  ground: 'W go, S brake, A/D steer. Light Car: front wheels steer, rear wheels drive. Program Tank: A/D skid-steer the tracks, so it turns on the spot when stopped. Spawn at a street from the hangar card.',
 };
 
 function table(rows: Array<[string, string]>): HTMLTableElement {

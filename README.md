@@ -13,6 +13,7 @@ npm run dev            # http://localhost:5173, press N for the Studio
 npm run design -- "a twin-boom cargo plane" --model anthropic/claude-sonnet-5.5
 npm run sim            # headless physics regression (takeoff, turn, stalls, CoM shift, crash)
 npm run weather        # weather impact checks (rain, icing, ground effect, vortex ring, wet runway)
+npm run ground         # ground vehicles: flat ground, skid steering, Outlands highways and rubble, spawn sites
 npm run build          # typecheck + production build
 ```
 
@@ -329,6 +330,31 @@ geometry (incidence, dihedral, washout, control throws, spring rates) is in `tes
 After a change, `npm run sim` prints lift-off speed, stall altitude loss and the instability
 test, so you can see the effect without flying.
 
+## Multiplayer (Grid Link)
+
+Up to 16 programs per room share the Grid: aircraft, cars and light cycles, with their trails.
+The relay is a small [Bun](https://bun.sh) server (WebSocket only, no accounts, nothing stored).
+
+```bash
+npm run server          # bun server/index.ts, ws://localhost:8787 (PORT=… to change)
+npm run dev             # then press O (or the ◈ GRID LINK button): CREATE ROOM, or JOIN a code
+npm run test:server     # bun test server: two clients join, relay, isolation, size limits
+```
+
+- **Invite:** COPY INVITE gives `…/?mode=fly&room=CODE&server=ws://host:8787`; opening that
+  link joins straight away. The server defaults to `ws://<page host>:8787`.
+- **What's shared:** each player's pose, velocity and controls at 20 Hz, drawn from their
+  CraftDef and interpolated 100 ms behind; their jetwalls, ribbons and contrails (in their
+  colour); structure fractures (by structure name, so everyone sees the same tower fall);
+  explosions; derezzes; chat. Remote jetwalls near you are solid: ride into one and you derez.
+- **Not shared:** the weather, the town's loose blocks and rubble physics (each client simulates
+  its own collapse from the same fracture), and craft-to-craft collisions.
+- **Server:** `GET /health` reports rooms and players. Messages are shape-checked, size-capped
+  (32 KB, 256 KB for a craft) and rate-limited; silent players are dropped after 20 s.
+  Protocol: `src/net/protocol.ts` (versioned; client and server share it). Room logic:
+  `server/rooms.ts`. Client: `src/net/NetClient.ts`, `src/render/RemoteCraftView.ts`,
+  `src/ui/MultiplayerPanel.ts`. Not connected, the game is single-player as before.
+
 ## Disasters
 
 F3 has explicit **Tornado**, **Hurricane**, **Earthquake**, and **Clear events** buttons.
@@ -428,10 +454,20 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
 - **Earthquakes** bring the city down: intact structures within 1.2 km of the craft whose tops
   would shake past their strength (tall, slender towers and raised highways first) fracture,
   then the shaking knocks blocks out and whatever they held up falls as rubble.
-- **The Off-Grid.** Wasteland between the cities (~25% of the land): geometric solids
-  (pyramids and flat-topped mesas, planar faces, straight ridgelines) lit in the contrasting
-  palette, amber contours and orange-to-red ridges over an electric-blue survey grid. Physics
-  uses one convex hull per solid, so you hit exactly what you see.
+- **The Outlands.** Vast wastelands outside the cities' boundaries (~25% of the land), craggy
+  and treacherous: sheer-walled buttes up to 320 m split by deep, straight ravines, needle crags
+  on their tops and sharp rubble strewn over ravine floors and basins. Lit in the contrasting
+  palette: amber strata up the walls, orange-to-red rims and ridgelines over an electric-blue
+  survey grid. Outlands highways (every 37th street line, both ways) cut clean through, so it
+  all stays drivable: highways, ravine floors and basins are at street level. Physics uses one
+  convex hull per landform, so you hit exactly what you see (`src/sim/terrain.ts`).
+- **Outlands vehicles.** Street light cycles are not built for rocky ground. Built for it: the
+  **Light Crawler** (six-wheel drive, counter-steering rear axle), the **Light Runner** (fast
+  four-wheel drive on tall wheels), the **Light Snowmobile** (two steering skis and a driven
+  track) and the **Outlands Light Cycle** (big wheels, long travel, two-wheel drive). All on
+  long-travel suspension; `npm run ground` drives them across an Outlands rubble field.
+- **The system boundary.** The edge of the Grid sits at 100 km, above every orbit: anything
+  that crosses it derezzes. The HUD warns from 85 km (`TUNING.systemBoundary`).
 - **Light cycles and trails (Rule 4: movement produces visible information).** The Light Cycle
   (built-ins) drives on the streets: W go, S brake, A/D steer; a gyro stabiliser keeps it
   upright, leaning into turns. **L** cycles its trail: **jetwall** (solid light: ride into
@@ -441,6 +477,18 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
   automatically, from the outermost points on each side for aircraft (wingtips, rotor arms, a
   blimp's flanks; light only, dissolving a speed-scaled distance behind) or a rear jetwall for
   ground vehicles. Check: `npm run trails`.
+- **Light Car and Program Tank (built-ins).** The **Light Car** is a four-wheel neon runabout
+  (cyan lines, red and amber accents): front wheels steer, rear wheels drive, and it lays a
+  jetwall / light ribbon from its tail. The **Program Tank** is heavy, slow and fully
+  reinforced, on six road wheels per side, and lays a red jetwall. It **skid-steers**: a wheel
+  with `skid: 1 | -1` (its side) is driven by the yaw channel, the two sides in opposite
+  directions, so A/D turns it on the spot. Both score 100/100 on the ground card in calm and
+  moderate weather and drive down the Outlands highways. Check: `npm run ground`.
+- **Spawn anywhere (hangar → craft card → Spawn).** Any runway (its threshold, facing down the
+  strip), any helipad (its centre, at pad height: rooftops too) or, for ground vehicles,
+  **Nearest street** (a clear point on the street grid nearest to where the craft was). The
+  choice lasts the session: R, the automatic respawn after a crash and Backspace's world reset
+  all use it. `window.game.spawnAt(id)` does the same from the console.
 - **Reinforcement (hangar → craft card → Reinforce):** levels 0-3 per part, each +15% part
   mass, +60% strength and +80% impact HP. Saved with the craft; designers can set it too.
 - **Airport:** taxiway, apron, terminal with jet bridges and parked airliners, control tower and
@@ -449,6 +497,13 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
 - **Autopilot (U / gamepad R3 / touch "Autopilot"):** holds heading, altitude and speed (hover,
   heading and forward speed on rotorcraft), takes off by itself from the runway, and climbs to
   clear buildings ahead. While engaged, stick pitch/roll and the throttle adjust its targets.
+- **Flight computer (J / touch More → "Flight computer"):** MechJeb-style modes on top of the
+  autopilot (`src/sim/flightAutopilot.ts`, navigation in `src/sim/nav.ts`): Hold (or a V/S
+  hold), Takeoff, Land (airplanes: join → initial fix → 3° glideslope and localizer → flare →
+  rollout on a runway long enough, at 1.3 × the design's stall speed; rotorcraft: any helipad,
+  rooftops included), Go to (every landing site, the hubs and the Grid Spire, clearing
+  buildings and terrain, then Orbit), Orbit and Level. The HUD shows approach guidance while
+  landing; a firm stick input takes over. The airplane test card ends with an autoland.
 
 Checks: `npm run city`, `npm run autopilot`, `npm run destruction`, `npm run design-pipeline`.
 

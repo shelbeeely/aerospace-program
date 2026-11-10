@@ -18,6 +18,10 @@ export interface ChipBurst {
   /** Chip edge (m). */
   size: number;
   color: string;
+  /** Derez voxels: they stay where they land, scattered on the Grid like broken glass. */
+  persist?: boolean;
+  /** Energy splash (fast-moving derez): rises like liquid from the impact, then dissipates. */
+  splash?: boolean;
   seq: number;
 }
 

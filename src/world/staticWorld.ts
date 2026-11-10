@@ -39,7 +39,7 @@ export class StaticWorld {
   /** Bumped whenever outer chunks are registered (renderers rebuild their chunk views). */
   contentVersion = 0;
   private lastChunkKey = '';
-  /** Off-Grid terrain near the craft: one convex hull per geometric solid (key: chunk@image). */
+  /** Outlands terrain near the craft: one convex hull per geometric solid (key: chunk@image). */
   private readonly terrain = new Map<string, RAPIER.Collider[]>();
   private chunksPending = false;
   /** Streaming: pieces bucketed by 250 m cells; only cells near the craft (and near fractured
@@ -167,7 +167,7 @@ export class StaticWorld {
     }
   }
 
-  /** Heightfields for Off-Grid chunks within TERRAIN_RADIUS; far ones are released. */
+  /** Heightfields for Outlands chunks within TERRAIN_RADIUS; far ones are released. */
   private streamTerrain(ci: number, cj: number, x: number, z: number): void {
     const S = GRID.chunkSize;
     const keep = new Set<string>();
@@ -352,7 +352,7 @@ export class StaticWorld {
 /** Streaming cell size and radius (m). */
 const CELL = 250;
 const STREAM_RADIUS = 1000;
-/** Off-Grid terrain colliders within this distance of the craft (m). */
+/** Outlands terrain colliders within this distance of the craft (m). */
 const TERRAIN_RADIUS = 2200;
 
 /** Planet chunks within this distance of the craft are registered (physics + near render). */

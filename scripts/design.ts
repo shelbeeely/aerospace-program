@@ -9,7 +9,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { JOBS } from '../src/gen/catalog.ts';
 import { designCraft } from '../src/gen/craftDesigner.ts';
 import { OpenRouter } from '../src/gen/openrouter.ts';
-import { formatReport } from '../src/sim/flightTest.ts';
+import { flightTest, formatReport } from '../src/sim/flightTest.ts';
 import { initPhysics } from '../src/sim/Simulation.ts';
 
 const args = process.argv.slice(2);
@@ -50,13 +50,15 @@ const result = await designCraft(client, {
   base,
   maxIterations: rounds,
   drafts,
+  // Also fly each attempt in a gusty crosswind; advisory only (the calm score decides pass/fail).
+  tester: (craft) => flightTest(craft, { gusty: true }),
   onEvent: (e) => {
     if (e.type === 'status') console.log(`… ${e.message}`);
     else {
       const a = e.attempt;
       if (a.error) console.log(`  round ${a.iteration} ${a.role}${a.model ? ` (${a.model})` : ""}: ${a.error}`);
       else if (a.validationErrors) console.log(`  round ${a.iteration} ${a.role}${a.model ? ` (${a.model})` : ""}: ${a.validationErrors.length} validation errors, e.g. ${a.validationErrors[0]}`);
-      else if (a.report) console.log(`  round ${a.iteration} ${a.role}${a.model ? ` (${a.model})` : ""}: "${a.craft?.name}" scored ${a.report.score}/100`);
+      else if (a.report) console.log(`  round ${a.iteration} ${a.role}${a.model ? ` (${a.model})` : ""}: "${a.craft?.name}" scored ${a.report.score}/100${a.report.gusty ? ` (gusty ${a.report.gusty.score}, advisory)` : ''}`);
     }
   },
 });

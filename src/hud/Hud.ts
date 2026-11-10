@@ -1,4 +1,5 @@
 import type { Telemetry } from '../sim/telemetry.ts';
+import { TUNING } from '../tuning.ts';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const MS_TO_KT = 1.943844;
@@ -21,6 +22,9 @@ export class Hud {
     wind: $('h-wind'),
     windArrow: $('h-wind-arrow'),
     fuel: $('h-fuel'),
+    orbRow: $('h-orb-row'),
+    orb: $('h-orb'),
+    orbT: $('h-orb-t'),
     fuelRow: $('h-fuel-row'),
     batt: $('h-batt'),
     battRow: $('h-batt-row'),
@@ -34,6 +38,14 @@ export class Hud {
     help: $('help'),
     debug: $('debug'),
     stats: $('d-stats'),
+    appr: $('h-appr'),
+    apprSite: $('h-appr-site'),
+    apprDist: $('h-appr-dist'),
+    apprEta: $('h-appr-eta'),
+    apprGs: $('h-appr-gs'),
+    apprLoc: $('h-appr-loc'),
+    apprSpd: $('h-appr-spd'),
+    apprUnit: $('h-appr-unit'),
   };
   private readonly cache = new Map<HTMLElement, string>();
 
@@ -54,6 +66,7 @@ export class Hud {
     this.set(this.el.aoa, blank(t.airspeed > 3 ? t.angleOfAttack.toFixed(1) : '--'));
     this.set(this.el.g, blank(t.gForce.toFixed(1)));
     this.set(this.el.hdg, blank(Math.round(t.heading % 360).toString().padStart(3, '0')));
+    this.updateOrbit(t);
     this.el.battRow.style.display = e && e.battery !== null ? '' : 'none';
     this.el.busRow.style.display = e ? '' : 'none';
     if (e) {
@@ -97,12 +110,27 @@ export class Hud {
       t.vortexRing > 0.3 ? 'VORTEX RING' : '',
       w.aquaplaning > 0.3 ? 'AQUAPLANING' : '',
       t.brokenParts.length ? `BROKEN: ${t.brokenParts.join(', ')}` : '',
+      t.position[1] > TUNING.systemBoundary - TUNING.systemBoundaryWarning
+        ? `⚠ SYSTEM BOUNDARY ${Math.max(0, (TUNING.systemBoundary - t.position[1]) / 1000).toFixed(1)} km` : '',
       ...electricalFlags(e),
     ]
       .filter(Boolean)
       .join('  ');
     this.set(this.el.flags, flags);
     this.el.stall.classList.toggle('hidden', !(t.stall > 0.35 && !t.onGround && t.airspeed > 5));
+  }
+
+  /** ORB row: apoapsis / periapsis (km) and period, once high or fast enough to care. */
+  private updateOrbit(t: Telemetry): void {
+    const { orbRow: row, orb, orbT: per } = this.el;
+    if (!row || !orb || !per) return;
+    const o = t.orbit;
+    const show = !!o && (t.altitude > 2000 || o.speed > 150);
+    row.style.display = show ? '' : 'none';
+    if (!show || !o) return;
+    // Ap/Pe in km (ESC = escape trajectory), then the period.
+    this.set(orb, `${o.apoapsis === null ? 'ESC' : km(o.apoapsis)}/${km(o.periapsis)}`);
+    this.set(per, o.period === null ? 'km' : `km ${clock(o.period)}`);
   }
 
   /** The craft blew up: show the banner (and hide the stall warning). */
@@ -122,21 +150,46 @@ export class Hud {
     this.el.debug.classList.toggle('hidden', !v);
   }
 
-  /** Autopilot readout: null = off. */
-  setAutopilot(s: { kind: 'airplane' | 'rotorcraft'; heading: number; altitude: number; commanded: number; speed: number } | null): void {
+  /** Autopilot readout: null = off. Shows the mode and phase, plus approach guidance while landing. */
+  setAutopilot(s: {
+    kind: 'airplane' | 'rotorcraft'; heading: number; altitude: number; commanded: number; speed: number;
+    mode?: string; phase?: string; vs?: number | null;
+    guidance?: { distance: number; glideslopeDev: number | null; localizerDev: number | null; targetSpeed: number; eta: number; siteName: string } | null;
+  } | null): void {
     const ap = document.getElementById('h-ap');
     const tgt = document.getElementById('h-ap-t');
     const row = document.getElementById('h-ap-row');
     if (!ap || !tgt || !row) return;
     row.classList.toggle('ap-on', !!s);
+    const g = s?.guidance ?? null;
+    const landing = !!s && s.mode === 'land' && !!g;
+    this.el.appr.classList.toggle('hidden', !landing);
     if (!s) {
       this.set(ap, 'OFF');
       this.set(tgt, '');
       return;
     }
-    const climb = s.commanded > s.altitude + 1 ? ` ↑${s.commanded.toFixed(0)}` : '';
-    this.set(ap, `${Math.round(s.heading).toString().padStart(3, '0')}° ${s.altitude.toFixed(0)}m`);
-    this.set(tgt, s.kind === 'airplane' ? `${(s.speed * MS_TO_KT).toFixed(0)}kt${climb}` : `${s.speed.toFixed(0)}m/s${climb}`);
+    if (s.mode && s.mode !== 'hold') {
+      this.set(ap, s.mode === 'goto' ? 'GO TO' : s.mode.toUpperCase());
+      this.set(tgt, (s.phase ?? '').toUpperCase());
+    } else {
+      const climb = s.commanded > s.altitude + 1 ? ` ↑${s.commanded.toFixed(0)}` : '';
+      const vert = s.vs !== null && s.vs !== undefined ? `${s.vs >= 0 ? '+' : ''}${s.vs.toFixed(1)}m/s` : `${s.altitude.toFixed(0)}m`;
+      this.set(ap, `${Math.round(s.heading).toString().padStart(3, '0')}° ${vert}`);
+      this.set(tgt, s.kind === 'airplane' ? `${(s.speed * MS_TO_KT).toFixed(0)}kt${climb}` : `${s.speed.toFixed(0)}m/s${climb}`);
+    }
+    if (!landing || !g) return;
+    const e = this.el;
+    this.set(e.apprSite, `${g.siteName} · ${(s.phase ?? '').toUpperCase()}`);
+    this.set(e.apprDist, g.distance >= 1000 ? `${(g.distance / 1000).toFixed(1)}km` : `${g.distance.toFixed(0)}m`);
+    this.set(e.apprEta, g.eta > 0 && g.eta < 36000 ? `${Math.floor(g.eta / 60)}:${Math.round(g.eta % 60).toString().padStart(2, '0')}` : '');
+    this.set(e.apprGs, g.glideslopeDev === null ? '--' : `${g.glideslopeDev > 0 ? '▲' : '▼'}${Math.abs(g.glideslopeDev).toFixed(0)}`);
+    this.set(e.apprLoc, g.localizerDev === null ? '--' : `${g.localizerDev > 0 ? '▶' : '◀'}${Math.abs(g.localizerDev).toFixed(0)}`);
+    const air = s.kind === 'airplane';
+    this.set(e.apprSpd, g.targetSpeed > 0 ? (air ? (g.targetSpeed * MS_TO_KT).toFixed(0) : g.targetSpeed.toFixed(0)) : '--');
+    this.set(e.apprUnit, air ? 'kt' : 'm/s');
+    e.apprGs.classList.toggle('appr-warn', g.glideslopeDev !== null && Math.abs(g.glideslopeDev) > 15);
+    e.apprLoc.classList.toggle('appr-warn', g.localizerDev !== null && Math.abs(g.localizerDev) > 30);
   }
 
   setStats(text: string): void {
@@ -154,4 +207,18 @@ function electricalFlags(e: Telemetry['electrical']): string[] {
     e.battery !== null && e.battery < 0.2 && !e.batteryCutoff ? 'LOW BATT' : '',
     e.failed.length ? `AVIONICS FAILED: ${e.failed.join(', ')}` : '',
   ];
+}
+
+/** Altitude in km with one decimal (sub-surface periapsis shows negative). */
+function km(m: number): string {
+  return (m / 1000).toFixed(1);
+}
+
+/** Period as m:ss (h:mm:ss past an hour). */
+function clock(s: number): string {
+  const t = Math.round(s);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const ss = String(t % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
 }

@@ -9,15 +9,24 @@ import { Atmosphere, calmWeather, densityAltitude, type CloudSample, type Precip
 import { DamageModel, type ContactForceHandler, type ContactForceInfo } from './damage.ts';
 import { neutralControls, sanitizeControls, type ControlInputs } from './controls.ts';
 import { Ocean } from './ocean.ts';
-import { COAST, isSea, LAYOUT, PLANET } from './layout.ts';
+import { CITY, COAST, isSea, LAYOUT, PLANET } from './layout.ts';
 import { terrainHeight } from './terrain.ts';
 import { TrailSystem } from './trails.ts';
+import { TrailEmitter } from '../modules/TrailEmitter.ts';
+import { TrafficSystem } from './traffic.ts';
 import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
-import type { Telemetry } from './telemetry.ts';
+import { vehicleKind } from './vehicleTests.ts';
+import { nearestStreetPoint, siteSpawnPoint, type SpawnPoint, type SpawnSite } from '../world/spawnSites.ts';
+import { orbitElements, type OrbitTelemetry, type Telemetry } from './telemetry.ts';
+
+function roundOrbit(o: OrbitTelemetry): OrbitTelemetry {
+  const r = (x: number | null, d = 0) => (x === null ? null : Math.round(x * 10 ** d) / 10 ** d);
+  return { apoapsis: r(o.apoapsis), periapsis: r(o.periapsis)!, speed: r(o.speed, 2)!, period: r(o.period, 1) };
+}
 
 function assertValidCraft(def: CraftDef): void {
   const errors = validateCraft(def);
@@ -77,9 +86,12 @@ export class Simulation {
   /** Visual voxel chips knocked off buildings and aircraft (the renderer flies them). */
   readonly chips = new ChipEmitter();
   /** Explosions (renderer: fireball and shockwave; audio: boom). Newest last. */
-  readonly explosions: Array<{ x: number; y: number; z: number; time: number; radius: number }> = [];
+  /** Derezzes (vehicle destructions): where, how big, the vehicle's circuit colour and its speed at the moment. */
+  readonly explosions: Array<{ x: number; y: number; z: number; time: number; radius: number; color?: string; speed?: number }> = [];
   /** The craft blew up (controls dead until a new plane is spawned). */
   exploded = false;
+  /** Why the craft derezzed last ('boundary': it crossed the edge of the Grid). */
+  derezCause: 'crash' | 'boundary' | null = null;
   /** Sum of craft contact impulses this step (N·s): decides explosions. */
   private stepImpact = 0;
   /** Craft velocity over the last ~0.15 s (ring buffer) and steps left since the last hard contact. */
@@ -121,6 +133,8 @@ export class Simulation {
   wrapCount = 0;
   /** Light walls, light ribbons and contrails (Rule 4). */
   readonly trails: TrailSystem;
+  /** AI light-cycle traffic on the street grid (kinematic; colliders near the player). */
+  readonly traffic: TrafficSystem;
   readonly wrapShift = new THREE.Vector3();
   private readonly groundBody: RAPIER.RigidBody;
   private readonly groundMotion = new THREE.Vector3();
@@ -171,6 +185,8 @@ export class Simulation {
     const seabed = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(COAST.x + COAST.width / 2, -COAST.depth - 5, 0));
     this.world.createCollider(RAPIER.ColliderDesc.cuboid(COAST.width / 2, 5, half), seabed);
     this.trails = new TrailSystem(this.world);
+    this.trails.chips = this.chips;
+    this.traffic = new TrafficSystem(this.world, CITY.seed, this.chips);
     this.town = new Town(this.world);
     this.town.chips = this.chips;
     this.staticWorld = new StaticWorld(this.world, this.town);
@@ -187,6 +203,7 @@ export class Simulation {
     this.onContactForce((e) => this.town.onContact(e));
     this.onContactForce((e) => this.staticWorld.onContact(e));
     this.onContactForce((e) => this.voxelHit(e));
+    this.onContactForce((e) => this.traffic.onContact(e));
 
     const self = this;
     this.ctx = {
@@ -283,8 +300,35 @@ export class Simulation {
     (this.ctx as { hasFuelSystem: boolean }).hasFuelSystem = this.craft.fuelTanks.length > 0;
   }
 
-  private spawnPose(craft: Craft | null) {
+  /**
+   * Where respawn(), resetToRunway() and the explosion guard put the craft: a runway, a helipad,
+   * or the nearest street (ground vehicles only). null = Grid International's runway.
+   */
+  spawnSite: SpawnSite | null = null;
+
+  /**
+   * The site a respawn would really use: the chosen one, or null (Grid International) when it
+   * does not apply: a street for a craft that isn't a ground vehicle, a rooftop pad whose tower
+   * is fractured.
+   */
+  effectiveSpawnSite(site: SpawnSite | null = this.spawnSite): SpawnSite | null {
+    if (!site) return null;
+    if (site.kind === 'street') return vehicleKind(this) === 'ground' ? site : null;
+    if (site.group !== undefined && this.staticWorld.fractured.has(site.group)) return null;
+    return site;
+  }
+
+  private spawnPose(craft: Craft | null, site: SpawnSite | null = this.spawnSite) {
     const h = craft ? craft.restingHeight() : 3;
+    let p: SpawnPoint | null = null;
+    const use = craft ? this.effectiveSpawnSite(site) : null;
+    if (use) p = use.kind === 'street' ? nearestStreetPoint(this.position.x, this.position.z) : siteSpawnPoint(use);
+    if (craft && p) {
+      // The centre of mass (not the arbitrary origin) over the spot, facing along the strip/street.
+      const rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.yaw);
+      const com = new THREE.Vector3(craft.massProps.com.x, 0, craft.massProps.com.z).applyQuaternion(rotation);
+      return { position: new THREE.Vector3(p.x - com.x, p.y + h, p.z - com.z), rotation };
+    }
     return {
       // Place the centre of mass (not the arbitrary origin) on the runway centreline at the spawn.
       position: craft
@@ -328,6 +372,7 @@ export class Simulation {
   /** Reset the WHOLE world: every structure rebuilt, weather and events restarted, a fresh craft on the runway. */
   resetToRunway(): void {
     this.trails.clear();
+    this.traffic.clear();
     this.staticWorld.reset();
     this.town.reset();
     this.chips.reset();
@@ -366,6 +411,7 @@ export class Simulation {
     this.debrisSpawn.clear();
     if (this.craft.detached.size || this.exploded) this.rebuildCraft(this.craft.def);
     this.exploded = false;
+    this.derezCause = null;
     this.stepImpact = 0;
     this.contactWindow = 0;
     this.failures.length = 0;
@@ -443,6 +489,7 @@ export class Simulation {
     });
     this.craft.updateSoftCcd(this.dt);
     this.planetForces();
+    this.traffic.step(this.dt, this.time, this.position, this.trails);
 
     this.world.step(this.events);
     this.readBodyState();
@@ -466,6 +513,11 @@ export class Simulation {
     oldest.copy(this.linvel);
     this.velHead = (this.velHead + 1) % this.velHistory.length;
     if (!this.exploded && this.contactWindow > 0 && dv > this.explodeSpeed()) this.explode();
+    // The edge of the Grid: past the system boundary (above every orbit) a craft derezzes.
+    if (!this.exploded && this.position.y > TUNING.systemBoundary) {
+      this.derezCause = 'boundary';
+      this.explode();
+    }
     this.staticWorld.update(this.time);
     this.town.update(this.time);
     this.stepHazards();
@@ -650,20 +702,38 @@ export class Simulation {
    * The planet in a flat frame: the world's gravity is the surface value, so add back what
    * altitude takes away ((R / (R + h))²) plus the centripetal lift v_h² / (R + h) of flying
    * around a sphere. At ~280 m/s near the ground (less higher up) the craft is in orbit.
+   * Climbing also costs horizontal speed (−v_r·v_h / r, conservation of angular momentum), so
+   * energy and angular momentum are conserved and eccentric orbits are Keplerian too.
    */
   private planetForces(): void {
     const R = PLANET.radius;
-    const lift = (y: number, vx: number, vz: number) => {
+    const accel = (y: number, vx: number, vy: number, vz: number, out: { x: number; y: number; z: number }) => {
       const r = R + Math.max(0, y);
-      return PLANET.gravity - PLANET.gravity * (R / r) ** 2 + (vx * vx + vz * vz) / r;
+      out.y = PLANET.gravity - PLANET.gravity * (R / r) ** 2 + (vx * vx + vz * vz) / r;
+      const k = y > 0 ? -vy / r : 0;
+      out.x = k * vx;
+      out.z = k * vz;
+      return out;
     };
+    const a = { x: 0, y: 0, z: 0 };
     const b = this.craft.body;
-    b.addForce({ x: 0, y: b.mass() * lift(this.position.y, this.linvel.x, this.linvel.z), z: 0 }, true);
+    const m = b.mass();
+    accel(this.position.y, this.linvel.x, this.linvel.y, this.linvel.z, a);
+    b.addForce({ x: m * a.x, y: m * a.y, z: m * a.z }, true);
     for (const d of this.debris) {
       const t = d.body.translation();
       const v = d.body.linvel();
-      d.body.applyImpulse({ x: 0, y: d.body.mass() * lift(t.y, v.x, v.z) * this.dt, z: 0 }, true);
+      const dm = d.body.mass() * this.dt;
+      accel(t.y, v.x, v.y, v.z, a);
+      d.body.applyImpulse({ x: dm * a.x, y: dm * a.y, z: dm * a.z }, true);
     }
+  }
+
+  /** The vehicle's circuit colour: its trail's light, else the colour of its heaviest part. */
+  circuitColor(): string {
+    for (const m of this.craft.modules) if (m instanceof TrailEmitter) return m.def.color;
+    const heaviest = [...this.craft.parts].sort((a, b) => b.mass - a.mass)[0];
+    return heaviest?.color ?? '#00eaff';
   }
 
   /** Fixed-wing (contrails from the wingtips): lifting surfaces, no rotors, no driven wheels. */
@@ -716,7 +786,8 @@ export class Simulation {
   }
 
   /** Speed lost in a crash that blows the craft up (m/s): ~30, more if reinforced. */
-  private explodeSpeed(): number {
+  /** Speed change (m/s) in a hard contact that blows the craft up: higher for reinforced craft. */
+  explodeSpeed(): number {
     const parts = this.craft.parts;
     const avg = parts.length ? parts.reduce((a, p) => a + Math.min(3, Math.max(0, p.reinforce ?? 0)), 0) / parts.length : 0;
     return TUNING.explodeSpeed * (1 + 0.3 * avg);
@@ -781,10 +852,14 @@ export class Simulation {
   explode(): void {
     if (this.exploded) return;
     this.exploded = true;
+    this.derezCause ??= 'crash';
     this.trails.derez(this.time); // a derezzed vehicle's trails go with it
     const c = this.position.clone();
     const radius = 10 + Math.min(20, this.craft.fuel * 0.15);
-    this.explosions.push({ x: c.x, y: c.y, z: c.z, time: this.time, radius });
+    // Speed going in (the step before the crash), and the vehicle's circuit colour.
+    const speed = this.prevVelocity.length();
+    const circuit = this.circuitColor();
+    this.explosions.push({ x: c.x, y: c.y, z: c.z, time: this.time, radius, color: circuit, speed });
     if (this.explosions.length > 32) this.explosions.splice(0, this.explosions.length - 32);
     const parts = [...this.craft.parts].sort((a, b) => b.mass - a.mass);
     const before = this.debris.length;
@@ -798,9 +873,16 @@ export class Simulation {
       const kick = 12 + Math.random() * 18;
       d.body.setLinvel({ x: v.x * 0.5 + dir.x * kick, y: v.y * 0.5 + Math.abs(dir.y) * kick + 6, z: v.z * 0.5 + dir.z * kick }, true);
       d.body.setAngvel({ x: (Math.random() - 0.5) * 12, y: (Math.random() - 0.5) * 12, z: (Math.random() - 0.5) * 12 }, true);
-      this.chips.emit({ x: t.x, y: t.y, z: t.z, radius: 1.5, vx: dir.x * kick * 0.6, vy: 6, vz: dir.z * kick * 0.6, speed: 14, count: 40, size: 0.25, color: d.part.color });
+      this.chips.emit({ x: t.x, y: t.y, z: t.z, radius: 1.5, vx: dir.x * kick * 0.6, vy: 6, vz: dir.z * kick * 0.6, speed: 14, count: 120, size: 0.25, color: d.part.color, persist: true });
     }
-    this.chips.emit({ x: c.x, y: c.y, z: c.z, radius: 2, vx: 0, vy: 8, vz: 0, speed: 22, count: 220, size: 0.35, color: '#ff8a1f' });
+    // Derez: the vehicle shatters into thousands of cubical voxels in its circuit colour, which
+    // scatter on the Grid like broken glass and stay there.
+    const lv = this.prevVelocity;
+    this.chips.emit({ x: c.x, y: c.y, z: c.z, radius: 2, vx: lv.x * 0.35, vy: 5, vz: lv.z * 0.35, speed: 16, count: 1400, size: 0.3, color: circuit, persist: true });
+    // A fast vehicle's derez carries so much energy it rises like a liquid splash, then dissipates.
+    if (speed > 20) {
+      this.chips.emit({ x: c.x, y: c.y, z: c.z, radius: 1.2, vx: lv.x, vy: 0, vz: lv.z, speed: Math.min(45, 10 + speed * 0.35), count: Math.min(900, 300 + Math.round(speed * 6)), size: 0.18, color: circuit, splash: true });
+    }
     // Blast: crater whatever stands within the radius.
     this.staticWorld.blastAt(c.x, c.y, c.z, radius, this.time);
     for (const b of this.town.buildings) this.town.blast(b, c.x, c.y, c.z, radius * 0.6, this.time);
@@ -838,7 +920,11 @@ export class Simulation {
       this.angvel.length() < TUNING.maxSaneAngularSpeed;
     if (!ok) {
       this.explosionResets++;
+      // Back to the one known-good pose (not a spawn site worked out from a bad state).
+      const site = this.spawnSite;
+      this.spawnSite = null;
       this.resetToRunway();
+      this.spawnSite = site;
     }
   }
 
@@ -919,6 +1005,7 @@ export class Simulation {
       densityAltitude: Math.round(densityAltitude(air.density)),
       vortexRing: r(rotors.reduce((a, x) => Math.max(a, x.vortexRing), 0)),
       electrical: craft.electrical?.telemetry() ?? null,
+      orbit: roundOrbit(orbitElements(this.position.y, ground.y, Math.hypot(ground.x, ground.z))),
       weather: {
         precipitation: r(precip.rate, 1),
         precipitationKind: precip.kind,

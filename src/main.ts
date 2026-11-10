@@ -7,6 +7,9 @@ import { GamepadDevice, KeyboardDevice, PlayerInput, TouchDevice } from './input
 import { ControlsPanel, toast } from './ui/ControlsPanel.ts';
 import { vehicleKind } from './sim/vehicleTests.ts';
 import { BUILTINS } from './craft/builtins.ts';
+import { landingSite, landingSites } from './world/landingSites.ts';
+import { STREET_SITE } from './world/spawnSites.ts';
+import { obstacleTop } from './world/structures.ts';
 import { browserClient } from './gen/openrouter.ts';
 import { Library, type LibraryEntry } from './gen/library.ts';
 import { CameraRig } from './render/CameraRig.ts';
@@ -29,14 +32,18 @@ import { AirportView } from './render/AirportView.ts';
 import { KitTowersView } from './render/KitTowersView.ts';
 import { LandingSitesView } from './render/LandingSitesView.ts';
 import { PlanetCityView } from './render/PlanetCityView.ts';
+import { GLOBE_VIEW } from './render/cityGround.ts';
 import { TrailView } from './render/TrailView.ts';
+import { TrafficView } from './render/TrafficView.ts';
 import { ExplosionView } from './render/ExplosionView.ts';
 import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
 import { updateSkyPlanet } from './render/neon.ts';
 import { ChipsView } from './render/ChipsView.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
-import { FlightAutopilot } from './sim/flightAutopilot.ts';
+import { FlightAutopilot, type AutopilotKind } from './sim/flightAutopilot.ts';
+import { analyzeDesign } from './sim/flightTest.ts';
+import { AutopilotPanel } from './ui/AutopilotPanel.ts';
 import { initPhysics, Simulation } from './sim/Simulation.ts';
 import { WEATHER_PRESETS } from './sim/atmosphere.ts';
 import { TUNING } from './tuning.ts';
@@ -48,6 +55,8 @@ import type { EventKind } from './sim/events/WorldEvents.ts';
 import { RayTraceMode, type RenderMode } from './render/raytrace/RayTraceMode.ts';
 import { flightShapes, hangarShapes } from './render/raytrace/sceneShapes.ts';
 import { PostFX, QUALITIES, type Quality } from './render/postfx.ts';
+import { NetClient } from './net/NetClient.ts';
+import { MultiplayerPanel } from './ui/MultiplayerPanel.ts';
 
 async function start() {
   await initPhysics();
@@ -152,6 +161,7 @@ async function start() {
   const sitesView = new LandingSitesView(scene, sim.staticWorld);
   const planetView = new PlanetCityView(scene, sim.staticWorld, kitView);
   const trailView = new TrailView(scene, sim.trails);
+  const trafficView = new TrafficView(scene, sim.traffic);
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
   let explosionHeardAt = -Infinity;
@@ -175,6 +185,9 @@ async function start() {
   };
   const rig = new CameraRig(camera, canvas);
   const hud = new Hud();
+  // Multiplayer (Grid Link): inert until connected; `?room=CODE&server=ws://host:port` joins.
+  const net = new NetClient({ sim, scene, mode: () => mode });
+  const netPanel = new MultiplayerPanel(net);
 
   // --- Input. The active pilot is any ControlSource; the human is just one of them.
   const gamepad = new GamepadDevice();
@@ -194,6 +207,32 @@ async function start() {
   };
   const autopilot = new FlightAutopilot(player);
   autopilot.onDisengage = (thr) => { player.throttle = thr; };
+  autopilot.fractured = sim.staticWorld.fractured;
+  // Flight computer: approach speeds come from the design's estimated stall speed.
+  let apPerf = { stallSpeed: 30 };
+  let apPerfVersion = -1;
+  const autopilotPerf = () => {
+    if (apPerfVersion !== sim.version) {
+      apPerf = { stallSpeed: analyzeDesign(sim).stallSpeed };
+      apPerfVersion = sim.version;
+    }
+    return apPerf;
+  };
+  const autopilotKind = (): AutopilotKind | null => {
+    const k = vehicleKind(sim);
+    return k === 'airplane' || k === 'rotorcraft' ? k : null;
+  };
+  const apPanel = new AutopilotPanel({
+    autopilot,
+    kind: autopilotKind,
+    telemetry: () => telemetry,
+    engage: (opts) => {
+      const kind = autopilotKind();
+      if (!kind) return;
+      autopilot.engage(telemetry, kind, autopilotPerf(), opts);
+    },
+    disengage: () => autopilot.disengage(),
+  });
   let pilot: ControlSource = autopilot;
 
   let debugOn = false;
@@ -329,10 +368,10 @@ async function start() {
   const _identity = new THREE.Quaternion();
   /** Pose the craft on the turntable: the runway spawn pose (sim just reset), moved to x = z = 0. */
   const showOnTurntable = () => {
-    const spawn = sim.position;
     const mp = sim.craft.massProps;
-    // The spawn pose puts the CoM on the runway centreline; keep that, centred on the turntable.
-    _hangarPos.set(-mp.com.x, spawn.y + hangarView.turntableTop, -mp.com.z);
+    // The spawn pose puts the CoM on the runway centreline; keep that, centred on the turntable
+    // (at the craft's resting height: the spawn site may be a rooftop or a hillside street).
+    _hangarPos.set(-mp.com.x, sim.craft.restingHeight() + hangarView.turntableTop, -mp.com.z);
     craftView.update(_hangarPos, _identity);
     hangarView.fit(sim.craft.boundingRadius(), _hangarPos.y + mp.com.y);
     updateCraftCard();
@@ -361,7 +400,68 @@ async function start() {
         row('SPAN', `${(span * 2).toFixed(1)} m`) +
         row('T/W', tw),
     );
-    craftCard.append(reinforcePanel());
+    craftCard.append(spawnPicker(), reinforcePanel());
+  };
+  /**
+   * "Spawn at": any runway, any helipad, or (ground vehicles) the nearest street. The choice
+   * lasts the session and is where respawn (R), auto-respawn and a world reset put the craft.
+   */
+  const spawnSiteFor = (id: string) => (id === 'street' ? STREET_SITE : landingSite(id) ?? null);
+  let spawnChoice = (() => {
+    try {
+      const id = sessionStorage.getItem('spawnAt') ?? 'grid';
+      return spawnSiteFor(id) ? id : 'grid'; // a stale id (e.g. a rooftop that no longer exists)
+    } catch {
+      return 'grid';
+    }
+  })();
+  sim.spawnSite = spawnSiteFor(spawnChoice);
+  /** Choose a spawn site (landing-site id, 'street' or 'grid') and put the craft there. False for an unknown id. */
+  const chooseSpawn = (id: string): boolean => {
+    const site = spawnSiteFor(id);
+    if (!site) return false;
+    spawnChoice = id;
+    try {
+      sessionStorage.setItem('spawnAt', id);
+    } catch { /* private mode: the choice still lasts until reload */ }
+    sim.spawnSite = site;
+    reset(false);
+    if (mode === 'hangar') showOnTurntable();
+    return true;
+  };
+  // The street search reads the city's obstacle height map: build it while idle, not mid-respawn.
+  setTimeout(() => obstacleTop(0, 0), 4000);
+  const spawnPicker = () => {
+    const label = document.createElement('label');
+    label.className = 'spawn-at';
+    const name = document.createElement('span');
+    name.textContent = 'SPAWN';
+    const sel = document.createElement('select');
+    sel.setAttribute('aria-label', 'Spawn at');
+    const group = (title: string, sites: Array<{ id: string; name: string }>) => {
+      const g = document.createElement('optgroup');
+      g.label = title;
+      for (const s of sites) {
+        const o = document.createElement('option');
+        o.value = s.id;
+        o.textContent = s.name;
+        g.append(o);
+      }
+      sel.append(g);
+    };
+    const sites = landingSites();
+    if (vehicleKind(sim) === 'ground') group('Streets', [STREET_SITE]);
+    group('Runways', sites.filter((s) => s.kind === 'runway'));
+    group('Helipads', sites.filter((s) => s.kind === 'helipad'));
+    // Show where a respawn really goes: a street choice with an aircraft (or a pad on a fallen
+    // tower) uses Grid International, and the choice is kept for the next ground vehicle.
+    sel.value = sim.effectiveSpawnSite()?.id ?? 'grid';
+    sel.addEventListener('change', () => {
+      chooseSpawn(sel.value);
+      sel.blur();
+    });
+    label.append(name, sel);
+    return label;
   };
   /**
    * Per-part reinforcement (hangar): levels 0-3, each +15% part mass, +60% strength, +80% impact
@@ -424,6 +524,7 @@ async function start() {
     if (captureBusy) return;
     curveOn.value = m === 'flight' ? 1 : 0; // the hangar is flat
     autopilot.disengage();
+    if (m === 'hangar') apPanel.hide();
     mode = m;
     syncRenderControls();
     applyModeClass(m);
@@ -578,9 +679,17 @@ async function start() {
       callouts,
       /** Flight-test a craft in the worker (same path the Studio uses). */
       flightTest: runFlightTest,
+      /** Fly a built-in by id ('runner', 'crawler', ...), as the vehicle picker would. */
+      selectBuiltin: (id: string) => {
+        const b = BUILTINS.find((x) => x.id === id);
+        if (!b) throw new Error(`Unknown built-in "${id}"`);
+        select(builtinEntry(b));
+      },
       /** PNG of the current 3D view (GPU readback; works on WebGPU and WebGL2). */
       capture,
       takePhoto,
+      /** Camera rig (chase / orbit; rig.setOrbitDistance(m) pulls the orbit camera back). */
+      rig,
       get captureInfo() { return captureInfo; },
       get renderMode() { return actualRenderMode(); },
       get requestedRenderMode() { return requestedRender[mode]; },
@@ -616,6 +725,13 @@ async function start() {
       /** Reset the whole world (respawn() keeps the world and only replaces the craft). */
       reset: () => reset(true),
       respawn: () => reset(false),
+      /** Choose where respawns put the craft: a landing-site id, 'street' or 'grid' (as the hangar's Spawn at select). */
+      spawnAt: (id: string) => {
+        if (!chooseSpawn(id)) throw new Error(`Unknown spawn site "${id}" (a landing-site id, 'street' or 'grid')`);
+        updateCraftCard();
+      },
+      net,
+      netPanel,
     },
   });
 
@@ -635,6 +751,7 @@ async function start() {
   let wasHardContact = false;
   let wasStalling = false;
   setMode(mode);
+  netPanel.autoJoin(params);
 
   function frame(now: number) {
     requestAnimationFrame(frame);
@@ -661,7 +778,7 @@ async function start() {
           const kind = vehicleKind(sim);
           if (kind === 'lighter-than-air' || kind === 'ground') toast('No autopilot for this craft');
           else {
-            autopilot.engage(telemetry, kind);
+            autopilot.engage(telemetry, kind, autopilotPerf());
             const st = autopilot.state;
             toast(`Autopilot on · HDG ${Math.round(st.heading).toString().padStart(3, '0')} · ${st.altitude.toFixed(0)} m${kind === 'airplane' ? ` · ${(st.speed * 1.944).toFixed(0)} kt` : ''} — stick and throttle adjust it`);
           }
@@ -678,6 +795,7 @@ async function start() {
       else if (a === 'reset') { reset(false); toast('New plane — the world stays as it is'); }
       else if (a === 'resetWorld') { reset(true); toast('World reset'); }
       else if (a === 'camera') rig.toggle(renderPos);
+      else if (a === 'apPanel') apPanel.toggle();
       else if (a === 'help') {
         controlsPanel.render(); // reflect the current profile / devices
         hud.toggleHelp();
@@ -691,6 +809,7 @@ async function start() {
       }
     }
 
+    net.update(dt);
     if (mode === 'hangar') {
       // Physics paused; the craft sits on the turntable under the orbit camera.
       accumulator = 0;
@@ -728,6 +847,7 @@ async function start() {
     sitesView.update();
     planetView.update(camera.position);
     trailView.update(sim.time);
+    trafficView.update(sim.time);
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
     if (!sim.explosions.length) explosionHeardAt = -Infinity;
@@ -745,7 +865,8 @@ async function start() {
     if (explodedAt !== null && respawnLeft <= 0) {
       explodedAt = null;
       reset(false);
-      toast('New plane on the runway');
+      const site = sim.effectiveSpawnSite();
+      toast(site && site.id !== 'grid' ? `New craft at ${site.name}` : 'New plane on the runway');
     }
     oceanView.update(sim.time, camera);
     lightningView.update(sim.time, sim.lightning.strikes, sim.craft, Math.max(sim.lightning.staticCharge, (sim.atmosphere.settings.storm ?? 0) * 0.5));
@@ -778,7 +899,9 @@ async function start() {
     curveOrigin.value.copy(camera.position);
     updateSkyPlanet(camera.position.y, PLANET.radius);
     const alt = Math.max(0, camera.position.y);
-    const far = Math.max(20000, Math.min(PLANET.radius * 3, 6000 + Math.sqrt(2 * PLANET.radius * alt + alt * alt) * 1.6));
+    // Far plane just past the horizon (the tangent distance), so from orbit the whole visible
+    // disc of the planet, out to its limb, is inside the clip range.
+    const far = Math.max(20000, Math.min(PLANET.radius * 12, 6000 + Math.sqrt(2 * PLANET.radius * alt + alt * alt) * 1.15));
     const near = Math.min(20, Math.max(0.3, alt / 4000));
     if (Math.abs(camera.far - far) > far * 0.05 || camera.near !== near) {
       camera.far = far;
@@ -787,6 +910,8 @@ async function start() {
     }
     if (++curvatureTick % 60 === 1) applyCurvature(scene);
     worldView.update(camera, renderPos);
+    // From orbit the ground draws the sea and the centre's city lights (sub-pixel towers shimmer).
+    cityView.root.visible = oceanView.root.visible = !GLOBE_VIEW.on;
     airportView.update(camera, sim.atmosphere.windAt(_tmpWindPoint.set(renderPos.x, 10, renderPos.z), 0, _wind10));
     disasterView.update(sim.atmosphere.events);
     weatherView.update(dt, camera, velocity, sim.atmosphere, sim.groundWetness, sim.atmosphere.cloudAt(camera.position, 0).inCloud);
@@ -796,6 +921,7 @@ async function start() {
 
     hud.update(telemetry, player.trim, telemetry.controls.brake > 0);
     hud.setAutopilot(autopilot.state.engaged ? autopilot.state : null);
+    apPanel.refresh();
     fpsFrames++;
     fpsTime += dt;
     if (fpsTime > 0.5) {

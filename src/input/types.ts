@@ -32,6 +32,7 @@ export type Action =
   | 'record'
   | 'mouseFlight'
   | 'autopilot'
+  | 'apPanel'
   | 'trail';
 
 /** What a device may know about the game when it reads. */

@@ -1,3 +1,4 @@
+import { airDensity } from '../sim/atmosphere.ts';
 import { thunderDelay } from '../sim/lightning.ts';
 import type { LightningStrike } from '../sim/lightning.ts';
 import type { Craft } from '../craft/Craft.ts';
@@ -228,8 +229,11 @@ export class FlightAudio {
     }
     if (this.jet) {
       const spool = jets.length ? jets.reduce((s, e) => s + e.spool, 0) / jets.length : 0;
-      smooth(this.jet.filter.frequency, 600 + spool * 2400);
-      smooth(this.jet.gain.gain, jets.length ? 0.05 + spool * 0.35 : 0);
+      // Rockets: a lower roar, and silence in thin air (no air to carry the sound).
+      const rocket = jets.length > 0 && jets.every((e) => e.isRocket);
+      const air = rocket ? Math.min(1, Math.sqrt(airDensity(t.position[1]) / 1.225)) : 1;
+      smooth(this.jet.filter.frequency, rocket ? 250 + spool * 1200 : 600 + spool * 2400);
+      smooth(this.jet.gain.gain, jets.length ? (0.05 + spool * 0.35) * air : 0);
     }
     // Rotors: loudest rotor sets the slap rate.
     if (this.rotor) {

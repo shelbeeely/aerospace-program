@@ -39,6 +39,7 @@ export class Autopilot implements ControlSource {
 
   /** Smoothed crab angle (heading minus ground track), deg. */
   private crab = 0;
+  private prevHeading: number | null = null;
 
   /**
    * Lower-level flying for navigation modes: hold a vertical speed, a ground track (or a bank)
@@ -59,10 +60,14 @@ export class Autopilot implements ControlSource {
       throttle = clamp(0.5 + speedErr * 0.08 + this.speedIntegral * 0.02, 0, 1);
     }
 
+    const yawRate = this.prevHeading === null ? 0 : wrap180(t.heading - this.prevHeading) / dt;
+    this.prevHeading = t.heading;
     if (cmd.rollout && t.onGround) {
       this.vsIntegral = 0;
       this.pitchIntegral = 0;
-      const steer = clamp(wrap180(cmd.rollout.heading - t.heading) * 0.12, -1, 1);
+      // Rudder and nose wheel: softer at speed (they bite hard), with yaw-rate damping.
+      const k = 0.12 * clamp(15 / Math.max(1, t.groundSpeed), 0.15, 1);
+      const steer = clamp(wrap180(cmd.rollout.heading - t.heading) * k - yawRate * 0.04, -1, 1);
       return { pitch: -0.3, roll: 0, yaw: steer, throttle: cmd.throttle ?? 0, brake: cmd.rollout.brake, flaps: cmd.flaps };
     }
 
@@ -164,6 +169,10 @@ export interface HoverTargets {
   heading: number;
   /** Desired ground speed along the nose (m/s). Sideways speed is held at zero. */
   forwardSpeed: number;
+  /** Desired ground speed to the right (m/s, default 0). */
+  rightSpeed?: number;
+  /** If set, hold this vertical speed (m/s, + up) instead of the altitude (e.g. a descent to a pad). */
+  vsTarget?: number;
 }
 
 /**
@@ -182,8 +191,10 @@ export class HoverPilot implements ControlSource {
 
   sample(dt: number, t: Telemetry): ControlInputs {
     const altErr = this.targets.altitude - t.altitude;
-    this.altIntegral = clamp(this.altIntegral + altErr * dt * 0.01, -0.25, 0.25);
-    const desiredVs = clamp(altErr * 0.5, -3, 4);
+    const vsHold = this.targets.vsTarget;
+    if (vsHold === undefined) this.altIntegral = clamp(this.altIntegral + altErr * dt * 0.01, -0.25, 0.25);
+    else this.altIntegral = clamp(this.altIntegral + (vsHold - t.verticalSpeed) * dt * 0.02, -0.25, 0.25);
+    const desiredVs = vsHold ?? clamp(altErr * 0.5, -3, 4);
     const throttle = clamp(0.5 + (desiredVs - t.verticalSpeed) * 0.12 + this.altIntegral, 0, 1);
 
     const h = (t.heading * Math.PI) / 180;
@@ -193,7 +204,7 @@ export class HoverPilot implements ControlSource {
     const vFwd = vx * Math.sin(h) - vz * Math.cos(h);
     const vRight = vx * Math.cos(h) + vz * Math.sin(h);
     const pitch = clamp(-(this.targets.forwardSpeed - vFwd) * 0.12, -1, 1); // forward = nose down
-    const roll = clamp(-vRight * 0.15, -1, 1);
+    const roll = clamp(((this.targets.rightSpeed ?? 0) - vRight) * 0.15, -1, 1);
     // Heading loop with rate damping (yaw rate from successive samples), so it settles instead
     // of swinging past the target.
     const yawRate = this.prevHeading === null ? 0 : wrap180(t.heading - this.prevHeading) / dt;

@@ -92,9 +92,19 @@ export interface EngineDef {
   /**
    * Engine model. 'prop' (needs propMaxSpeed) or 'turbofan': thrust lapses with density
    * (σ^0.7) and with Mach (more for higher bypass ratios), and fuel per newton (TSFC) rises
-   * with Mach. Omit for the legacy models: prop if propMaxSpeed is set, else flat jet thrust.
+   * with Mach. 'rocket': carries its own oxidiser, so thrust ignores air density (full thrust in
+   * vacuum) and propellant flow is maxThrust / (isp · g0). Omit for the legacy models: prop if
+   * propMaxSpeed is set, else flat jet thrust.
    */
-  kind?: 'prop' | 'turbofan';
+  kind?: 'prop' | 'turbofan' | 'rocket';
+  /** Rocket specific impulse (s): ~250-320 kerosene/solid, ~450 hydrogen. Default 300. */
+  isp?: number;
+  /**
+   * Reaction-control thrusters fed from the craft's tanks: up to this torque (N·m) per axis from
+   * the pitch/roll/yaw stick. Rate-command (centred stick holds the attitude still), full
+   * authority in near-vacuum, fading out as dynamic pressure builds and the surfaces take over.
+   */
+  rcsTorque?: number;
   /** Turbofan bypass ratio (0 = turbojet, ~0.3-1 fighters/trainers, 3-5 business jets). Default 1. */
   bypassRatio?: number;
   /**
@@ -188,6 +198,11 @@ export interface WheelDef {
   maxSteerDeg?: number;
   /** Driven wheel: the throttle pushes it along the ground with up to this force (N). */
   drive?: number;
+  /**
+   * Skid steering (tanks): the side the wheel is on, +1 right, -1 left. The yaw channel then
+   * drives the two sides in opposite directions (with `drive`), so the craft turns in place.
+   */
+  skid?: 1 | -1;
   brakes?: boolean;
 }
 

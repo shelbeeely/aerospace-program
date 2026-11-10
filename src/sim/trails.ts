@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { Craft } from '../craft/Craft.ts';
 import type { TrailDef } from '../craft/types.ts';
 import { TrailEmitter } from '../modules/TrailEmitter.ts';
+import type { ChipEmitter } from './chips.ts';
 import { terrainHeight } from './terrain.ts';
 
 /**
@@ -114,6 +115,9 @@ export class TrailSystem {
     this.version++;
   }
 
+  /** Where derezzing light walls shatter into voxels (set by the simulation; optional). */
+  chips: ChipEmitter | null = null;
+
   /** The vehicle is gone or respawned: everything it laid derezzes. */
   derez(time: number): void {
     for (const t of this.trails) {
@@ -121,8 +125,19 @@ export class TrailSystem {
       t.active = false;
       t.derezAt = time;
       for (const p of t.points) this.dropCollider(p);
+      this.shatter(t);
     }
     this.version++;
+  }
+
+  /** A derezzing light wall shatters into voxels of its colour along its length, which stay on the Grid. */
+  private shatter(t: Trail): void {
+    if (!this.chips || t.kind !== 'wall' || t.points.length < 2) return;
+    const step = Math.max(1, Math.floor(t.points.length / 160)); // at most ~160 bursts per wall
+    for (let i = 0; i < t.points.length; i += step) {
+      const p = t.points[i];
+      this.chips.emit({ x: p.x, y: (p.y0 + p.y1) / 2, z: p.z, radius: (p.y1 - p.y0) / 2, vx: 0, vy: 1, vz: 0, speed: 2.5, count: 6, size: 0.22, color: t.color, persist: true });
+    }
   }
 
   /** Rider control: jetwall → light ribbon → off → jetwall. */
