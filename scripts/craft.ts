@@ -16,6 +16,8 @@ import type { CraftDef } from '../src/craft/types.ts';
 import { LIGHT_CAR } from '../src/craft/lightCar.ts';
 import { designCraft, DESIGNER_SYSTEM_PROMPT } from '../src/gen/craftDesigner.ts';
 import { mergeDetail } from '../src/gen/detailer.ts';
+import { designWithAgent } from '../src/gen/agent.ts';
+import type { ModelInfo } from '../src/gen/openrouter.ts';
 import type { OpenRouter } from '../src/gen/openrouter.ts';
 import { flightTest } from '../src/sim/flightTest.ts';
 import { initPhysics } from '../src/sim/Simulation.ts';
@@ -135,6 +137,69 @@ const detailed = (base: CraftDef): CraftDef => ({
   check(res.report.passed, 'the detailed design still passes its test card', `${res.report.score}/100`);
 }
 check(/Detail \(three tiers/.test(DESIGNER_SYSTEM_PROMPT), 'the designer prompt teaches the three detail tiers');
+
+// ---------------------------------------------------------------- 6. agent harness
+console.log('\n--- agent harness');
+{
+  const floating: CraftDef = structuredClone(LIGHT_CAR);
+  floating.parts.push({ id: 'drone.pod', kind: 'pod', mass: 5, position: [0, 6, 0], shape: { type: 'box', size: [0.5, 0.5, 0.5] }, color: '#00d4ff' });
+  const extra = detailed(style1982(LIGHT_CAR)).parts.filter((p) => !LIGHT_CAR.parts.some((b) => b.id === p.id));
+  let n = 0;
+  const call = (name: string, args: unknown = {}) => ({ id: `c${++n}`, type: 'function', function: { name, arguments: JSON.stringify(args) } });
+  // A scripted agent: draft (with a floating part), check, patch it out, analyze, test, detail
+  // (including an attempt to triple the chassis mass), re-test, finish.
+  const script = [
+    [call('submit_craft', { craft: floating })],
+    [call('patch', { ops: [{ op: 'remove', id: 'drone.pod' }] }), call('check')],
+    [call('analyze'), call('flight_test')],
+    [call('add_detail', { parts: [...extra, { ...LIGHT_CAR.parts.find((p) => p.id === 'chassis')!, mass: 9999 }] }), call('check')],
+    [call('flight_test')],
+    [call('finish', { name: 'Agent Car', notes: 'stub agent' })],
+  ];
+  const results: string[] = [];
+  const stub = {
+    async chat(req: { messages: Array<{ role: string; content: string }> }) {
+      for (const m of req.messages.slice(-4)) if (m.role === 'tool') results.push(m.content);
+      return { model: 'stub/agent', content: '', images: [], audio: [], reasoning: '', usage: { promptTokens: 0, completionTokens: 0, cost: 0 }, toolCalls: script.shift() ?? [call('finish', { name: 'x' })] };
+    },
+  } as unknown as OpenRouter;
+  const tools: string[] = [];
+  const res = await designWithAgent(stub, { model: 'stub/agent', prompt: 'a light car' }, (e) => tools.push(`${e.name}: ${e.summary}`));
+  console.log('  ' + tools.join('\n  '));
+  check(tools.some((t) => /^submit_craft:.*OK/.test(t)) && results.some((r) => /floating/.test(r)), 'the agent sees the floating part it submitted');
+  check(res.report.passed && res.name === 'Agent Car', 'the agent runs check, analyze, test and detail, and finishes with a passing craft', `${res.report.vehicle} ${res.report.score}/100`);
+  check(res.craft.parts.some((p) => p.id === 'plate.top') && !res.craft.parts.some((p) => p.id === 'drone.pod'), 'its detail is in and the floating part is out');
+  const chassisMass = res.craft.parts.find((p) => p.id === 'chassis')!.mass;
+  check(chassisMass === style1982(LIGHT_CAR).parts.find((p) => p.id === 'chassis')!.mass, 'add_detail cannot change the tested physics', `chassis ${chassisMass} kg`);
+  check(res.attempts.length === 2, 'two harness-run flight tests', `${res.attempts.length}`);
+}
+{
+  // A model without tool support runs the fixed pipeline.
+  const replies = [JSON.stringify({ name: 'Plain', notes: '', craft: LIGHT_CAR })];
+  let usedTools = false;
+  const stub = {
+    async chat(req: { tools?: unknown[] }) {
+      if (req.tools) usedTools = true;
+      return { model: 'stub/plain', content: replies.shift() ?? '', images: [], audio: [], reasoning: '', usage: { promptTokens: 0, completionTokens: 0, cost: 0 }, toolCalls: [] };
+    },
+  } as unknown as OpenRouter;
+  const info = { id: 'stub/plain', supportedParameters: ['temperature'] } as unknown as ModelInfo;
+  const res = await designWithAgent(stub, { model: 'stub/plain', prompt: 'a light car', modelInfo: info, detail: false });
+  check(!usedTools && res.report.passed, 'a model without tool support gets the fixed pipeline', `${res.report.score}/100`);
+}
+{
+  // A model that ignores the tools (answers JSON) also falls back.
+  let calls = 0;
+  const stub = {
+    async chat(req: { tools?: unknown[] }) {
+      calls++;
+      const content = req.tools ? 'I will design it.' : JSON.stringify({ name: 'Plain', notes: '', craft: LIGHT_CAR });
+      return { model: 'stub/plain', content, images: [], audio: [], reasoning: '', usage: { promptTokens: 0, completionTokens: 0, cost: 0 }, toolCalls: [] };
+    },
+  } as unknown as OpenRouter;
+  const res = await designWithAgent(stub, { model: 'stub/plain', prompt: 'a light car', detail: false });
+  check(res.report.passed && calls >= 4, 'a model that won\'t call tools falls back to the fixed pipeline', `${calls} calls`);
+}
 
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 process.exit(failed ? 1 : 0);

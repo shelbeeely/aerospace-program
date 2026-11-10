@@ -1,13 +1,17 @@
 /**
  * Generate a craft from a description, flight-test it, iterate, and save it.
  *
- *   npm run design -- "a stubby twin-boom cargo plane" [--designer id] [--engineer id] [--rounds 4] [--drafts 2] [--base crafts/x.json]
+ *   npm run design -- "a stubby twin-boom cargo plane" [--designer id] [--engineer id] [--rounds 4] [--drafts 2] [--base crafts/x.json] [--agent] [--no-detail]
+ *
+ * --agent: the designer runs the whole pipeline with tools (submit, check, analyze, patch,
+ * flight test, add detail, finish); models without tool calling fall back to the fixed rounds.
  *
  * Needs OPENROUTER_API_KEY in the environment (or a proxy that injects it).
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { JOBS } from '../src/gen/catalog.ts';
 import { designCraft } from '../src/gen/craftDesigner.ts';
+import { designWithAgent } from '../src/gen/agent.ts';
 import { OpenRouter } from '../src/gen/openrouter.ts';
 import { flightTest, formatReport } from '../src/sim/flightTest.ts';
 import { initPhysics } from '../src/sim/Simulation.ts';
@@ -27,6 +31,9 @@ const backups = (list: string[], primary: string) => list.filter((m) => m !== pr
 const rounds = Number(opt('rounds') ?? 4);
 const drafts = Number(opt('drafts') ?? 2);
 const basePath = opt('base');
+const flag = (name: string) => { const i = args.indexOf(`--${name}`); if (i >= 0) args.splice(i, 1); return i >= 0; };
+const agent = flag('agent');
+const detail = !flag('no-detail');
 const prompt = args.join(' ').trim();
 if (!prompt) {
   console.error('usage: npm run design -- "description" [--designer id] [--engineer id] [--rounds n] [--drafts n] [--base file.json]');
@@ -41,7 +48,11 @@ const client = new OpenRouter({
 const base = basePath ? JSON.parse(readFileSync(basePath, 'utf8')).craft ?? undefined : undefined;
 
 const t0 = Date.now();
-const result = await designCraft(client, {
+const models = agent ? await client.models().catch(() => []) : [];
+const design = agent
+  ? (r: Parameters<typeof designCraft>[1]) => designWithAgent(client, { ...r, modelInfo: models.find((m) => m.id === model) }, (e) => console.log(`  agent ${e.turn} · ${e.name}: ${e.summary}`))
+  : (r: Parameters<typeof designCraft>[1]) => designCraft(client, r);
+const result = await design({
   model,
   designerFallbacks: backups(JOBS.designer.free, model),
   engineerModel: engineer,
@@ -50,6 +61,7 @@ const result = await designCraft(client, {
   base,
   maxIterations: rounds,
   drafts,
+  detail,
   // Also fly each attempt in a gusty crosswind; advisory only (the calm score decides pass/fail).
   tester: (craft) => flightTest(craft, { gusty: true }),
   onEvent: (e) => {

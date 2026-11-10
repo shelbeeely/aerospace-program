@@ -57,6 +57,15 @@ npm run build          # typecheck + production build
    of the craft's mass together) and must connect to the craft. The detailed craft is flown
    again and kept only if it still passes. "Add detail" in the Studio does the same for the
    craft you're in (built-ins too); the "Detail pass" box switches the automatic round off.
+4c. **Agent mode** (the default in the Studio; `npm run design -- "…" --agent`). Instead of one
+   JSON reply per round, the designer runs the whole pipeline itself through tools
+   (`src/gen/agent.ts`): `submit_craft` (a full draft), `patch` (add / update / remove parts by
+   id, no rewrites), `check` (validation, floating parts), `analyze` (mass, CoM, static margin,
+   wing loading, T/W, stall speed, wheels), `flight_test`, `add_detail` (after a pass; physics
+   locked as in 4b) and `finish`. The harness owns the gates: every craft is validated,
+   auto-fixed, connectivity-checked and restyled before it counts, and the final craft must
+   pass a flight test the harness itself runs. Budgets: 28 model turns, 8 flight tests. Models
+   without tool calling (or that won't use the tools) run the fixed rounds instead.
 5. **Fly.** The best design lands on the runway and in the **hangar** (localStorage). Each
    entry records its provenance: every model that worked on it, prompt, score, rounds and cost.
 6. **Refine.** After flying, "Refine current" sends the craft, your instructions, and a
@@ -65,6 +74,11 @@ npm run build          # typecheck + production build
    There are no custom liveries: every vehicle wears the 1982 palette.
 
 ### The crew: one model per job, free first
+
+**Model search:** the Studio's *Models & generation settings* searches the whole OpenRouter
+catalog by name, id or description; matches are listed first in every job's picker (the
+Designer jumps to the best hit). *Tools* keeps only models that can call tools (Agent mode);
+those are marked "tools" in the pickers.
 
 | Job | Default (free) | Free backups | What it does |
 | --- | --- | --- | --- |

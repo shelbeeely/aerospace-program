@@ -24,9 +24,28 @@ export type ChatContent =
   | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: ChatContent;
+  /** Assistant turn: the tools it called (OpenAI format). */
+  tool_calls?: ToolCall[];
+  /** Tool turn: which call this answers. */
+  tool_call_id?: string;
 }
+
+/** A function the model may call (OpenAI-compatible tool schema). */
+export interface ToolDef {
+  type: 'function';
+  function: { name: string; description: string; parameters: Record<string, unknown> };
+}
+
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+
+/** Can this model call tools (per the OpenRouter catalog)? */
+export const supportsTools = (m: ModelInfo | undefined): boolean => !!m?.supportedParameters.includes('tools');
 
 export interface ChatRequest {
   model: string;
@@ -44,6 +63,9 @@ export interface ChatRequest {
    * output budget thinking and get cut off before the answer.
    */
   reasoningEffort?: 'low' | 'medium' | 'high';
+  /** Tools the model may call; the reply's toolCalls lists what it called. */
+  tools?: ToolDef[];
+  toolChoice?: 'auto' | 'required' | 'none';
   signal?: AbortSignal;
 }
 
@@ -65,6 +87,8 @@ export interface ChatResult {
   /** Reasoning text, if the model exposed it (some put their final answer here when cut off). */
   reasoning: string;
   usage: Usage;
+  /** Tools the model called this turn (empty if none). */
+  toolCalls: ToolCall[];
 }
 
 export class OpenRouterError extends Error {
@@ -176,6 +200,11 @@ export class OpenRouter {
     if (req.temperature !== undefined) body.temperature = req.temperature;
     if (req.maxTokens !== undefined) body.max_tokens = await this.clampMaxTokens(req.maxTokens, [req.model, ...fallbacks]);
     if (req.reasoningEffort) body.reasoning = { effort: req.reasoningEffort };
+    if (req.tools?.length) {
+      body.tools = req.tools;
+      if (req.toolChoice) body.tool_choice = req.toolChoice;
+      delete body.response_format; // tool calls and JSON mode don't mix on most providers
+    }
 
     let attempt = 0;
     let shrunk = false;
@@ -293,7 +322,7 @@ export class OpenRouter {
       for (const c of chunks) { all.set(c, o); o += c.length; }
       audio.unshift(audioDataUrl(all));
     }
-    return { model: usedModel, content: content || transcript, images: [], audio, reasoning: '', usage };
+    return { model: usedModel, content: content || transcript, images: [], audio, reasoning: '', usage, toolCalls: [] };
   }
 
   private async chatOnce(body: Record<string, unknown>, model: string, signal?: AbortSignal): Promise<ChatResult> {
@@ -330,7 +359,14 @@ export class OpenRouter {
     let content = msg.content;
     if (Array.isArray(content)) content = content.map((c: any) => c.text ?? '').join('');
     const reasoning = typeof msg.reasoning === 'string' ? msg.reasoning : '';
-    return { model: j.model ?? model, content: content ?? '', images, audio, reasoning, usage };
+    const toolCalls: ToolCall[] = (Array.isArray(msg.tool_calls) ? msg.tool_calls : [])
+      .filter((t: any) => t?.function?.name)
+      .map((t: any, i: number) => ({
+        id: String(t.id ?? `call_${i}`),
+        type: 'function' as const,
+        function: { name: String(t.function.name), arguments: typeof t.function.arguments === 'string' ? t.function.arguments : JSON.stringify(t.function.arguments ?? {}) },
+      }));
+    return { model: j.model ?? model, content: content ?? '', images, audio, reasoning, usage, toolCalls };
   }
 }
 

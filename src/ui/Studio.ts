@@ -5,8 +5,10 @@ import { designCraft, type DesignResult } from '../gen/craftDesigner.ts';
 import { fromImportJson, toExportJson, type Library, type LibraryEntry } from '../gen/library.ts';
 import { composeMusic, MUSIC_STYLES } from '../gen/music.ts';
 import { detailCraft } from '../gen/detailer.ts';
+import { designWithAgent } from '../gen/agent.ts';
 import {
   DIRECT_BASE_URL,
+  supportsTools,
   OpenRouter,
   OpenRouterError,
   PROXY_BASE_URL,
@@ -85,6 +87,10 @@ export class Studio {
   private busy: AbortController | null = null;
   private lastResult: DesignResult | null = null;
   private readonly selects = {} as Record<JobId, HTMLSelectElement>;
+  /** Model search text (lower case) and the tool-calling filter. */
+  private search = '';
+  private toolsOnly = false;
+  private searchInfo!: HTMLElement;
   private readonly audioEl: HTMLAudioElement;
 
   private readonly el: {
@@ -97,6 +103,7 @@ export class Studio {
     rounds: HTMLSelectElement;
     drafts: HTMLSelectElement;
     detailPass: HTMLInputElement;
+    agentMode: HTMLInputElement;
     log: HTMLOListElement;
     result: HTMLElement;
     musicPrompt: HTMLInputElement;
@@ -116,6 +123,11 @@ export class Studio {
     }
     const freeOnly = h('input', { type: 'checkbox', onchange: () => this.setFreeOnly(freeOnly.checked) });
     freeOnly.checked = this.prefs.freeOnly;
+    // Model search: any model in the OpenRouter catalog, by name, id or description.
+    const search = h('input', { type: 'search', placeholder: 'Search all models (name, id, e.g. "claude", "qwen coder")', 'aria-label': 'Search models' }) as HTMLInputElement;
+    search.addEventListener('input', () => { this.search = search.value.trim().toLowerCase(); this.fillSelects(); });
+    const toolsOnly = h('input', { type: 'checkbox', onchange: () => { this.toolsOnly = toolsOnly.checked; this.fillSelects(); } }) as HTMLInputElement;
+    this.searchInfo = h('div', { class: 'muted small' });
 
     const keyInput = h('input', { type: 'password', placeholder: 'sk-or-… (optional)', autocomplete: 'off' });
     keyInput.value = safeGet(KEY_STORAGE) ?? '';
@@ -147,6 +159,7 @@ export class Studio {
     const designBtn = h('button', { class: 'primary', onclick: () => this.design(false) }, 'Generate vehicle');
     const detailBtn = h('button', { onclick: () => this.detailCurrent(), title: 'Add visual detail (panels, plates, intakes, light lines) to the current craft. Its physics stay exactly as tested.' }, 'Add detail');
     const detailPass = h('input', { type: 'checkbox', checked: '' }) as HTMLInputElement;
+    const agentMode = h('input', { type: 'checkbox', checked: '' }) as HTMLInputElement;
     const refineBtn = h('button', { onclick: () => this.design(true), title: 'Modify the craft you are flying, using your flight as feedback' }, 'Refine current');
     const cancel = h('button', { class: 'hidden', onclick: () => this.busy?.abort() }, 'Cancel');
     const musicPrompt = h('input', { type: 'text', placeholder: 'extra direction, e.g. slower, with a guitar solo' });
@@ -183,6 +196,7 @@ export class Studio {
       hangar: h('div', { class: 'studio-hangar' }),
       buttons: [designBtn, refineBtn, detailBtn, composeBtn],
       detailPass,
+      agentMode,
       cancel,
     };
     settings.append(this.el.keyNote);
@@ -205,13 +219,16 @@ export class Studio {
         chips,
         h('div', { class: 'row' }, designBtn, refineBtn, detailBtn, cancel),
         h('label', { class: 'muted small', title: 'After a design passes its test, the designer adds visual detail in one more round (re-tested; physics unchanged)' }, detailPass, ' Detail pass'),
+        h('label', { class: 'muted small', title: 'The designer runs the whole pipeline with tools (submit, check, analyze, patch, flight test, add detail, finish). Models without tool calling use the fixed rounds.' }, agentMode, ' Agent mode'),
         this.el.log,
         this.el.result,
       ),
       settings,
       h('details', { class: 'settings crew-settings' },
         h('summary', {}, 'Models & generation settings'),
-        h('div', { class: 'row spread' }, h('h4', {}, 'Crew'), h('label', { class: 'inline' }, freeOnly, ' Free only')),
+        h('div', { class: 'row spread' }, h('h4', {}, 'Crew'), h('label', { class: 'inline' }, freeOnly, ' Free only'), h('label', { class: 'inline', title: 'Designer/Engineer: only models that can call tools (needed for Agent mode)' }, toolsOnly, ' Tools')),
+        h('div', { class: 'row' }, search),
+        this.searchInfo,
         crew, h('label', {}, 'Design and repair rounds', rounds), h('label', {}, 'Parallel first drafts (best one kept)', drafts),
       ),
       h('section', {},
@@ -289,10 +306,15 @@ export class Studio {
   private fillSelects(): void {
     for (const job of Object.keys(JOBS) as JobId[]) {
       const sel = this.selects[job];
-      const list = modelsForJob(this.models, job, this.prefs.freeOnly);
+      const textJob = job === 'designer' || job === 'engineer';
+      let list = modelsForJob(this.models, job, this.prefs.freeOnly);
+      if (this.toolsOnly && textJob) list = list.filter((m) => supportsTools(m));
+      const q = this.search;
+      const hits = q ? list.filter((m) => `${m.id} ${m.name} ${m.description}`.toLowerCase().includes(q)).slice(0, 60) : [];
       const info = JOBS[job];
       const paidPref = new Set(info.paid);
       const groups: Array<[string, ModelInfo[]]> = [
+        ...(q ? [[`Search "${q}" (${hits.length})`, hits] as [string, ModelInfo[]]] : []),
         ['Recommended free', info.free.map((id) => list.find((m) => m.id === id)).filter((m): m is ModelInfo => !!m)],
         ['Other free', list.filter((m) => isFree(m) && !info.free.includes(m.id))],
         ['Recommended paid', list.filter((m) => !isFree(m) && paidPref.has(m.id))],
@@ -302,13 +324,19 @@ export class Studio {
       for (const [label, ms] of groups) {
         if (!ms.length) continue;
         const g = h('optgroup', { label });
-        for (const m of ms) g.append(h('option', { value: m.id }, `${m.name} · ${priceLabel(m)}`));
+        for (const m of ms) g.append(h('option', { value: m.id }, `${m.name} · ${priceLabel(m)}${textJob && supportsTools(m) ? ' · tools' : ''}`));
         sel.append(g);
       }
       if (!list.length) sel.append(h('option', { value: '' }, this.prefs.freeOnly ? 'no free model for this job' : 'none available'));
       const want = this.prefs.jobs[job];
-      sel.value = want && list.some((m) => m.id === want) ? want : (defaultModel(this.models, job, this.prefs.freeOnly) ?? '');
+      // A search jumps the selection to its best hit, so typing a name picks the model.
+      const top = q && hits[0] && job === 'designer' ? hits[0].id : '';
+      sel.value = top || (want && list.some((m) => m.id === want) ? want : (defaultModel(this.models, job, this.prefs.freeOnly) ?? ''));
       this.prefs.jobs[job] = sel.value || undefined;
+    }
+    if (this.searchInfo) {
+      const n = this.search ? modelsForJob(this.models, 'designer', this.prefs.freeOnly).filter((m) => `${m.id} ${m.name} ${m.description}`.toLowerCase().includes(this.search)).length : 0;
+      this.searchInfo.textContent = this.search ? `${n} matching text model(s) of ${this.models.length} in the catalog; matches are listed first in each job.` : '';
     }
     this.savePrefs();
   }
@@ -413,7 +441,10 @@ export class Studio {
     this.el.log.replaceChildren();
     this.el.result.classList.add('hidden');
     await this.run('Design', async (signal) => {
-      const result = await designCraft(this.host.client, {
+      const run = this.el.agentMode.checked
+        ? (r: Parameters<typeof designCraft>[1]) => designWithAgent(this.host.client, { ...r, modelInfo: designer.info }, (e) => this.logLine(`Agent · ${e.name}: ${e.summary}`, /^(ERROR|REJECTED|NOT)/.test(e.summary) ? 'warn' : 'muted'))
+        : (r: Parameters<typeof designCraft>[1]) => designCraft(this.host.client, r);
+      const result = await run({
         model: designer.model,
         designerFallbacks: designer.fallbacks,
         engineerModel: engineer.model || designer.model,
