@@ -4,6 +4,7 @@ import { defaultModel, fallbacksFor, isFree, JOBS, modelsForJob, priceLabel, typ
 import { designCraft, type DesignResult } from '../gen/craftDesigner.ts';
 import { fromImportJson, toExportJson, type Library, type LibraryEntry } from '../gen/library.ts';
 import { composeMusic, MUSIC_STYLES } from '../gen/music.ts';
+import { detailCraft } from '../gen/detailer.ts';
 import {
   DIRECT_BASE_URL,
   OpenRouter,
@@ -95,6 +96,7 @@ export class Studio {
     prompt: HTMLTextAreaElement;
     rounds: HTMLSelectElement;
     drafts: HTMLSelectElement;
+    detailPass: HTMLInputElement;
     log: HTMLOListElement;
     result: HTMLElement;
     musicPrompt: HTMLInputElement;
@@ -142,7 +144,9 @@ export class Studio {
     const drafts = h('select', { title: 'Independent first drafts, flight-tested in parallel; the best one goes on to repair' });
     for (const n of [1, 2, 3]) drafts.append(h('option', { value: String(n) }, `${n} draft${n > 1 ? 's' : ''}`));
     drafts.value = '2';
-    const designBtn = h('button', { class: 'primary', onclick: () => this.design(false) }, 'Generate aircraft');
+    const designBtn = h('button', { class: 'primary', onclick: () => this.design(false) }, 'Generate vehicle');
+    const detailBtn = h('button', { onclick: () => this.detailCurrent(), title: 'Add visual detail (panels, plates, intakes, light lines) to the current craft. Its physics stay exactly as tested.' }, 'Add detail');
+    const detailPass = h('input', { type: 'checkbox', checked: '' }) as HTMLInputElement;
     const refineBtn = h('button', { onclick: () => this.design(true), title: 'Modify the craft you are flying, using your flight as feedback' }, 'Refine current');
     const cancel = h('button', { class: 'hidden', onclick: () => this.busy?.abort() }, 'Cancel');
     const musicPrompt = h('input', { type: 'text', placeholder: 'extra direction, e.g. slower, with a guitar solo' });
@@ -177,7 +181,8 @@ export class Studio {
       musicStyle,
       musicInfo: h('div', { class: 'muted small' }),
       hangar: h('div', { class: 'studio-hangar' }),
-      buttons: [designBtn, refineBtn, composeBtn],
+      buttons: [designBtn, refineBtn, detailBtn, composeBtn],
+      detailPass,
       cancel,
     };
     settings.append(this.el.keyNote);
@@ -198,7 +203,8 @@ export class Studio {
         h('label', { for: 'aircraft-prompt', class: 'prompt-label' }, 'Describe your vehicle'),
         prompt,
         chips,
-        h('div', { class: 'row' }, designBtn, refineBtn, cancel),
+        h('div', { class: 'row' }, designBtn, refineBtn, detailBtn, cancel),
+        h('label', { class: 'muted small', title: 'After a design passes its test, the designer adds visual detail in one more round (re-tested; physics unchanged)' }, detailPass, ' Detail pass'),
         this.el.log,
         this.el.result,
       ),
@@ -417,14 +423,16 @@ export class Studio {
         feedback: refine ? this.host.flightNotes() : undefined,
         maxIterations: Number(this.el.rounds.value),
         drafts: refine ? 1 : Number(this.el.drafts.value),
+        detail: this.el.detailPass.checked,
         tester: runFlightTest,
         signal,
         onEvent: (e) => {
           if (e.type === 'status') this.setStatus(e.message);
           else {
             const a = e.attempt;
-            const who = `${a.role === 'designer' ? 'Designer' : 'Engineer'}${a.model ? ` (${shortName(a.model)})` : ''}`;
+            const who = `${a.role === 'designer' ? 'Designer' : a.role === 'detailer' ? 'Detailer' : 'Engineer'}${a.model ? ` (${shortName(a.model)})` : ''}`;
             if (a.error) this.logLine(`${who}: ${a.error}`, 'bad');
+            else if (a.role === 'detailer') this.logLine(`${who}: ${a.fixes?.[0] ?? ''}${a.report ? ` · ${a.report.score}/100` : ''}`, a.craft && a.report?.passed ? 'good' : 'warn');
             else if (a.validationErrors) this.logLine(`${who}: ${a.validationErrors.length} format errors → engineer`, 'warn');
             else if (a.report) {
               const fixed = a.fixes?.length ? ` (${a.fixes.length} auto-fix${a.fixes.length > 1 ? 'es' : ''})` : '';
@@ -469,6 +477,41 @@ export class Studio {
       ),
     );
     this.el.result.classList.remove('hidden');
+  }
+
+  /** Detail the current craft: visual secondary/tertiary geometry, physics untouched, re-tested. */
+  private async detailCurrent(): Promise<void> {
+    const designer = this.guard('designer');
+    if (!designer) return;
+    const cur = this.host.current();
+    const concept = this.el.prompt.value.trim() || cur.craft.name;
+    await this.run('Detail', async (signal) => {
+      this.setStatus(`Flight-testing "${cur.craft.name}" before detailing…`);
+      const baseReport = await runFlightTest(cur.craft);
+      this.setStatus(`Detailer (${shortName(designer.model)}) adding detail to "${cur.craft.name}"…`);
+      const d = await detailCraft(this.host.client, { model: designer.model, fallbacks: designer.fallbacks, craft: cur.craft, concept, tester: runFlightTest, baseReport, signal });
+      this.updateSpend();
+      if (!d.accepted) {
+        this.setStatus(`No detail kept: ${d.notes.join('; ')}.`, 'error');
+        return;
+      }
+      const parent = cur.entryId ? this.host.library.get(cur.entryId) : undefined;
+      const entry = this.host.library.add({
+        name: `${cur.craft.name} (detailed)`,
+        craft: d.craft,
+        provenance: {
+          ...(parent?.provenance ?? { source: 'generated' as const }),
+          model: d.model,
+          score: d.report?.score,
+          costUsd: d.cost,
+          createdAt: new Date().toISOString(),
+          parentId: cur.entryId ?? undefined,
+        },
+      });
+      this.renderHangar();
+      this.host.select(entry);
+      this.setStatus(`Added ${d.added} detail parts${d.notes.length ? ` (${d.notes.join('; ')})` : ''}. Still ${d.report?.score}/100.`);
+    });
   }
 
   private async compose(): Promise<void> {

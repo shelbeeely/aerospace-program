@@ -15,9 +15,9 @@ function halfExtents(s: ShapeDef): THREE.Vector3 {
 }
 
 /** A part's oriented box: centre, axes (craft frame) and half extents. */
-interface Obb { c: THREE.Vector3; axes: [THREE.Vector3, THREE.Vector3, THREE.Vector3]; h: THREE.Vector3 }
+export interface Obb { c: THREE.Vector3; axes: [THREE.Vector3, THREE.Vector3, THREE.Vector3]; h: THREE.Vector3 }
 
-function obb(p: PartDef): Obb {
+export function obb(p: PartDef): Obb {
   const q = partQuaternion(p);
   return {
     c: new THREE.Vector3(...p.position),

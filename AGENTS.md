@@ -294,6 +294,9 @@ universe, not a conventional open world decorated with neon.
   quarter of the surface. No custom liveries.
 - **Every vehicle is one connected piece** (`src/craft/connectivity.ts`): part shapes overlap or
   touch, nothing floats, modules sit on their own part. The AI design loop rejects violations.
+- **Generated vehicles are detailed** in three tiers (primary silhouette, secondary machinery,
+  tertiary seams and light lines). The detail round (`src/gen/detailer.ts`) adds visual-only
+  parts and can never change the tested physics.
 - Check: `npm run craft`.
 - **The imported kit towers remain part of the world.**
 

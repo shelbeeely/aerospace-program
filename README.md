@@ -49,6 +49,14 @@ npm run build          # typecheck + production build
    seconds take about 5 s (in a Web Worker in the browser); a 200-part craft about twice that.
 4. **Repair.** The **Engineer** model (a different model) gets the errors or test report and
    fixes the design, until it passes or the round budget runs out.
+4b. **Detail.** Once it passes, the Designer gets one more round to add visual secondary and
+   tertiary geometry (armour plates, fairings, intakes, canopy frames, fender arcs, hubs,
+   struts, antennas, nozzle rings, panel seams and light lines), aiming at 30-90 parts.
+   `src/gen/detailer.ts` keeps the physics exactly as tested: every tested part is restored as
+   it was, new parts are forced visual-only (no collider, no modules, at most 2 kg each and 2%
+   of the craft's mass together) and must connect to the craft. The detailed craft is flown
+   again and kept only if it still passes. "Add detail" in the Studio does the same for the
+   craft you're in (built-ins too); the "Detail pass" box switches the automatic round off.
 5. **Fly.** The best design lands on the runway and in the **hangar** (localStorage). Each
    entry records its provenance: every model that worked on it, prompt, score, rounds and cost.
 6. **Refine.** After flying, "Refine current" sends the craft, your instructions, and a

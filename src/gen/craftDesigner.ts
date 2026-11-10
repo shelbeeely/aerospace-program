@@ -15,6 +15,7 @@ import { TUNING } from '../tuning.ts';
 import { PLANET } from '../sim/layout.ts';
 import { flightTest, formatReport, type FlightReport } from '../sim/flightTest.ts';
 import { extractJson, type ChatMessage, type OpenRouter } from './openrouter.ts';
+import { detailCraft } from './detailer.ts';
 
 /**
  * The spec a designer model gets. It documents the craft format and the physics conventions
@@ -101,6 +102,13 @@ The world is the original 1982 TRON digital world: monumental, geometric, electr
 - Every module sits on or within its own part (offsets inside the part's shape, or within a few cm of its surface).
 - A design with floating parts is rejected before it is tested.
 
+## Detail (three tiers, as the world's architecture)
+Real vehicles in this world read at three scales, so build them that way:
+- Primary geometry (2-5 masses): the silhouette. Hull, wings, cabin, tracks, booms.
+- Secondary geometry: what makes it a machine. Fairings, intake scoops, nacelle cowls, armour plates layered over the hull, canopy frames, fender arcs over wheels, wheel hubs, struts and braces, fin caps, sensor pods, antenna masts, nozzles and exhaust rings, steps and ledges, chamfers (angled boxes via rotationDeg).
+- Tertiary geometry: thin panel seams and light lines (a few cm thick) along edges, around canopies, intakes, nozzles and wheel rims.
+Secondary and tertiary parts are usually visual: "collider": false, small mass (0.01-2 kg), no modules, touching the part they decorate. Aim for 30-90 parts on a finished vehicle; the physics parts can stay few. Detail never covers everything: keep large calm surfaces between the details.
+
 ## Be inventive
 Players want vehicles they have never seen: asymmetric racers, ring-winged fliers, canard deltas, flying wings, tandem-rotor lifters, six-wheeled crawlers, armoured skid-steer haulers, long-wheelbase cycles, hover-style sleds on low wheels. Take the request's concept seriously and give it a distinctive geometric identity, while the physics still works. Do not copy any vehicle from a film or game: invent your own.
 
@@ -178,7 +186,7 @@ Every reply must contain the COMPLETE craft, not a diff.`;
 export interface DesignAttempt {
   iteration: number;
   /** Which job did this round, and which model actually answered (may be a fallback). */
-  role: 'designer' | 'engineer';
+  role: 'designer' | 'engineer' | 'detailer';
   model?: string;
   craft?: CraftDef;
   validationErrors?: string[];
@@ -210,6 +218,11 @@ export interface DesignRequest {
   maxIterations?: number;
   /** Independent designer drafts in round 1, tested in parallel; the best goes on (default 1). */
   drafts?: number;
+  /**
+   * After a design passes: a detail round where the designer adds visual secondary/tertiary
+   * geometry (physics kept exactly as tested, re-flown, kept only if it still passes). Default true.
+   */
+  detail?: boolean;
   onEvent?: (e: DesignEvent) => void;
   /** How to flight-test a candidate (the browser passes a Web Worker runner). */
   tester?: (craft: CraftDef) => Promise<FlightReport>;
@@ -396,6 +409,28 @@ export async function designCraft(client: OpenRouter, req: DesignRequest): Promi
   }
 
   if (!best) throw new Error('The model never produced a valid craft. Try another model or a simpler request.');
+  if (req.detail !== false && best.report.passed) {
+    emit({ type: 'status', message: `Detailing "${best.name}"…` });
+    const attempt: DesignAttempt = { iteration: attempts.length + 1, role: 'detailer', cost: 0 };
+    attempts.push(attempt);
+    try {
+      const d = await detailCraft(client, {
+        model: req.model, fallbacks: req.designerFallbacks, craft: best.craft, concept: req.prompt,
+        tester: req.tester, baseReport: best.report, signal: req.signal,
+      });
+      attempt.model = d.model;
+      attempt.cost = d.cost;
+      totalCost += d.cost;
+      attempt.craft = d.craft;
+      attempt.fixes = [`${d.accepted ? `added ${d.added} detail parts` : 'no detail added'}${d.notes.length ? `: ${d.notes.join('; ')}` : ''}`];
+      if (d.report) attempt.report = d.report;
+      if (d.accepted && d.report) best = { ...best, craft: d.craft, report: d.report };
+    } catch (e) {
+      if (req.signal?.aborted) throw e;
+      attempt.error = `Detail round failed (kept the plain design): ${e instanceof Error ? e.message : e}`;
+    }
+    emit({ type: 'attempt', attempt });
+  }
   best.cost = totalCost;
   best.attempts = attempts;
   // Credit everyone who worked on it, in order (designer first, then engineers/fallbacks).
