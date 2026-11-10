@@ -1,0 +1,951 @@
+{
+  "craft": {
+    "name": "Desert Racer 3W",
+    "formatVersion": 1,
+    "parts": [
+      {
+        "id": "chassis",
+        "kind": "chassis",
+        "mass": 280,
+        "position": [
+          0,
+          0.4,
+          0
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1.8,
+            0.4,
+            3.6
+          ]
+        },
+        "color": "#0b1a33",
+        "modules": [
+          {
+            "type": "wheel",
+            "offset": [
+              0,
+              -0.25,
+              -2
+            ],
+            "radius": 0.45,
+            "restLength": 0.35,
+            "stiffness": 16000,
+            "damping": 1760,
+            "maxSteerDeg": 30,
+            "brakes": true
+          },
+          {
+            "type": "wheel",
+            "offset": [
+              -1.2,
+              -0.25,
+              2
+            ],
+            "radius": 0.45,
+            "restLength": 0.35,
+            "stiffness": 18000,
+            "damping": 1980,
+            "brakes": true,
+            "drive": 2000
+          },
+          {
+            "type": "wheel",
+            "offset": [
+              1.2,
+              -0.25,
+              2
+            ],
+            "radius": 0.45,
+            "restLength": 0.35,
+            "stiffness": 18000,
+            "damping": 1980,
+            "brakes": true,
+            "drive": 2000
+          },
+          {
+            "type": "drag",
+            "cdA": 0.8
+          },
+          {
+            "type": "trail",
+            "offset": [
+              0,
+              -0.2,
+              1.8
+            ],
+            "kind": "wall",
+            "height": 1.8,
+            "color": "#00d4ff"
+          },
+          {
+            "type": "stabilizer",
+            "strength": 7000
+          }
+        ]
+      },
+      {
+        "id": "cockpit",
+        "kind": "cockpit",
+        "mass": 80,
+        "position": [
+          0,
+          0.85,
+          -0.5
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1,
+            0.5,
+            1.6
+          ]
+        },
+        "color": "#10284f",
+        "modules": [
+          {
+            "type": "avionics",
+            "loadW": 100,
+            "essential": true
+          }
+        ]
+      },
+      {
+        "id": "engine",
+        "kind": "engine",
+        "mass": 120,
+        "position": [
+          0,
+          0.2,
+          2.2
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.8,
+            0.5,
+            1
+          ]
+        },
+        "color": "#2a4466",
+        "modules": [
+          {
+            "type": "engine",
+            "offset": [
+              0,
+              0,
+              0.5
+            ],
+            "maxThrust": 4000,
+            "propMaxSpeed": 80,
+            "propRadius": 0.4
+          },
+          {
+            "type": "generator",
+            "ratedAmps": 80
+          },
+          {
+            "type": "body",
+            "length": 1,
+            "diameter": 0.8,
+            "cdFront": 0.2
+          }
+        ]
+      },
+      {
+        "id": "rollcage",
+        "kind": "rollcage",
+        "mass": 40,
+        "position": [
+          0,
+          1.1,
+          -0.3
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1.2,
+            0.8,
+            1.2
+          ]
+        },
+        "color": "#6f8aa8",
+        "collider": false
+      },
+      {
+        "id": "front_fender",
+        "kind": "fender",
+        "mass": 15,
+        "position": [
+          0,
+          0.5,
+          -2
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1,
+            0.3,
+            0.6
+          ]
+        },
+        "color": "#0b1a33",
+        "collider": false
+      },
+      {
+        "id": "rear_fender_left",
+        "kind": "fender",
+        "mass": 12,
+        "position": [
+          -1.2,
+          0.5,
+          1.6
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.5,
+            0.3,
+            1.2
+          ]
+        },
+        "color": "#0b1a33",
+        "collider": false
+      },
+      {
+        "id": "rear_fender_right",
+        "kind": "fender",
+        "mass": 12,
+        "position": [
+          1.2,
+          0.5,
+          1.6
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.5,
+            0.3,
+            1.2
+          ]
+        },
+        "color": "#0b1a33",
+        "collider": false
+      },
+      {
+        "id": "wheel_front_vis",
+        "kind": "wheel",
+        "mass": 18,
+        "position": [
+          0,
+          0.2,
+          -2
+        ],
+        "shape": {
+          "type": "cylinder",
+          "radius": 0.45,
+          "length": 0.3,
+          "axis": "x"
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "wheel_rear_left_vis",
+        "kind": "wheel",
+        "mass": 18,
+        "position": [
+          -1.2,
+          0.2,
+          1.85
+        ],
+        "shape": {
+          "type": "cylinder",
+          "radius": 0.45,
+          "length": 0.3,
+          "axis": "x"
+        },
+        "collider": false,
+        "color": "#2a4466"
+      },
+      {
+        "id": "wheel_rear_right_vis",
+        "kind": "wheel",
+        "mass": 18,
+        "position": [
+          1.2,
+          0.2,
+          1.85
+        ],
+        "shape": {
+          "type": "cylinder",
+          "radius": 0.45,
+          "length": 0.3,
+          "axis": "x"
+        },
+        "collider": false,
+        "color": "#2a4466"
+      },
+      {
+        "id": "accent_nose",
+        "kind": "accent",
+        "mass": 2,
+        "position": [
+          0,
+          0.6,
+          -1.8
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1.5,
+            0.05,
+            0.1
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "accent_tail",
+        "kind": "accent",
+        "mass": 2,
+        "position": [
+          0,
+          0.6,
+          1.8
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1.5,
+            0.05,
+            0.1
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "accent_side_left",
+        "kind": "accent",
+        "mass": 2,
+        "position": [
+          -0.95,
+          0.45,
+          0
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.04,
+            0.06,
+            3.2
+          ]
+        },
+        "collider": false,
+        "color": "#ffb000"
+      },
+      {
+        "id": "accent_side_right",
+        "kind": "accent",
+        "mass": 2,
+        "position": [
+          0.95,
+          0.45,
+          0
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.04,
+            0.06,
+            3.2
+          ]
+        },
+        "collider": false,
+        "color": "#ffb000"
+      },
+      {
+        "id": "detail_intake_left",
+        "kind": "intake",
+        "mass": 0.7,
+        "position": [
+          -0.7,
+          0.4,
+          1.8
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.3,
+            0.25,
+            0.6
+          ]
+        },
+        "collider": false,
+        "color": "#10284f"
+      },
+      {
+        "id": "detail_intake_right",
+        "kind": "intake",
+        "mass": 0.7,
+        "position": [
+          0.7,
+          0.4,
+          1.8
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.3,
+            0.25,
+            0.6
+          ]
+        },
+        "collider": false,
+        "color": "#10284f"
+      },
+      {
+        "id": "detail_exhaust_ring",
+        "kind": "exhaust",
+        "mass": 0.7,
+        "position": [
+          0,
+          0.2,
+          2.7
+        ],
+        "shape": {
+          "type": "cylinder",
+          "radius": 0.25,
+          "length": 0.1,
+          "axis": "z"
+        },
+        "collider": false,
+        "color": "#ff6a00"
+      },
+      {
+        "id": "detail_cockpit_frame_front",
+        "kind": "frame",
+        "mass": 0.35,
+        "position": [
+          0,
+          1.1,
+          -1.3
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1,
+            0.04,
+            0.04
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_cockpit_frame_rear",
+        "kind": "frame",
+        "mass": 0.35,
+        "position": [
+          0,
+          1.1,
+          0.3
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1,
+            0.04,
+            0.04
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_cockpit_frame_left",
+        "kind": "frame",
+        "mass": 0.35,
+        "position": [
+          -0.5,
+          1.1,
+          -0.5
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.04,
+            0.04,
+            1.6
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_cockpit_frame_right",
+        "kind": "frame",
+        "mass": 0.35,
+        "position": [
+          0.5,
+          1.1,
+          -0.5
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.04,
+            0.04,
+            1.6
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_rollcage_front_left",
+        "kind": "rollcage_bar",
+        "mass": 0.35,
+        "position": [
+          -0.6,
+          1.3,
+          -0.9
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.04,
+            0.8,
+            0.04
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_rollcage_front_right",
+        "kind": "rollcage_bar",
+        "mass": 0.35,
+        "position": [
+          0.6,
+          1.3,
+          -0.9
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.04,
+            0.8,
+            0.04
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_rollcage_rear_left",
+        "kind": "rollcage_bar",
+        "mass": 0.35,
+        "position": [
+          -0.6,
+          1.3,
+          0.3
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.04,
+            0.8,
+            0.04
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_rollcage_rear_right",
+        "kind": "rollcage_bar",
+        "mass": 0.35,
+        "position": [
+          0.6,
+          1.3,
+          0.3
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.04,
+            0.8,
+            0.04
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_chassis_vent_left",
+        "kind": "vent",
+        "mass": 0.35,
+        "position": [
+          -0.9,
+          0.3,
+          0
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.1,
+            0.04,
+            1.5
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_chassis_vent_right",
+        "kind": "vent",
+        "mass": 0.35,
+        "position": [
+          0.9,
+          0.3,
+          0
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.1,
+            0.04,
+            1.5
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_front_winglet_left",
+        "kind": "winglet",
+        "mass": 0.7,
+        "position": [
+          -0.9,
+          0.4,
+          -1.7
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.4,
+            0.04,
+            0.6
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_front_winglet_right",
+        "kind": "winglet",
+        "mass": 0.7,
+        "position": [
+          0.9,
+          0.4,
+          -1.7
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.4,
+            0.04,
+            0.6
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_rear_wing_left",
+        "kind": "winglet",
+        "mass": 0.7,
+        "position": [
+          -1,
+          0.7,
+          2.2
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.6,
+            0.04,
+            0.8
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_rear_wing_right",
+        "kind": "winglet",
+        "mass": 0.7,
+        "position": [
+          1,
+          0.7,
+          2.2
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.6,
+            0.04,
+            0.8
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_wheel_hub_front",
+        "kind": "hub",
+        "mass": 0.35,
+        "position": [
+          0,
+          0.2,
+          -2
+        ],
+        "shape": {
+          "type": "cylinder",
+          "radius": 0.12,
+          "length": 0.32,
+          "axis": "x"
+        },
+        "collider": false,
+        "color": "#ffb000"
+      },
+      {
+        "id": "detail_wheel_hub_rear_left",
+        "kind": "hub",
+        "mass": 0.35,
+        "position": [
+          -1.2,
+          0.2,
+          1.85
+        ],
+        "shape": {
+          "type": "cylinder",
+          "radius": 0.12,
+          "length": 0.32,
+          "axis": "x"
+        },
+        "collider": false,
+        "color": "#ffb000"
+      },
+      {
+        "id": "detail_wheel_hub_rear_right",
+        "kind": "hub",
+        "mass": 0.35,
+        "position": [
+          1.2,
+          0.2,
+          1.85
+        ],
+        "shape": {
+          "type": "cylinder",
+          "radius": 0.12,
+          "length": 0.32,
+          "axis": "x"
+        },
+        "collider": false,
+        "color": "#ffb000"
+      },
+      {
+        "id": "detail_engine_cowl_top",
+        "kind": "cowl",
+        "mass": 0.7,
+        "position": [
+          0,
+          0.55,
+          2.2
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.8,
+            0.05,
+            1
+          ]
+        },
+        "collider": false,
+        "color": "#3d7cff"
+      },
+      {
+        "id": "detail_engine_cowl_side_left",
+        "kind": "cowl",
+        "mass": 0.35,
+        "position": [
+          -0.4,
+          0.3,
+          2.2
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.04,
+            0.3,
+            1
+          ]
+        },
+        "collider": false,
+        "color": "#3d7cff"
+      },
+      {
+        "id": "detail_engine_cowl_side_right",
+        "kind": "cowl",
+        "mass": 0.35,
+        "position": [
+          0.4,
+          0.3,
+          2.2
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.04,
+            0.3,
+            1
+          ]
+        },
+        "collider": false,
+        "color": "#3d7cff"
+      },
+      {
+        "id": "detail_antenna",
+        "kind": "antenna",
+        "mass": 0.175,
+        "position": [
+          0,
+          1.8,
+          0.3
+        ],
+        "shape": {
+          "type": "cylinder",
+          "radius": 0.01,
+          "length": 0.6,
+          "axis": "y"
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_chassis_seam_front",
+        "kind": "seam",
+        "mass": 0.175,
+        "position": [
+          0,
+          0.3,
+          -1.8
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1.8,
+            0.02,
+            0.02
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_chassis_seam_rear",
+        "kind": "seam",
+        "mass": 0.175,
+        "position": [
+          0,
+          0.3,
+          1.8
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1.8,
+            0.02,
+            0.02
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_chassis_seam_left",
+        "kind": "seam",
+        "mass": 0.175,
+        "position": [
+          -0.9,
+          0.3,
+          0
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.02,
+            0.02,
+            3.6
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_chassis_seam_right",
+        "kind": "seam",
+        "mass": 0.175,
+        "position": [
+          0.9,
+          0.3,
+          0
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            0.02,
+            0.02,
+            3.6
+          ]
+        },
+        "collider": false,
+        "color": "#00d4ff"
+      },
+      {
+        "id": "detail_rollcage_top",
+        "kind": "rollcage_bar",
+        "mass": 0.7,
+        "position": [
+          0,
+          1.7,
+          -0.3
+        ],
+        "shape": {
+          "type": "box",
+          "size": [
+            1.2,
+            0.04,
+            1.2
+          ]
+        },
+        "collider": false,
+        "color": "#2a4466"
+      }
+    ]
+  },
+  "provenance": {
+    "model": "nvidia/nemotron-3-ultra-550b-a55b:free + dots-studio/dots-3-note-preview:free",
+    "prompt": "a three-wheeled desert racer",
+    "notes": "A low-slung three-wheeled desert racer with a single steerable front wheel and twin driven rear wheels. The stabilizer keeps it flat through high-speed turns, while the rear-mounted pusher prop gives strong acceleration. Cyan circuit accents trace the wedge silhouette, roll cage, and wheel hubs against a deep navy hull.",
+    "score": 100,
+    "rounds": 3,
+    "costUsd": 0,
+    "createdAt": "2026-11-10T18:13:11.429Z"
+  }
+}
