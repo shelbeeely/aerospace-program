@@ -490,5 +490,46 @@ body.touch-ui #ap-panel button, body.touch-ui #ap-panel input, body.touch-ui #ap
 #mp-panel .small { font-size: 11px; }
 /* The hangar shows only join / create; roster and chat are for flight. */
 body.mode-hangar #mp-panel .mp-online-only { display: none; }
-body.touch-ui #mp-toggle { top: auto; bottom: max(8px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); }
-body.touch-ui #mp-panel { top: auto; bottom: calc(max(8px, env(safe-area-inset-bottom)) + 40px); left: 50%; transform: translateX(-50%); max-height: 60dvh; }
+/* Above the touch layer (.touch, z 10): the joystick zones span the bottom of the screen. */
+body.touch-ui #mp-toggle { top: auto; bottom: max(8px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); z-index: 12; touch-action: manipulation; }
+body.touch-ui #mp-panel { top: auto; bottom: calc(max(8px, env(safe-area-inset-bottom)) + 40px); left: 50%; transform: translateX(-50%); max-height: 60dvh; z-index: 12; }
+
+/* --- Architecture debug panel (explorer and in-game inspector, K) --- */
+#arch-panel {
+  position: fixed; top: 12px; right: 12px; width: 360px; max-height: calc(100vh - 24px); overflow: auto;
+  z-index: 40; font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace; color: #cfe6ff;
+  background: rgba(3, 10, 30, 0.88); border: 1px solid rgba(54, 226, 255, 0.35); padding: 0;
+}
+#arch-panel.hidden { display: none; }
+#arch-panel .arch-tabs { display: flex; gap: 2px; position: sticky; top: 0; background: rgba(3, 10, 30, 0.96); padding: 6px; border-bottom: 1px solid rgba(54, 226, 255, 0.25); }
+#arch-panel .arch-tabs button { flex: 1; background: transparent; color: #8fb6e8; border: 1px solid rgba(54, 226, 255, 0.25); padding: 4px 6px; cursor: pointer; font: inherit; }
+#arch-panel .arch-tabs button.on { color: #02050d; background: #36e2ff; }
+#arch-panel .arch-tabs .arch-close { flex: 0 0 auto; }
+#arch-panel .arch-body { padding: 6px 10px 12px; }
+#arch-panel h4 { margin: 10px 0 4px; color: #36e2ff; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 11px; }
+#arch-panel .arch-kv { width: 100%; border-collapse: collapse; }
+#arch-panel .arch-kv td { vertical-align: top; padding: 1px 4px 1px 0; }
+#arch-panel .arch-kv td:first-child { color: #6f8fbf; white-space: nowrap; width: 1%; }
+#arch-panel .arch-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+#arch-panel .arch-row label { display: flex; gap: 4px; align-items: center; }
+#arch-panel select, #arch-panel input[type=number] { background: #061230; color: #cfe6ff; border: 1px solid rgba(54, 226, 255, 0.3); font: inherit; max-width: 150px; }
+#arch-panel input[type=number] { width: 90px; }
+#arch-panel button { background: #061230; color: #cfe6ff; border: 1px solid rgba(54, 226, 255, 0.35); padding: 3px 8px; cursor: pointer; font: inherit; }
+#arch-panel button.on { background: #36e2ff; color: #02050d; }
+#arch-panel .arch-slider { display: grid; grid-template-columns: 1fr 120px 44px; gap: 6px; align-items: center; margin: 2px 0; }
+#arch-panel .arch-slider span { text-align: right; color: #8fb6e8; }
+#arch-panel canvas#ap-map { width: 100%; image-rendering: pixelated; border: 1px solid rgba(54, 226, 255, 0.25); cursor: crosshair; }
+#arch-panel .arch-legend { display: flex; flex-wrap: wrap; gap: 2px 8px; font-size: 10px; color: #8fb6e8; }
+#arch-panel .arch-legend i { display: inline-block; width: 9px; height: 9px; margin-right: 3px; vertical-align: -1px; }
+#arch-panel .arch-checks { margin: 0; padding-left: 18px; }
+#arch-panel .arch-checks li { margin: 2px 0; }
+#arch-panel .arch-checks span { color: #8fb6e8; }
+#arch-panel .ok { color: #36ff8a; }
+#arch-panel .bad { color: #ff5a3a; }
+#arch-panel .arch-hint { color: #8fb6e8; margin: 4px 0; }
+#arch-panel .arch-roles b { display: inline-block; min-width: 72px; }
+#arch-panel .role-structure { color: #36e2ff; } #arch-panel .role-data { color: #2f74ff; } #arch-panel .role-energy { color: #eaf6ff; }
+#arch-panel .role-entrance { color: #ffb347; } #arch-panel .role-process { color: #ff7a1a; } #arch-panel .role-warning { color: #ff2a1a; }
+@media (max-width: 700px) {
+  #arch-panel { top: auto; bottom: 0; right: 0; left: 0; width: auto; max-height: 55vh; }
+}

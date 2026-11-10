@@ -1,6 +1,7 @@
 import { CITY, COAST, isSea, TOWN, wrapCoord, type LandingSite } from '../sim/layout.ts';
 import { terrainHeight } from '../sim/terrain.ts';
 import { obstacleTop } from './structures.ts';
+import { roadSpots } from '../sim/roads.ts';
 
 /**
  * Where a craft can be spawned: any runway (its threshold, facing down the strip), any helipad
@@ -81,4 +82,24 @@ export function nearestStreetPoint(x: number, z: number): SpawnPoint | null {
   const best = candidates.find((c) => streetClear(c.x, c.z, c.axis));
   if (!best) return null; // nothing clear nearby: the caller falls back to the runway
   return { x: best.x, y: terrainHeight(best.x, best.z), z: best.z, yaw: best.yaw };
+}
+
+/**
+ * The nearest clear point on the road network (a segment the flight computer can route on) to
+ * (x, z), facing along the road: where ground vehicles start. Null if none within six blocks.
+ */
+export function nearestRoadPoint(x: number, z: number): SpawnPoint | null {
+  if (!Number.isFinite(x + z)) { x = 0; z = 0; }
+  if (isSea(x)) {
+    const into = wrapCoord(x - COAST.x);
+    x = into < COAST.width / 2 ? x - into - 60 : x + (COAST.width - into) + 60;
+  }
+  for (const [px, pz, yaw] of roadSpots(x, z)) {
+    // Drive on the right: the lane right of the centreline for the facing (yaw 0 faces -Z).
+    const lane = 6;
+    const lx = yaw === 0 ? px + lane : px, lz = yaw === 0 ? pz : pz - lane;
+    if (!streetClear(lx, lz, yaw === 0 ? 'z' : 'x')) continue;
+    return { x: lx, y: terrainHeight(lx, lz), z: lz, yaw };
+  }
+  return null;
 }

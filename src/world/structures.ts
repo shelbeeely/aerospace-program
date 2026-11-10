@@ -2,9 +2,9 @@ import { CITY } from '../sim/layout.ts';
 import { TUNING } from '../tuning.ts';
 import { airportPlan } from './Airport.ts';
 import { cityPlan, type CityPlan } from './City.ts';
-import { terrainHeight } from '../sim/terrain.ts';
-import { planetObstacleTop } from './planetCity.ts';
+import { terrainTop } from '../sim/terrain.ts';
 import { KIT, kitBlockFactor, kitSolid, rotate, rotatedGrid, unrotate } from './kit.ts';
+import { planetObstacleTop } from './planetCity.ts';
 
 /**
  * Every solid, destructible structure in the world (city towers, raised highways, airport
@@ -23,8 +23,10 @@ export interface Structure {
   color: string;
   windows: boolean;
   group: number;
-  /** Drawn by StructuresView (false: a kit tower's collider box; the real model is drawn instead). */
+  /** Drawn by StructuresView (false: a collider of a procedural structure, drawn by the architecture renderer). */
   render?: boolean;
+  /** Procedural structure (or infrastructure item) id. */
+  arch?: string;
 }
 
 export interface StructureGroup {
@@ -42,6 +44,8 @@ export interface StructureGroup {
   x0: number;
   z0: number;
   size: [number, number, number];
+  /** Procedural structure id (src/arch), for the renderer to hide it while fractured. */
+  arch?: string;
   /** Imported kit tower: its voxel grid is the block grid (merged k×k×k). x, z: its centre. */
   kit?: { index: number; type: number; rot: number; scale: number; k: number; x: number; z: number };
 }
@@ -53,7 +57,7 @@ export interface Structures {
 
 let cached: Structures | null = null;
 
-/** The hand-built central Grid: its city, airport and kit towers. */
+/** The planned centre: its procedural architecture and the airport. */
 export function worldStructures(): Structures {
   return (cached ??= planStructures(cityPlan(), true));
 }
@@ -75,11 +79,12 @@ export function planStructures(city: CityPlan, withAirport: boolean, prefix = ''
     }
     return g;
   };
-  city.pieces.forEach((p, i) => {
-    const color = CITY.colors[p.color];
-    const g = groupFor(p.building >= 0 ? `city:${p.building}` : `highway:${i}`, color);
+  city.pieces.forEach((p) => {
+    const color = CITY.colors[p.color] ?? CITY.colors[0];
+    const g = groupFor(`arch:${p.arch}`, color);
+    g.arch = p.arch;
     g.pieces.push(list.length);
-    list.push({ shape: p.shape, x: p.x, y: p.y, z: p.z, sx: p.sx, sy: p.sy, sz: p.sz, taper: p.taper, color, windows: p.windows, group: g.id });
+    list.push({ shape: p.shape, x: p.x, y: p.y, z: p.z, sx: p.sx, sy: p.sy, sz: p.sz, taper: p.taper, color, windows: false, group: g.id, render: false, arch: p.arch });
   });
   if (withAirport) for (const p of airportPlan().pieces) {
     if (!p.solid) continue;
@@ -90,7 +95,7 @@ export function planStructures(city: CityPlan, withAirport: boolean, prefix = ''
   // Imported kit towers: collider boxes from their voxel grids, rotated and scaled.
   city.kit.forEach((inst, index) => {
     const t = KIT[inst.type];
-    const g = groupFor(`kit:${index}`, '#00eaff');
+    const g = groupFor(`kit:${index}`, '#36e2ff');
     const k = kitBlockFactor(t, TUNING.maxFractureBlocks);
     const [Wr, Hr, Dr] = rotatedGrid(t, inst.rot);
     const c = t.cell * inst.scale;
@@ -108,7 +113,7 @@ export function planStructures(city: CityPlan, withAirport: boolean, prefix = ''
       g.pieces.push(list.length);
       list.push({
         shape: 'box', x: x0 + ((rx0 + rx1) / 2) * c, y: ((by0 + by1) / 2) * c, z: z0 + ((rz0 + rz1) / 2) * c,
-        sx: (rx1 - rx0) * c, sy: (by1 - by0) * c, sz: (rz1 - rz0) * c, color: '#00eaff', windows: false, group: g.id, render: false,
+        sx: (rx1 - rx0) * c, sy: (by1 - by0) * c, sz: (rz1 - rz0) * c, color: '#36e2ff', windows: false, group: g.id, render: false,
       });
     }
   });
@@ -166,7 +171,7 @@ export function structureMask(g: StructureGroup, list: readonly Structure[]): (x
   };
 }
 
-/** Height map (m) of everything standing, in 20 m cells (kit towers included). */
+/** Height map (m) of everything standing, in 20 m cells (terrain overhangs included). */
 let heights: { cell: number; map: Map<string, number> } | null = null;
 export function obstacleTop(x: number, z: number): number {
   if (!heights) {
@@ -183,5 +188,5 @@ export function obstacleTop(x: number, z: number): number {
     heights = { cell, map };
   }
   const central = heights.map.get(`${Math.floor(x / heights.cell)},${Math.floor(z / heights.cell)}`) ?? 0;
-  return Math.max(central, planetObstacleTop(x, z), terrainHeight(x, z));
+  return Math.max(central, planetObstacleTop(x, z), terrainTop(x, z));
 }

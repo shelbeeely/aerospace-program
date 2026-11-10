@@ -2,6 +2,7 @@ import {
   AIRPLANE_MODES,
   MODE_LABELS,
   ROTORCRAFT_MODES,
+  GROUND_MODES,
   type AutopilotKind,
   type AutopilotMode,
   type AutopilotOptions,
@@ -146,7 +147,7 @@ export class AutopilotPanel {
     const kind = this.hooks.kind();
     this.kind = kind ?? 'airplane';
     const st = this.hooks.autopilot.state;
-    const modes = this.kind === 'airplane' ? AIRPLANE_MODES : ROTORCRAFT_MODES;
+    const modes = modesFor(this.kind);
     this.mode = st.engaged && modes.includes(st.mode) ? st.mode : this.mode;
     if (!modes.includes(this.mode)) this.mode = 'hold';
     this.prefill(st);
@@ -167,7 +168,7 @@ export class AutopilotPanel {
     const grounded = t.onGround || t.altitude < 5;
     const hdg = st.engaged ? st.heading : t.heading;
     const alt = st.engaged ? st.altitude : grounded ? (air ? 300 : 30) : Math.max(air ? 60 : 10, Math.round(t.altitude / 10) * 10);
-    const spd = st.engaged ? st.speed : air ? Math.max(40, t.airspeed) : 15;
+    const spd = st.engaged ? st.speed : air ? Math.max(40, t.airspeed) : this.kind === 'ground' ? 20 : 15;
     this.inputs.heading.value = String(Math.round(hdg) % 360);
     this.inputs.altitude.value = String(Math.round(alt));
     this.inputs.speed.value = String(Math.round(air ? spd * MS_TO_KT : spd));
@@ -211,12 +212,12 @@ export class AutopilotPanel {
   }
 
   private renderModes(): void {
-    const modes = this.kind === 'airplane' ? AIRPLANE_MODES : ROTORCRAFT_MODES;
+    const modes = modesFor(this.kind);
     this.modeBar.replaceChildren(
       ...modes.map((m) => {
         const b = document.createElement('button');
         b.type = 'button';
-        b.textContent = MODE_LABELS[m];
+        b.textContent = this.kind === 'ground' && m === 'hold' ? 'Stop' : MODE_LABELS[m];
         b.className = m === this.mode ? 'active' : '';
         b.setAttribute('aria-pressed', String(m === this.mode));
         b.addEventListener('click', () => {
@@ -226,9 +227,12 @@ export class AutopilotPanel {
         return b;
       }),
     );
-    const show = new Set(FIELDS[this.mode].filter((f) => this.kind === 'airplane' || (f !== 'vs' && f !== 'orbit')));
+    const ground = this.kind === 'ground';
+    const show = new Set(FIELDS[this.mode].filter((f) => ground ? f === 'destination' || (f === 'speed' && this.mode === 'goto') : this.kind === 'airplane' || (f !== 'vs' && f !== 'orbit')));
     for (const f of Object.keys(this.rows) as Field[]) this.rows[f].classList.toggle('hidden', !show.has(f));
-    this.hint.textContent = HINTS[this.mode];
+    this.hint.textContent = ground
+      ? this.mode === 'goto' ? 'Drives to the destination on the road network (streets, data highways, Outlands highways). Throttle sets the cruise speed; steer or brake to take over.' : 'Stops and holds the brakes.'
+      : HINTS[this.mode];
     this.fillDestinations(null);
   }
 
@@ -293,4 +297,8 @@ export class AutopilotPanel {
     }
     this.guidance.replaceChildren(table);
   }
+}
+
+function modesFor(kind: AutopilotKind): readonly AutopilotMode[] {
+  return kind === 'airplane' ? AIRPLANE_MODES : kind === 'ground' ? GROUND_MODES : ROTORCRAFT_MODES;
 }

@@ -33,18 +33,22 @@ import {
 } from './nav.ts';
 import type { Telemetry } from './telemetry.ts';
 import { terrainHeight } from './terrain.ts';
+import { GroundDriver } from './groundPilot.ts';
 
-export type AutopilotKind = 'airplane' | 'rotorcraft';
+export type AutopilotKind = 'airplane' | 'rotorcraft' | 'ground';
 export type AutopilotMode = 'hold' | 'takeoff' | 'land' | 'goto' | 'orbit' | 'level';
 export type AutopilotPhase =
   | 'hold' | 'takeoff' | 'climb' | 'cruise' | 'orbit' | 'level'
   | 'join' | 'final' | 'flare' | 'rollout'
   | 'transit' | 'approach' | 'descend'
-  | 'landed';
+  | 'landed'
+  | 'drive' | 'arrived' | 'parked';
 
 /** Airplane modes in panel order, and the rotorcraft subset. */
 export const AIRPLANE_MODES: readonly AutopilotMode[] = ['hold', 'takeoff', 'land', 'goto', 'orbit', 'level'];
 export const ROTORCRAFT_MODES: readonly AutopilotMode[] = ['hold', 'takeoff', 'goto', 'land'];
+/** Ground vehicles: stop and hold, or drive to a destination on the road network. */
+export const GROUND_MODES: readonly AutopilotMode[] = ['hold', 'goto'];
 export const MODE_LABELS: Record<AutopilotMode, string> = { hold: 'Hold', takeoff: 'Takeoff', land: 'Land', goto: 'Go to', orbit: 'Orbit', level: 'Level' };
 
 /** Approach guidance while landing (and distance/ETA while going somewhere). */
@@ -156,6 +160,8 @@ export class FlightAutopilot implements ControlSource {
   private padHeading = 0;
   /** Fractured structure groups (rooftop pads on them are unusable). */
   fractured: { has(group: number): boolean } | null = null;
+  /** Ground vehicles: the road driver (route, lane following, speed). */
+  readonly driver = new GroundDriver();
   /** Called when the autopilot disengages itself (to sync the human throttle lever). */
   onDisengage: ((throttle: number) => void) | null = null;
 
@@ -188,6 +194,27 @@ export class FlightAutopilot implements ControlSource {
     if (kind === 'rotorcraft' && (s.mode === 'orbit' || s.mode === 'level')) s.mode = 'hold';
     s.heading = wrap360(opts.heading ?? t.heading);
     const grounded = t.onGround || t.altitude < 5;
+    if (kind === 'ground') {
+      if (s.mode !== 'goto') s.mode = 'hold';
+      s.speed = clamp(opts.speed ?? 20, 3, 60);
+      if (opts.destination !== undefined) s.destination = opts.destination;
+      s.guidance = null;
+      s.notice = '';
+      this.dest = null;
+      if (s.mode === 'goto') {
+        const d = s.destination ? findDestination(s.destination) : undefined;
+        if (!d) {
+          s.mode = 'hold';
+          s.notice = 'Go to: no destination selected';
+        } else if (!this.driver.plan(t.position[0], t.position[2], d.x, d.z)) {
+          s.mode = 'hold';
+          s.notice = `No road reaches ${d.name}`;
+        } else this.dest = d;
+      }
+      s.phase = s.mode === 'goto' ? 'drive' : 'parked';
+      s.status = s.mode === 'goto' && this.dest ? `Driving to ${this.dest.name}: ${km(this.driver.length)} by road` : 'Stopped, brakes on';
+      return;
+    }
     if (kind === 'airplane') {
       s.altitude = opts.altitude ?? (grounded ? 300 : Math.max(60, Math.round(t.altitude / 10) * 10));
       s.speed = opts.speed ?? Math.max(40, Math.round(t.airspeed));
@@ -329,6 +356,11 @@ export class FlightAutopilot implements ControlSource {
       this.lastHumanThrottle = human.throttle;
       return human;
     }
+    if (s.kind === 'ground') {
+      const out = this.flyGround(dt, t, human);
+      this.lastOutput = out;
+      return out;
+    }
     if (t.onGround && human.brake > 0.5 && s.phase !== 'landed') {
       this.disengage();
       return human;
@@ -354,6 +386,39 @@ export class FlightAutopilot implements ControlSource {
     else out = this.flyRotorcraft(dt, t);
     this.lastOutput = out;
     return out;
+  }
+
+  // ---------------------------------------------------------------- ground
+
+  /** Drive a ground vehicle: Go to follows the road route; Hold stops and keeps the brakes on. */
+  private flyGround(dt: number, t: Telemetry, human: ControlInputs): ControlInputs {
+    const s = this.state;
+    // The human takes over by steering hard or braking.
+    if (Math.abs(human.yaw) > 0.6 || human.brake > 0.5) {
+      this.disengage();
+      return human;
+    }
+    const dThr = human.throttle - this.lastHumanThrottle;
+    this.lastHumanThrottle = human.throttle;
+    s.speed = clamp(s.speed + dThr * 40, 3, 60);
+    if (s.mode !== 'goto' || !this.dest) {
+      s.phase = 'parked';
+      s.guidance = null;
+      return { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 };
+    }
+    const { controls, status } = this.driver.drive(dt, t, s.speed);
+    s.guidance = {
+      distance: status.remaining, glideslopeDev: null, localizerDev: null, targetSpeed: status.target,
+      eta: status.remaining / Math.max(3, t.groundSpeed), siteName: this.dest.name,
+    };
+    if (status.arrived) {
+      s.phase = 'arrived';
+      s.status = this.driver.endsAtRoad ? `Arrived at the road nearest ${this.dest.name}` : `Arrived at ${this.dest.name}`;
+    } else {
+      s.phase = 'drive';
+      s.status = status.stuck ? `Stuck: ${km(status.remaining)} to ${this.dest.name}. Steer or reverse out, then re-engage` : `Driving to ${this.dest.name}: ${km(status.remaining)} by road`;
+    }
+    return controls;
   }
 
   // ---------------------------------------------------------------- airplane

@@ -1,35 +1,22 @@
-import { CITY, COAST, hash01, heightCap, heightCapRect, isSea, PLANET, PLANET_HUBS, wrapCoord } from '../sim/layout.ts';
-import { nearWasteland, wastelandByte } from '../sim/terrain.ts';
-import { makeTowerBuilder, mulberry32, type CityPlan } from './City.ts';
-import { KIT } from './kit.ts';
+import { districtPlan, joined, lotAt } from '../arch/DistrictGenerator.ts';
+import { blockArchetype, nearWasteland, wastelandByte } from '../arch/DigitalTerrainGenerator.ts';
+import { GRID, isCentralBlock } from '../arch/grid.ts';
+import { CITY_REGIONS, intensityAt, TERRAIN_ARCHETYPES } from '../arch/WorldRegionManager.ts';
+import { onWorldReset } from '../arch/world.ts';
+import { CITY, hash01, heightCap, isSea, PLANET } from '../sim/layout.ts';
+import { appendDistrict, emptyPlan, type CityPlan } from './City.ts';
+import { connectRoads } from '../sim/roadRules.ts';
 import { planStructures, type Structures } from './structures.ts';
 
-/**
- * The rest of the planet: one seamless street grid (370 blocks around, see CITY.block) cut into
- * 37 × 37 chunks of 10 × 10 blocks. Each chunk's towers are generated on demand from its own
- * seed with the same rules as the hand-built centre (hub skyline, kit towers, zoning around
- * airfields and pads), so the city goes all the way around. The centre's blocks and the ocean
- * are skipped. Chunks are canonical in [x0, x0 + C); users add a whole-circumference image
- * offset to bring a chunk next to the viewer.
- */
-export const GRID = (() => {
-  const pitch = CITY.block + CITY.street;
-  const blocks = Math.round(PLANET.circumference / pitch); // 370
-  const chunkBlocks = 10;
-  return {
-    pitch,
-    blocks,
-    chunkBlocks,
-    chunks: blocks / chunkBlocks,
-    chunkSize: pitch * chunkBlocks,
-    x0: CITY.x0,
-    z0: CITY.z0,
-    /** Blocks the centre covers (from x0, z0): the same count buildCity uses. */
-    centralX: Math.floor((CITY.x1 - CITY.x0) / pitch),
-    centralZ: Math.floor((CITY.z1 - CITY.z0) / pitch),
-  };
-})();
+export { GRID, isCentralBlock };
 
+/**
+ * The planet beyond the planned centre: one district per chunk (10 × 10 blocks), generated on
+ * demand by the architecture system (src/arch/DistrictGenerator.ts) and turned into collider
+ * pieces here, so physics, zoning, traffic and the renderer all see the same structures. The
+ * centre's blocks and the ocean are skipped. Chunks are canonical in [x0, x0 + C); users add a
+ * whole-circumference image offset to bring a chunk next to the viewer.
+ */
 const C = PLANET.circumference;
 const mod = (v: number, m: number) => ((v % m) + m) % m;
 
@@ -58,26 +45,13 @@ export function imageOffset(c: number, near: number): number {
 
 /** Skyline height (m) and hub core (0..1) at a point: tallest hub influence over the base. */
 export function skyline(x: number, z: number, base: number): { h: number; core: number } {
-  let h = base;
-  let core = 0;
-  for (const hub of [...CITY.hubs, ...PLANET_HUBS]) {
-    const dx = wrapCoord(x - hub.x), dz = wrapCoord(z - hub.z);
-    const d2 = (dx * dx + dz * dz) / (hub.r * hub.r);
-    if (d2 > 9) continue;
-    const k = Math.exp(-d2);
-    h = Math.max(h, hub.h * k ** 1.3);
-    core = Math.max(core, k);
-  }
-  return { h, core };
-}
-
-/** Is block (gi, gj) one the hand-built centre already fills? */
-export function isCentralBlock(gi: number, gj: number): boolean {
-  return mod(gi, GRID.blocks) < GRID.centralX && mod(gj, GRID.blocks) < GRID.centralZ;
+  const { core, peak } = intensityAt(x, z);
+  return { h: Math.max(base, peak * core ** 1.3), core };
 }
 
 const cache = new Map<string, PlanetChunk>();
 const MAX_CACHED = 400;
+onWorldReset(() => { cache.clear(); summaryCache = null; styleCache = null; });
 
 /** The chunk (generated once, then cached; oldest entries are dropped past MAX_CACHED). */
 export function planetChunk(ci: number, cj: number): PlanetChunk {
@@ -87,62 +61,16 @@ export function planetChunk(ci: number, cj: number): PlanetChunk {
   let c = cache.get(key);
   if (c) {
     cache.delete(key);
-    cache.set(key, c); // most recently used last
+    cache.set(key, c);
     return c;
   }
-  c = generate(ci, cj, key);
+  const d = districtPlan(ci, cj);
+  const plan = emptyPlan(d.x, d.x + GRID.chunkSize, d.z, d.z + GRID.chunkSize);
+  appendDistrict(plan, d, false);
+  c = { ci, cj, key, x: d.x, z: d.z, plan, structures: planStructures(plan, false, `p${key}:`) };
   cache.set(key, c);
   if (cache.size > MAX_CACHED) cache.delete(cache.keys().next().value!);
   return c;
-}
-
-function generate(ci: number, cj: number, key: string): PlanetChunk {
-  const def = CITY;
-  const rnd = mulberry32((def.seed * 7919) ^ (ci * 73856093) ^ (cj * 19349663));
-  const x = GRID.x0 + ci * GRID.chunkSize;
-  const z = GRID.z0 + cj * GRID.chunkSize;
-  const plan: CityPlan = {
-    pieces: [], buildings: [], spires: [], rings: [], beacons: [], roads: [], kit: [],
-    x0: x, x1: x + GRID.chunkSize, z0: z, z1: z + GRID.chunkSize, pitch: GRID.pitch,
-  };
-  const pickColor = () => Math.floor(rnd() * def.colors.length);
-  const addTower = makeTowerBuilder(plan, rnd, pickColor);
-  for (let bi = 0; bi < GRID.chunkBlocks; bi++) {
-    for (let bj = 0; bj < GRID.chunkBlocks; bj++) {
-      const gi = ci * GRID.chunkBlocks + bi;
-      const gj = cj * GRID.chunkBlocks + bj;
-      if (isCentralBlock(gi, gj) || nearWasteland(gi, gj)) continue;
-      const xa = x + bi * GRID.pitch + def.street / 2;
-      const za = z + bj * GRID.pitch + def.street / 2;
-      const xb = xa + def.block, zb = za + def.block;
-      if (isSea(xa) || isSea(xb)) continue;
-      const cap = heightCapRect(xa, za, xb, zb);
-      if (cap < def.minHeight) continue;
-      const cx = (xa + xb) / 2, cz = (za + zb) / 2;
-      // Dense: a slightly taller base than the centre and fewer empty plazas.
-      const { h: sky, core } = skyline(cx, cz, 26 * (0.6 + rnd() * 0.9));
-      if (rnd() < 0.03 + 0.05 * (1 - core)) continue;
-      if (rnd() < (core > 0.6 ? def.kitCoreFraction : def.kitFraction) && cap > 45) {
-        const type = Math.floor(rnd() * KIT.length);
-        const t = KIT[type];
-        const rot = Math.floor(rnd() * 4);
-        const want = Math.min(cap * 0.96, Math.max(45, sky * (0.8 + rnd() * 0.5)));
-        const scale = Math.min(want / t.size[1], 96 / Math.max(t.size[0], t.size[2]));
-        plan.kit.push({ type, x: cx, z: cz, scale, rot });
-        continue;
-      }
-      const tall = Math.min(cap, sky);
-      if (core > 0.7 || rnd() < 0.5) {
-        addTower(cx, cz, 34 + rnd() * 30, Math.max(def.minHeight, Math.min(cap, tall * (0.6 + rnd() * 0.6))));
-      } else {
-        for (const [ox, oz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
-          if (rnd() < 0.15) continue;
-          addTower(cx + ox * 27, cz + oz * 27, 18 + rnd() * 16, Math.max(def.minHeight, Math.min(cap, tall * (0.3 + rnd() * 0.5))));
-        }
-      }
-    }
-  }
-  return { ci, cj, key, x, z, plan, structures: planStructures(plan, false, `p${key}:`) };
 }
 
 /** Tallest structure top (m) at (x, z) in the planet city (0 if none), from the chunk's height map. */
@@ -162,19 +90,23 @@ export function planetObstacleTop(x: number, z: number): number {
     }
     c.heights = map;
   }
-  // Into the chunk's canonical frame.
   const cxw = c.x + mod(x - c.x, C), czw = c.z + mod(z - c.z, C);
   return c.heights.get(`${Math.floor(cxw / cell)},${Math.floor(czw / cell)}`) ?? 0;
 }
 
+/** Block kinds in the summary's blue channel. */
+export const BLOCK_KIND = { lot: 0, plain: 32, outlands: 64, open: 128, airfield: 192, sea: 255 } as const;
+
 /**
- * Far-LOD summary of every block on the planet (no geometry): RGBA per block, R = skyline
- * height / 400, G = colour index, B = kind (0 city, 64 Outlands, 128 open/zoned, 192 airfield,
- * 255 sea), A = Outlands mask.
- * Drawn by the ground shader as city lights beyond the box LOD, and seen from orbit.
+ * Per-block summary of the whole planet (no geometry), RGBA per block:
+ * R = monumentality (skyline height / 400), G = region index (low 4 bits) | 16 connector road on
+ * its -z edge | 32 connector road on its -x edge | 64 if the block's lot continues to +x (no
+ * street on that side) | 128 if it continues to +z (see sim/roadRules.ts),
+ * B = kind (BLOCK_KIND), A = Outlands mask. Read by the ground shader (streets, plains,
+ * substrate, far LOD) and by traffic (which segments exist).
  */
 export function blockSummary(): Uint8Array {
-  return (summaryCache ??= buildSummary()); // shared by the ground shader and the traffic (read-only)
+  return (summaryCache ??= buildSummary());
 }
 let summaryCache: Uint8Array | null = null;
 
@@ -182,25 +114,62 @@ function buildSummary(): Uint8Array {
   const n = GRID.blocks;
   const out = new Uint8Array(n * n * 4);
   for (let gj = 0; gj < n; gj++) for (let gi = 0; gi < n; gi++) {
-    const xa = GRID.x0 + gi * GRID.pitch + CITY.street / 2;
-    const za = GRID.z0 + gj * GRID.pitch + CITY.street / 2;
-    const cx = xa + CITY.block / 2, cz = za + CITY.block / 2;
+    const cx = GRID.x0 + (gi + 0.5) * GRID.pitch, cz = GRID.z0 + (gj + 0.5) * GRID.pitch;
     const o = (gj * n + gi) * 4;
-    let kind = 0;
     const waste = wastelandByte(gi, gj);
-    if (isSea(cx)) kind = 255;
-    else if (waste > 0 || nearWasteland(gi, gj)) kind = 64;
-    else {
-      const cap = heightCap(cx, cz);
-      if (cap === 0) kind = 192;
-      else if (cap < CITY.minHeight || hash01(gi, gj, 7) < 0.06) kind = 128;
+    let kind: number = BLOCK_KIND.lot;
+    let region = 0;
+    if (isSea(cx)) kind = BLOCK_KIND.sea;
+    else if (waste > 0 || nearWasteland(gi, gj)) {
+      kind = BLOCK_KIND.outlands;
+      region = TERRAIN_ARCHETYPES.indexOf(blockArchetype(gi, gj).primary);
+    } else {
+      const lot = lotAt(gi, gj);
+      if (lot) {
+        region = Math.max(0, CITY_REGIONS.indexOf(lot.region as never));
+        if (lot.kind === 'open' && lot.region === 'plains') kind = BLOCK_KIND.plain;
+      } else kind = heightCap(cx, cz) === 0 ? BLOCK_KIND.airfield : BLOCK_KIND.open;
     }
-    const { h } = skyline(cx, cz, 26 * (0.6 + hash01(gi, gj, 8) * 0.9));
-    out[o] = Math.min(255, Math.round((Math.min(h, 400) / 400) * 255));
-    out[o + 1] = Math.floor(hash01(gi, gj, 9) * CITY.colors.length);
+    const { core, peak } = intensityAt(cx, cz);
+    out[o] = Math.min(255, Math.round((Math.min(400, peak * core) / 400) * 255));
+    out[o + 1] = region | (kind === BLOCK_KIND.lot && joined(gi, gj, true) ? 64 : 0) | (kind === BLOCK_KIND.lot && joined(gi, gj, false) ? 128 : 0);
     out[o + 2] = kind;
-    out[o + 3] = waste; // Outlands mask: the terrain shader blends it exactly like terrain.ts
+    out[o + 3] = waste;
   }
-  void COAST;
+  // Every road on one network (AGENTS.md §14): islands of streets are
+  // linked by connector roads, unlinkable fragments removed, before anyone reads the summary.
+  roadStats = connectRoads(out);
+  void hash01;
+  void CITY;
+  return out;
+}
+
+/** What the road connection pass did (debug, tests). */
+export let roadStats: ReturnType<typeof connectRoads> | null = null;
+
+/**
+ * Ground style weights per block (RGBA, linearly filtered by the ground shader so styles blend):
+ * R = grid plains / open plain, G = Sea of Simulation, B = canyons and caverns (dark), A = wasteland.
+ */
+export function terrainStyleSummary(): Uint8Array {
+  return (styleCache ??= buildStyles());
+}
+let styleCache: Uint8Array | null = null;
+
+function buildStyles(): Uint8Array {
+  const n = GRID.blocks;
+  const s = blockSummary();
+  const out = new Uint8Array(n * n * 4);
+  const ch: Record<string, number> = { 'grid-plains': 0, sea: 1, canyons: 2, 'mech-caverns': 2, wasteland: 3 };
+  for (let k = 0; k < n * n; k++) {
+    const kind = s[k * 4 + 2];
+    if (kind === BLOCK_KIND.plain) { out[k * 4] = 255; continue; }
+    if (kind !== BLOCK_KIND.outlands) continue;
+    const gi = k % n, gj = Math.floor(k / n);
+    const a = blockArchetype(gi, gj);
+    const m = s[k * 4 + 3] / 255;
+    out[k * 4 + ch[a.primary]] += Math.round(255 * (1 - a.blend) * Math.max(0.35, m));
+    out[k * 4 + ch[a.secondary]] = Math.min(255, out[k * 4 + ch[a.secondary]] + Math.round(255 * a.blend * Math.max(0.35, m)));
+  }
   return out;
 }

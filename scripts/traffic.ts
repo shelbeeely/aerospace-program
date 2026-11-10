@@ -122,7 +122,8 @@ const roadKind = (k: number) => k === 0 || k === 128;
 /** An intersection (i, j) with streets every way, and the blocks north of it too. */
 function openNode(x: number, z: number): [number, number] {
   const i0 = nearestLine(x, GRID.x0), j0 = nearestLine(z, GRID.z0);
-  for (let r = 0; r < 20; r++) for (let a = -r; a <= r; a++) for (let b = -r; b <= r; b++) {
+  for (let r = 0; r < 60; r++) for (let a = -r; a <= r; a++) for (let b = -r; b <= r; b++) {
+    if (Math.max(Math.abs(a), Math.abs(b)) !== r) continue;
     const i = i0 + a, j = j0 + b;
     const all = (ii: number, jj: number) => ([0, 1, 2, 3] as Heading[]).every((h) => exitOpen(ii, jj, h));
     if (all(i, j) && all(i, j + 1) && all(i - 1, j) && all(i + 1, j)) return [i, j];

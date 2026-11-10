@@ -27,11 +27,13 @@ import { TownView } from './render/TownView.ts';
 import { FireView } from './render/FireView.ts';
 import { LightningView } from './render/LightningView.ts';
 import { WeatherView } from './render/WeatherView.ts';
-import { CityView } from './render/CityView.ts';
 import { AirportView } from './render/AirportView.ts';
-import { KitTowersView } from './render/KitTowersView.ts';
 import { LandingSitesView } from './render/LandingSitesView.ts';
-import { PlanetCityView } from './render/PlanetCityView.ts';
+import { DESKTOP_RANGES, DigitalWorldView, MOBILE_RANGES } from './render/arch/DigitalWorldView.ts';
+import { TerrainView } from './render/arch/TerrainView.ts';
+import { KitTowersView } from './render/KitTowersView.ts';
+import { InfrastructureView } from './render/arch/InfrastructureView.ts';
+import { ArchitectureInspector } from './ui/ArchitectureInspector.ts';
 import { GLOBE_VIEW } from './render/cityGround.ts';
 import { TrailView } from './render/TrailView.ts';
 import { TrafficView } from './render/TrafficView.ts';
@@ -155,11 +157,26 @@ async function start() {
   const debug = new DebugOverlay(scene, craftView.root);
   const debrisView = new DebrisView(scene);
   const townView = new TownView(scene, sim.town);
-  const cityView = new CityView(scene, sim.staticWorld);
-  const airportView = new AirportView(scene);
+  // The digital world: procedural architecture (src/arch) streamed by district, the Outlands'
+  // landforms, and the Solar Sailer routes.
+  const archView = new DigitalWorldView(scene, sim.staticWorld, mobile ? MOBILE_RANGES : DESKTOP_RANGES);
+  const terrainView = new TerrainView(scene, mobile ? MOBILE_RANGES : DESKTOP_RANGES);
+  const routeView = new InfrastructureView(scene);
+  worldView.weatherDriven = true;
+  // The imported kit towers ("Tron Buildings 1"): the centre's, plus those of registered planet chunks.
   const kitView = new KitTowersView(scene, sim.staticWorld, import.meta.env.BASE_URL);
+  let kitContent = -1;
+  const updateKits = () => {
+    if (sim.staticWorld.contentVersion !== kitContent) {
+      kitContent = sim.staticWorld.contentVersion;
+      const groups = [];
+      for (const c of sim.staticWorld.outerChunks.values()) for (let g = c.groupStart; g < c.groupEnd; g++) if (sim.staticWorld.structures.groups[g].kit) groups.push(sim.staticWorld.structures.groups[g]);
+      kitView.setOuter(groups);
+    }
+    kitView.update(camera.position);
+  };
+  const airportView = new AirportView(scene);
   const sitesView = new LandingSitesView(scene, sim.staticWorld);
-  const planetView = new PlanetCityView(scene, sim.staticWorld, kitView);
   const trailView = new TrailView(scene, sim.trails);
   const trafficView = new TrafficView(scene, sim.traffic);
   const chipsView = new ChipsView(scene, sim.chips);
@@ -187,6 +204,8 @@ async function start() {
   const hud = new Hud();
   // Multiplayer (Grid Link): inert until connected; `?room=CODE&server=ws://host:port` joins.
   const net = new NetClient({ sim, scene, mode: () => mode });
+  // K: the architecture inspector (region, district, streaming, structure under the cursor).
+  const inspector = new ArchitectureInspector({ world: archView, terrain: terrainView, routes: routeView, sky: worldView, camera, canvas, active: () => mode === 'flight' });
   const netPanel = new MultiplayerPanel(net);
 
   // --- Input. The active pilot is any ControlSource; the human is just one of them.
@@ -220,7 +239,7 @@ async function start() {
   };
   const autopilotKind = (): AutopilotKind | null => {
     const k = vehicleKind(sim);
-    return k === 'airplane' || k === 'rotorcraft' ? k : null;
+    return k === 'airplane' || k === 'rotorcraft' || k === 'ground' ? k : null;
   };
   const apPanel = new AutopilotPanel({
     autopilot,
@@ -702,6 +721,8 @@ async function start() {
         hangarFX.setQuality(q);
       },
       worldEvents: sim.atmosphere.events,
+      /** The digital world: architecture, terrain and route views, the inspector (K). */
+      arch: { world: archView, terrain: terrainView, routes: routeView, inspector, worldView },
       triggerDisaster,
       client,
       library,
@@ -842,10 +863,7 @@ async function start() {
     }
     debrisView.update(sim.debris);
     townView.update(dt);
-    cityView.update(dt);
-    kitView.update(camera.position);
     sitesView.update();
-    planetView.update(camera.position);
     trailView.update(sim.time);
     trafficView.update(sim.time);
     chipsView.update(dt);
@@ -909,9 +927,15 @@ async function start() {
       camera.updateProjectionMatrix();
     }
     if (++curvatureTick % 60 === 1) applyCurvature(scene);
-    worldView.update(camera, renderPos);
+    worldView.update(camera, renderPos, dt);
+    archView.update(camera);
+    updateKits();
+    terrainView.update(camera);
+    routeView.update(camera.position);
+    inspector.update(dt);
     // From orbit the ground draws the sea and the centre's city lights (sub-pixel towers shimmer).
-    cityView.root.visible = oceanView.root.visible = !GLOBE_VIEW.on;
+    oceanView.root.visible = !GLOBE_VIEW.on;
+    archView.enabled = terrainView.enabled = !GLOBE_VIEW.on || camera.position.y < 30000;
     airportView.update(camera, sim.atmosphere.windAt(_tmpWindPoint.set(renderPos.x, 10, renderPos.z), 0, _wind10));
     disasterView.update(sim.atmosphere.events);
     weatherView.update(dt, camera, velocity, sim.atmosphere, sim.groundWetness, sim.atmosphere.cloudAt(camera.position, 0).inCloud);

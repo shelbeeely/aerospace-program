@@ -152,7 +152,7 @@ export class Hud {
 
   /** Autopilot readout: null = off. Shows the mode and phase, plus approach guidance while landing. */
   setAutopilot(s: {
-    kind: 'airplane' | 'rotorcraft'; heading: number; altitude: number; commanded: number; speed: number;
+    kind: 'airplane' | 'rotorcraft' | 'ground'; heading: number; altitude: number; commanded: number; speed: number;
     mode?: string; phase?: string; vs?: number | null;
     guidance?: { distance: number; glideslopeDev: number | null; localizerDev: number | null; targetSpeed: number; eta: number; siteName: string } | null;
   } | null): void {

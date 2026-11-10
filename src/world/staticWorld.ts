@@ -70,7 +70,7 @@ export class StaticWorld {
     });
 
     const city = cityPlan();
-    for (const b of city.buildings) this.conductors.push({ id: `city:${b.id}`, x: b.x, y: b.top, z: b.z });
+    for (const b of city.buildings) this.conductors.push({ id: `arch:${b.arch}`, x: b.x, y: b.top, z: b.z });
     for (const s of city.spires) this.conductors.push({ id: `spire:${s.x.toFixed(0)},${s.z.toFixed(0)}`, x: s.x, y: s.y1, z: s.z });
     const airport = airportPlan();
     this.conductors.push({ id: 'airport:tower', x: airport.beacon.x, y: airport.beacon.y, z: airport.beacon.z });

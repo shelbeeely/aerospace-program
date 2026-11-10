@@ -25,8 +25,8 @@ export interface PostOptions {
   haze?: BloomSettings;
 }
 
-const DEFAULT_BLOOM: BloomSettings = { strength: 1.2, radius: 0.45, threshold: 0.6 };
-const DEFAULT_HAZE: BloomSettings = { strength: 0.6, radius: 1.0, threshold: 0.35 };
+const DEFAULT_BLOOM: BloomSettings = { strength: 0.75, radius: 0.35, threshold: 0.85 };
+const DEFAULT_HAZE: BloomSettings = { strength: 0.3, radius: 1.0, threshold: 0.6 };
 
 /** One post-processing chain for one scene + camera, rebuilt when the quality changes. */
 export class PostFX {

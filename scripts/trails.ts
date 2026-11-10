@@ -34,12 +34,16 @@ const wallLength = (sim: Simulation) => sim.trails.trails.filter((t) => t.kind =
   check(!sim.exploded && sim.failures.length === 0, 'the cycle never hits its own fresh wall');
 
   // Ride back across the wall at speed: derez.
-  const head = sim.trails.trails[0].points[Math.floor(sim.trails.trails[0].points.length / 2)];
+  const pts = sim.trails.trails[0].points;
+  const head = pts[Math.floor(pts.length / 2)];
   const b = sim.craft.body;
-  const yaw = -Math.PI / 2; // face +X, across the wall (which runs along Z)
-  b.setTranslation({ x: head.x - 25, y: 1, z: head.z }, true);
+  // Across the wall, whichever way it runs (the cycle starts on a road, facing along it).
+  const wx = pts.at(-1)!.x - pts[0].x, wz = pts.at(-1)!.z - pts[0].z, wl = Math.hypot(wx, wz);
+  const px = -wz / wl, pz = wx / wl;
+  const yaw = Math.atan2(-px, -pz); // forward (0, 0, -1) rotated onto (px, pz)
+  b.setTranslation({ x: head.x - px * 25, y: 1, z: head.z - pz * 25 }, true);
   b.setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }, true);
-  b.setLinvel({ x: 40, y: 0, z: 0 }, true);
+  b.setLinvel({ x: px * 40, y: 0, z: pz * 40 }, true);
   for (let i = 0; i < 240; i++) sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 1, brake: 0 });
   check(sim.exploded, 'riding into a jetwall at 40 m/s derezzes the cycle', `exploded ${sim.exploded}, failures ${sim.failures.length}`);
   check(sim.trails.colliderCount === 0, 'its walls stop being solid at once');

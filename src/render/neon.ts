@@ -7,24 +7,27 @@ import {
 import type { Node } from 'three/webgpu';
 
 /**
- * The 1980s neon / synthwave look shared by every view: near-black fills (they write depth, so
+ * Shared line/fill helpers for every view, in the 1982 digital-world palette (formerly the
+ * synthwave look): near-black fills (they write depth, so
  * wireframes hide behind solid objects), HDR-bright edge lines (colour × 3+ so bloom catches
  * them), anti-aliased TSL grids, and a gradient sky with a big striped sun on the horizon.
  */
 export const NEON = {
-  cyan: '#00eaff',
-  magenta: '#ff2bd6',
-  pink: '#ff4f9a',
-  purple: '#9d4dff',
-  violet: '#6a2cff',
+  // The 1982 palette (AGENTS.md §4): the old synthwave keys now map onto it, so every view
+  // (craft, trails, weather, effects) speaks the same restrained language.
+  cyan: '#36e2ff',
+  magenta: '#ff2a1a', // red: warnings, boundaries
+  pink: '#ff7a1a', // orange: active processes
+  purple: '#2f74ff', // bright blue: data
+  violet: '#1a3a9a',
   orange: '#ff8a1f',
-  yellow: '#ffd23f',
-  green: '#3dffb0',
-  /** Fill for solid objects: reads as black but keeps a hint of indigo. */
-  fill: '#07060f',
-  /** Sky gradient (clear night). */
-  horizon: '#2b0b4f',
-  zenith: '#04010c',
+  yellow: '#ffb347', // amber: entrances
+  green: '#36e2ff',
+  /** Fill for solid objects: reads as near-black navy. */
+  fill: '#050a18',
+  /** Sky gradient (clear). */
+  horizon: '#0b3a7a',
+  zenith: '#00020a',
 } as const;
 
 /** Inside the Grid: a dark blue digital sky with a faint blue horizon glow, electric-blue grid. */
@@ -199,7 +202,7 @@ export function updateSkyPlanet(altitude: number, radius: number): void {
  * sphere, kept only when that point stays inside the cell (so no star straddles a cell edge).
  * Cool white, some cyan, a rare amber.
  */
-function starField(d: TslNode): TslNode {
+export function starField(d: TslNode): TslNode {
   const N = 70;
   const q: TslNode = d.mul(N);
   const cell: TslNode = floor(q);

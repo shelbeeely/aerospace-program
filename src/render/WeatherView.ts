@@ -3,25 +3,24 @@ import { float, texture, uniform, uv } from 'three/tsl';
 import { flatWorld } from './curvature.ts';
 import { SKY_PLANET } from './neon.ts';
 import type { Atmosphere, Precipitation } from '../sim/atmosphere.ts';
-import { GRID_SKY, NEON, glow, gridLines, type TslNode } from './neon.ts';
+import { NEON, glow, gridLines, type TslNode } from './neon.ts';
 import type { WorldView } from './WorldView.ts';
 
 const MAX_DROPS = 9000;
 const BOX = 44; // metres, cube of falling drops around the camera
 const CLOUD_RES = 128;
 const CLOUD_SPAN = 16000; // metres covered by the cloud texture
-// Neon palette: night purple when clear, murkier violet under overcast, near-black in storms.
-const SKY_CLEAR = { horizon: new THREE.Color(GRID_SKY.horizon), zenith: new THREE.Color(GRID_SKY.zenith) };
+// The clear sky is the region's (WorldView.atmosphere); overcast and storms dim it toward slate navy.
 const SKY_OVERCAST = { horizon: new THREE.Color('#0b1430'), zenith: new THREE.Color('#02040c') };
 const SKY_STORM = { horizon: new THREE.Color('#070b1c'), zenith: new THREE.Color('#010206') };
-const IN_CLOUD_FOG = new THREE.Color('#2a1840');
+const IN_CLOUD_FOG = new THREE.Color('#1a2a48');
 const RAIN = glow('#9ff6ff', 2.4);
 const SNOWFLAKE = glow('#ffffff', 2.2);
-/** Snow-covered ground: a pale lavender base, the grid partly buried. */
-const SNOW = new THREE.Color('#2a2440');
-const CLOUD_BASE = { fill: new THREE.Color('#1a0d2e'), line: glow(NEON.magenta, 2.2) };
-const CLOUD_BASE_STORM = { fill: new THREE.Color('#0c0616'), line: glow(NEON.purple, 2.6) };
-const CLOUD_TOP = { fill: new THREE.Color('#2a1648'), line: glow(NEON.cyan, 2.2) };
+/** Snow-covered ground: a pale blue-grey base, the grid partly buried. */
+const SNOW = new THREE.Color('#25324a');
+const CLOUD_BASE = { fill: new THREE.Color('#0d1a33'), line: glow('#2f74ff', 2.2) };
+const CLOUD_BASE_STORM = { fill: new THREE.Color('#060c18'), line: glow('#ff2a1a', 2.2) };
+const CLOUD_TOP = { fill: new THREE.Color('#1a2a4a'), line: glow(NEON.cyan, 2.2) };
 const _p = new THREE.Vector3();
 const _rel = new THREE.Vector3();
 const _c = new THREE.Color();
@@ -31,7 +30,7 @@ const _c = new THREE.Color();
  * craft flies through: rain streaks / snow falling with the wind's drift, a cloud deck drawn
  * from the same drifting cell field (base and tops), fog from visibility (and near-zero inside
  * cloud), dimmer light and a hidden sun under overcast, a brighter-gleaming grid when it is wet.
- * Drawn in the neon style: glowing streaks, a wireframe-grid cloud deck, purple fog.
+ * Drawn in the digital world's palette: glowing streaks, a gridded cloud deck, blue haze.
  */
 export class WeatherView {
   private readonly drops: THREE.LineSegments;
@@ -158,10 +157,13 @@ export class WeatherView {
     // --- Light and sky: overcast when under (or in) the deck
     const below = cam.y < top ? 1 : 0.15;
     const overcast = Math.min(1, cover * below * (cover > 0.6 ? 1 : 0.6));
-    _c.copy(SKY_CLEAR.horizon).lerp(SKY_OVERCAST.horizon, overcast).lerp(SKY_STORM.horizon, storm * below);
+    const clear = this.world.atmosphere.clear;
+    _c.copy(clear.horizon).lerp(SKY_OVERCAST.horizon, overcast).lerp(SKY_STORM.horizon, storm * below);
     this.world.horizon.copy(_c);
-    _c.copy(SKY_CLEAR.zenith).lerp(SKY_OVERCAST.zenith, overcast).lerp(SKY_STORM.zenith, storm * below);
+    _c.copy(clear.zenith).lerp(SKY_OVERCAST.zenith, overcast).lerp(SKY_STORM.zenith, storm * below);
     this.world.zenith.copy(_c);
+    this.world.upper.copy(clear.upper).lerp(SKY_OVERCAST.horizon, overcast * 0.8).lerp(SKY_STORM.zenith, storm * below);
+    this.world.band.copy(clear.band).multiplyScalar((1 - 0.8 * overcast) * (1 - 0.6 * storm * below));
     this.world.sun.intensity = 0.9 * (1 - 0.85 * overcast) * (1 - 0.5 * storm * below);
     this.world.hemi.intensity = 0.5 * (1 - 0.35 * overcast);
     // The striped sun sinks behind an overcast deck.
@@ -169,13 +171,13 @@ export class WeatherView {
 
     // --- Fog from visibility (Koschmieder: contrast falls to 2% at the visibility distance)
     const fog = this.scene.fog as THREE.FogExp2;
-    const vis = inCloud ? 60 : Math.min(15000, s.visibility ?? 15000);
+    const vis = inCloud ? 60 : Math.min(this.world.atmosphere.clear.visibility, s.visibility ?? 30000);
     // Haze lives in the low atmosphere: looking down from altitude it thins away.
     const camAlt = Math.max(0, SKY_PLANET.altitude);
     const density = (1.978 / vis) * Math.exp(-camAlt / 2500); // see WorldView: 2% contrast at the visibility distance
     // Ease in log space so entering cloud closes in quickly but smoothly.
     fog.density = Math.exp(Math.log(fog.density) + (Math.log(density) - Math.log(fog.density)) * Math.min(1, dt * 2));
-    fog.color.copy(inCloud ? IN_CLOUD_FOG : this.world.horizon);
+    fog.color.copy(inCloud ? IN_CLOUD_FOG : _c.copy(this.world.atmosphere.clear.haze).lerp(SKY_OVERCAST.horizon, overcast));
 
     // --- Wet ground: the grid gleams brighter (a reflective sheen); snow buries it under a pale
     //     lavender blanket. Colour uniforms only, so no shader variants.
