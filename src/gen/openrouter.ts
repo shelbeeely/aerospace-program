@@ -66,8 +66,18 @@ export interface ChatRequest {
   /** Tools the model may call; the reply's toolCalls lists what it called. */
   tools?: ToolDef[];
   toolChoice?: 'auto' | 'required' | 'none';
+  /**
+   * Stream the reply and report it as it arrives: reasoning, text, and tool calls with their
+   * arguments so far (the accumulated JSON text, possibly incomplete).
+   */
+  onDelta?: (d: ChatDelta) => void;
   signal?: AbortSignal;
 }
+
+export type ChatDelta =
+  | { kind: 'reasoning'; text: string }
+  | { kind: 'content'; text: string }
+  | { kind: 'tool'; index: number; name: string; args: string };
 
 export interface Usage {
   promptTokens: number;
@@ -193,8 +203,9 @@ export class OpenRouter {
     // Audio output only comes back on a stream, with an audio config (OpenRouter docs: Audio
     // Output). Without these, music models answer with text and no audio at all.
     const wantsAudio = !!req.modalities?.includes('audio');
+    const streaming = wantsAudio || !!req.onDelta;
+    if (streaming) body.stream = true;
     if (wantsAudio) {
-      body.stream = true;
       body.audio = { voice: 'alloy', format: /^openai\//.test(req.model) ? 'pcm16' : 'wav' };
     }
     if (req.temperature !== undefined) body.temperature = req.temperature;
@@ -210,7 +221,7 @@ export class OpenRouter {
     let shrunk = false;
     for (;;) {
       try {
-        return await (wantsAudio ? this.chatStream(body, req.model, req.signal) : this.chatOnce(body, req.model, req.signal));
+        return await (streaming ? this.chatStream(body, req.model, req.signal, req.onDelta) : this.chatOnce(body, req.model, req.signal));
       } catch (e) {
         // A provider that rejects the reply budget gets one retry with the old safe default.
         if (!shrunk && e instanceof OpenRouterError && e.status === 400 && typeof body.max_tokens === 'number'
@@ -247,7 +258,7 @@ export class OpenRouter {
    * A streamed reply (server-sent events), for audio output: text deltas are joined, audio
    * arrives as base64 chunks in delta.audio.data (decoded and concatenated), usage comes last.
    */
-  private async chatStream(body: Record<string, unknown>, model: string, signal?: AbortSignal): Promise<ChatResult> {
+  private async chatStream(body: Record<string, unknown>, model: string, signal?: AbortSignal, onDelta?: (d: ChatDelta) => void): Promise<ChatResult> {
     const r = await fetch(`${this.cfg.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: this.headers(),
@@ -268,7 +279,10 @@ export class OpenRouter {
     let buf = '';
     let content = '';
     let transcript = '';
+    let reasoning = '';
     let usedModel = model;
+    // Tool calls arrive in pieces: index → id, name, and argument text so far.
+    const calls: Array<{ id: string; name: string; args: string }> = [];
     const chunks: Uint8Array[] = [];
     const urls: string[] = [];
     const usage: Usage = { promptTokens: 0, completionTokens: 0, cost: 0 };
@@ -304,6 +318,19 @@ export class OpenRouter {
           usage.cost = num(j.usage.cost);
         }
         const d = j.choices?.[0]?.delta ?? j.choices?.[0]?.message ?? {};
+        // Reasoning: a plain string, or structured details (use those only when there's no string).
+        let think = typeof d.reasoning === 'string' ? d.reasoning : '';
+        if (!think && Array.isArray(d.reasoning_details)) for (const r of d.reasoning_details) if (typeof r?.text === 'string') think += r.text;
+        if (think) { reasoning += think; onDelta?.({ kind: 'reasoning', text: think }); }
+        if (typeof d.content === 'string' && d.content) onDelta?.({ kind: 'content', text: d.content });
+        for (const t of Array.isArray(d.tool_calls) ? d.tool_calls : []) {
+          const i = Number.isInteger(t?.index) ? t.index : calls.length;
+          const c = (calls[i] ??= { id: '', name: '', args: '' });
+          if (t.id) c.id = String(t.id);
+          if (t.function?.name) c.name += String(t.function.name);
+          if (t.function?.arguments !== undefined) c.args += typeof t.function.arguments === 'string' ? t.function.arguments : JSON.stringify(t.function.arguments);
+          onDelta?.({ kind: 'tool', index: i, name: c.name, args: c.args });
+        }
         if (typeof d.content === 'string') content += d.content;
         else if (Array.isArray(d.content)) for (const c of d.content) {
           if (typeof c?.text === 'string') content += c.text;
@@ -322,7 +349,8 @@ export class OpenRouter {
       for (const c of chunks) { all.set(c, o); o += c.length; }
       audio.unshift(audioDataUrl(all));
     }
-    return { model: usedModel, content: content || transcript, images: [], audio, reasoning: '', usage, toolCalls: [] };
+    const toolCalls: ToolCall[] = calls.filter((c) => c && c.name).map((c, i) => ({ id: c.id || `call_${i}`, type: 'function' as const, function: { name: c.name, arguments: c.args } }));
+    return { model: usedModel, content: content || transcript, images: [], audio, reasoning, usage, toolCalls };
   }
 
   private async chatOnce(body: Record<string, unknown>, model: string, signal?: AbortSignal): Promise<ChatResult> {

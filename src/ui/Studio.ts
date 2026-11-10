@@ -1,11 +1,10 @@
 import { BUILTINS, type BuiltinCraft } from '../craft/builtins.ts';
 import type { CraftDef } from '../craft/types.ts';
 import { AGENTIC_ONLY, defaultModel, fallbacksFor, isAgenticOnly, isFree, JOBS, modelsForJob, priceLabel, type JobId } from '../gen/catalog.ts';
-import { designCraft, type DesignResult } from '../gen/craftDesigner.ts';
+import { type DesignResult } from '../gen/craftDesigner.ts';
 import { fromImportJson, toExportJson, type Library, type LibraryEntry } from '../gen/library.ts';
 import { composeMusic, MUSIC_STYLES } from '../gen/music.ts';
-import { detailCraft } from '../gen/detailer.ts';
-import { designWithAgent } from '../gen/agent.ts';
+import { designWithAgent, type AgentEvent } from '../gen/agent.ts';
 import {
   DIRECT_BASE_URL,
   supportsTools,
@@ -28,6 +27,8 @@ export interface StudioHost {
   select(entry: LibraryEntry | null): void;
   /** Take the selected craft flying: switch to flight mode and reset to the runway. */
   fly(): void;
+  /** Show a craft on the turntable while the agent builds it (null = back to the current craft). */
+  preview(craft: CraftDef | null): void;
 }
 
 const SUGGESTIONS = [
@@ -63,14 +64,18 @@ export const CAP_STORAGE = 'aerospace.openrouter.cap';
 interface Prefs {
   freeOnly: boolean;
   jobs: Partial<Record<JobId, string>>;
+  /** Agent reasoning effort. */
+  effort: 'low' | 'medium' | 'high';
+  /** Flight tests the agent may run per job. */
+  tests: number;
 }
 
 function loadPrefs(): Prefs {
   try {
     const p = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}');
-    return { freeOnly: p.freeOnly ?? true, jobs: p.jobs ?? {} };
+    return { freeOnly: p.freeOnly ?? true, jobs: p.jobs ?? {}, effort: p.effort ?? 'medium', tests: p.tests ?? 8 };
   } catch {
-    return { freeOnly: true, jobs: {} };
+    return { freeOnly: true, jobs: {}, effort: 'medium', tests: 8 };
   }
 }
 
@@ -89,7 +94,6 @@ export class Studio {
   private readonly selects = {} as Record<JobId, HTMLSelectElement>;
   /** Model search text (lower case) and the tool-calling filter. */
   private search = '';
-  private toolsOnly = false;
   private searchInfo!: HTMLElement;
   /** The selected Designer's endpoint terms, when it is agentic-only. */
   private termsNote!: HTMLElement;
@@ -102,11 +106,10 @@ export class Studio {
     keyNote: HTMLElement;
     settings: HTMLDetailsElement;
     prompt: HTMLTextAreaElement;
-    rounds: HTMLSelectElement;
-    drafts: HTMLSelectElement;
     detailPass: HTMLInputElement;
-    agentMode: HTMLInputElement;
     log: HTMLOListElement;
+    /** Live agent console: reasoning and text as they stream, tool calls and results. */
+    console: HTMLElement;
     result: HTMLElement;
     musicPrompt: HTMLInputElement;
     musicStyle: HTMLSelectElement;
@@ -121,14 +124,14 @@ export class Studio {
     for (const job of Object.keys(JOBS) as JobId[]) {
       const sel = h('select', { title: JOBS[job].description, onchange: () => this.pick(job, sel.value) });
       this.selects[job] = sel;
-      crew.append(h('label', { title: JOBS[job].description }, JOBS[job].label, sel));
+      // The agent does the Engineer's job itself, so only the Designer (agent) and Composer show.
+      if (job !== 'engineer') crew.append(h('label', { title: JOBS[job].description }, job === 'designer' ? 'Designer (agent)' : JOBS[job].label, sel));
     }
     const freeOnly = h('input', { type: 'checkbox', onchange: () => this.setFreeOnly(freeOnly.checked) });
     freeOnly.checked = this.prefs.freeOnly;
     // Model search: any model in the OpenRouter catalog, by name, id or description.
     const search = h('input', { type: 'search', placeholder: 'Search all models (name, id, e.g. "claude", "qwen coder")', 'aria-label': 'Search models' }) as HTMLInputElement;
     search.addEventListener('input', () => { this.search = search.value.trim().toLowerCase(); this.fillSelects(); });
-    const toolsOnly = h('input', { type: 'checkbox', onchange: () => { this.toolsOnly = toolsOnly.checked; this.fillSelects(); } }) as HTMLInputElement;
     this.searchInfo = h('div', { class: 'muted small' });
     this.termsNote = h('div', { class: 'small warn hidden', role: 'note' });
 
@@ -153,16 +156,18 @@ export class Studio {
         if (k.key === 'Enter' && (k.ctrlKey || k.metaKey)) void this.design(false);
       },
     });
-    const rounds = h('select', { title: 'Model calls allowed: 1 designer draft, then engineer repair rounds' });
-    for (const n of [1, 2, 3, 4, 5]) rounds.append(h('option', { value: String(n) }, `${n} round${n > 1 ? 's' : ''}`));
-    rounds.value = '4';
-    const drafts = h('select', { title: 'Independent first drafts, flight-tested in parallel; the best one goes on to repair' });
-    for (const n of [1, 2, 3]) drafts.append(h('option', { value: String(n) }, `${n} draft${n > 1 ? 's' : ''}`));
-    drafts.value = '2';
+    // Reasoning effort and the flight-test budget for the agent.
+    const effort = h('select', { title: 'How hard the model thinks each turn: more effort is slower and uses more tokens' }) as HTMLSelectElement;
+    for (const [v, l] of [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']]) effort.append(h('option', { value: v }, l));
+    effort.value = this.prefs.effort;
+    effort.addEventListener('change', () => { this.prefs.effort = effort.value as Prefs['effort']; this.savePrefs(); });
+    const tests = h('select', { title: 'Flight tests the agent may run per job' }) as HTMLSelectElement;
+    for (const n of [4, 8, 12]) tests.append(h('option', { value: String(n) }, `${n} flight tests`));
+    tests.value = String(this.prefs.tests);
+    tests.addEventListener('change', () => { this.prefs.tests = Number(tests.value); this.savePrefs(); });
     const designBtn = h('button', { class: 'primary', onclick: () => this.design(false) }, 'Generate vehicle');
-    const detailBtn = h('button', { onclick: () => this.detailCurrent(), title: 'Add visual detail (panels, plates, intakes, light lines) to the current craft. Its physics stay exactly as tested.' }, 'Add detail');
+    const detailBtn = h('button', { onclick: () => this.detailCurrent(), title: 'The agent adds visual detail (panels, plates, intakes, light lines) to the current craft. Its physics stay exactly as tested.' }, 'Add detail');
     const detailPass = h('input', { type: 'checkbox', checked: '' }) as HTMLInputElement;
-    const agentMode = h('input', { type: 'checkbox', checked: '' }) as HTMLInputElement;
     const refineBtn = h('button', { onclick: () => this.design(true), title: 'Modify the craft you are flying, using your flight as feedback' }, 'Refine current');
     const cancel = h('button', { class: 'hidden', onclick: () => this.busy?.abort() }, 'Cancel');
     const musicPrompt = h('input', { type: 'text', placeholder: 'extra direction, e.g. slower, with a guitar solo' });
@@ -189,9 +194,8 @@ export class Studio {
       keyNote: h('div', { class: 'muted small' }),
       settings,
       prompt,
-      rounds,
-      drafts,
       log: h('ol', { class: 'studio-log' }),
+      console: h('div', { class: 'agent-console hidden', 'aria-live': 'off' }),
       result: h('div', { class: 'studio-result hidden' }),
       musicPrompt,
       musicStyle,
@@ -199,7 +203,6 @@ export class Studio {
       hangar: h('div', { class: 'studio-hangar' }),
       buttons: [designBtn, refineBtn, detailBtn, composeBtn],
       detailPass,
-      agentMode,
       cancel,
     };
     settings.append(this.el.keyNote);
@@ -221,19 +224,20 @@ export class Studio {
         prompt,
         chips,
         h('div', { class: 'row' }, designBtn, refineBtn, detailBtn, cancel),
-        h('label', { class: 'muted small', title: 'After a design passes its test, the designer adds visual detail in one more round (re-tested; physics unchanged)' }, detailPass, ' Detail pass'),
-        h('label', { class: 'muted small', title: 'The designer runs the whole pipeline with tools (submit, check, analyze, patch, flight test, add detail, finish). Models without tool calling use the fixed rounds.' }, agentMode, ' Agent mode'),
+        h('label', { class: 'muted small', title: 'Once the design passes, the agent adds visual detail (re-tested; physics unchanged)' }, detailPass, ' Add detail once it passes'),
+        this.el.console,
         this.el.log,
         this.el.result,
       ),
       settings,
       h('details', { class: 'settings crew-settings' },
         h('summary', {}, 'Models & generation settings'),
-        h('div', { class: 'row spread' }, h('h4', {}, 'Crew'), h('label', { class: 'inline' }, freeOnly, ' Free only'), h('label', { class: 'inline', title: 'Designer/Engineer: only models that can call tools (needed for Agent mode)' }, toolsOnly, ' Tools')),
+        h('div', { class: 'row spread' }, h('h4', {}, 'Crew'), h('label', { class: 'inline' }, freeOnly, ' Free only')),
+        h('div', { class: 'muted small' }, 'The Designer runs as an agent with tools, so only tool-calling models are listed for it.'),
         h('div', { class: 'row' }, search),
         this.searchInfo,
         this.termsNote,
-        crew, h('label', {}, 'Design and repair rounds', rounds), h('label', {}, 'Parallel first drafts (best one kept)', drafts),
+        crew, h('label', {}, 'Reasoning effort', effort), h('label', {}, 'Flight-test budget', tests),
       ),
       h('section', {},
         h('h4', {}, 'Music'),
@@ -312,7 +316,7 @@ export class Studio {
       const sel = this.selects[job];
       const textJob = job === 'designer' || job === 'engineer';
       let list = modelsForJob(this.models, job, this.prefs.freeOnly);
-      if (this.toolsOnly && textJob) list = list.filter((m) => supportsTools(m));
+      if (job === 'designer') list = list.filter((m) => supportsTools(m)); // the agent needs tools
       const q = this.search;
       const hits = q ? list.filter((m) => `${m.id} ${m.name} ${m.description}`.toLowerCase().includes(q)).slice(0, 60) : [];
       const info = JOBS[job];
@@ -360,7 +364,7 @@ export class Studio {
     const note = id ? AGENTIC_ONLY[id] : undefined;
     this.termsNote.textContent = note ?? '';
     this.termsNote.classList.toggle('hidden', !note);
-    if (note && this.el?.agentMode) this.el.agentMode.checked = true;
+
   }
 
   private setFreeOnly(v: boolean): void {
@@ -448,72 +452,142 @@ export class Studio {
 
   // ---------------------------------------------------------------- jobs
 
-  private async design(refine: boolean): Promise<void> {
+  /**
+   * Every job runs through the agent: the model drives the pipeline with tools while the console
+   * streams its reasoning and tool calls and the turntable builds the vehicle as parts arrive.
+   */
+  private async runAgent(kind: 'design' | 'refine' | 'detail'): Promise<void> {
     const designer = this.guard('designer');
     if (!designer) return;
-    const engineer = this.crew('engineer');
     const text = this.el.prompt.value.trim();
-    if (!text && !refine) return this.setStatus('Describe the craft you want.', 'error');
-    if (isAgenticOnly(designer.model) && !this.el.agentMode.checked) {
-      return this.setStatus(`${designer.model} may only be used through the agent harness: turn on Agent mode, or pick another Designer.`, 'error');
-    }
+    if (kind === 'design' && !text) return this.setStatus('Describe the vehicle you want.', 'error');
     const cur = this.host.current();
     this.el.log.replaceChildren();
     this.el.result.classList.add('hidden');
-    await this.run('Design', async (signal) => {
-      const run = this.el.agentMode.checked
-        ? (r: Parameters<typeof designCraft>[1]) => designWithAgent(this.host.client, { ...r, modelInfo: designer.info }, (e) => this.logLine(`Agent · ${e.name}: ${e.summary}`, /^(ERROR|REJECTED|NOT)/.test(e.summary) ? 'warn' : 'muted'))
-        : (r: Parameters<typeof designCraft>[1]) => designCraft(this.host.client, r);
-      const result = await run({
+    this.consoleReset();
+    const prompt = kind === 'detail'
+      ? `Keep this design exactly as it is (do not patch it). flight_test it, then add_detail with 25-80 visual detail parts in the 1982 style${text ? ` (direction: ${text})` : ''}, check, flight_test again and finish.`
+      : kind === 'refine' ? (text || 'Fix whatever made it fly badly.') : text;
+    let ok = false;
+    await this.run(kind === 'detail' ? 'Detail' : 'Design', async (signal) => {
+      const result = await designWithAgent(this.host.client, {
         model: designer.model,
         designerFallbacks: designer.fallbacks,
-        engineerModel: engineer.model || designer.model,
-        engineerFallbacks: engineer.model ? engineer.fallbacks : designer.fallbacks,
-        prompt: text || 'Fix whatever made it fly badly.',
-        base: refine ? cur.craft : undefined,
-        feedback: refine ? this.host.flightNotes() : undefined,
-        maxIterations: Number(this.el.rounds.value),
-        drafts: refine ? 1 : Number(this.el.drafts.value),
-        detail: this.el.detailPass.checked,
+        modelInfo: designer.info,
+        effort: this.prefs.effort,
+        maxTests: this.prefs.tests,
+        prompt,
+        base: kind === 'design' ? undefined : cur.craft,
+        feedback: kind === 'refine' ? this.host.flightNotes() : undefined,
+        detail: kind === 'detail' || this.el.detailPass.checked,
         tester: runFlightTest,
         signal,
         onEvent: (e) => {
           if (e.type === 'status') this.setStatus(e.message);
-          else {
+          else if (e.attempt.report) {
             const a = e.attempt;
-            const who = `${a.role === 'designer' ? 'Designer' : a.role === 'detailer' ? 'Detailer' : 'Engineer'}${a.model ? ` (${shortName(a.model)})` : ''}`;
-            if (a.error) this.logLine(`${who}: ${a.error}`, 'bad');
-            else if (a.role === 'detailer') this.logLine(`${who}: ${a.fixes?.[0] ?? ''}${a.report ? ` · ${a.report.score}/100` : ''}`, a.craft && a.report?.passed ? 'good' : 'warn');
-            else if (a.validationErrors) this.logLine(`${who}: ${a.validationErrors.length} format errors → engineer`, 'warn');
-            else if (a.report) {
-              const fixed = a.fixes?.length ? ` (${a.fixes.length} auto-fix${a.fixes.length > 1 ? 'es' : ''})` : '';
-              this.logLine(`${who}: "${a.craft?.name}" scored ${a.report.score}/100${a.report.gusty ? ` (gusty ${a.report.gusty.score}, advisory)` : ''}${fixed}`, a.report.passed ? 'good' : 'warn');
-            }
+            this.logLine(`Flight test ${a.iteration}: "${a.craft?.name}" scored ${a.report!.score}/100${a.report!.gusty ? ` (gusty ${a.report!.gusty.score}, advisory)` : ''}`, a.report!.passed ? 'good' : 'warn');
           }
           this.updateSpend();
         },
-      });
+      }, (e) => this.agentEvent(e));
       this.lastResult = result;
+      const parent = cur.entryId ? this.host.library.get(cur.entryId) : undefined;
       const entry = this.host.library.add({
-        name: result.name,
+        name: kind === 'detail' ? `${cur.craft.name} (detailed)` : result.name,
         craft: result.craft,
         provenance: {
+          ...(kind === 'detail' ? parent?.provenance ?? {} : {}),
           source: 'generated',
           model: result.model,
-          prompt: result.prompt,
+          prompt: kind === 'detail' ? parent?.provenance.prompt ?? prompt : result.prompt,
           notes: result.notes,
           score: result.report.score,
           rounds: result.attempts.length,
           costUsd: result.cost,
           createdAt: new Date().toISOString(),
-          parentId: refine ? cur.entryId ?? undefined : undefined,
+          parentId: kind === 'design' ? undefined : cur.entryId ?? undefined,
         },
       });
+      ok = true;
       this.showResult(result, entry);
       this.renderHangar();
       this.host.select(entry);
-      this.setStatus(`"${result.name}" is ready in the hangar. FLY ▸ to try it, then Refine with what you'd change.`);
+      this.setStatus(`"${entry.name}" is ready in the hangar. FLY ▸ to try it, then Refine with what you'd change.`);
     });
+    if (!ok) this.host.preview(null); // cancelled or failed: back to the craft we had
+  }
+
+  private design(refine: boolean): Promise<void> {
+    return this.runAgent(refine ? 'refine' : 'design');
+  }
+
+  // ---------------------------------------------------------------- live agent console
+
+  private consoleFlush = 0;
+  private previewAt = 0;
+  private previewTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private consoleReset(): void {
+    this.el.console.replaceChildren();
+    this.el.console.classList.remove('hidden');
+  }
+
+  /** Append streaming text to the console's current block (a new block when the kind changes). */
+  private consoleStream(kind: 'thinking' | 'text', text: string): void {
+    const box = this.el.console;
+    let last = box.lastElementChild as HTMLElement | null;
+    if (!last || last.dataset.kind !== kind) {
+      last = h('div', { class: `ac-${kind}` });
+      last.dataset.kind = kind;
+      box.append(last);
+    }
+    last.textContent = (last.textContent ?? '') + text;
+    // Keep the console bounded: drop the oldest blocks past ~200 KB.
+    while (box.childElementCount > 2 && (box.textContent?.length ?? 0) > 200_000) box.firstElementChild?.remove();
+    if (!this.consoleFlush) {
+      this.consoleFlush = requestAnimationFrame(() => {
+        this.consoleFlush = 0;
+        box.scrollTop = box.scrollHeight;
+      });
+    }
+  }
+
+  private consoleLine(cls: string, text: string): void {
+    const el = h('div', { class: cls }, text);
+    el.dataset.kind = cls;
+    this.el.console.append(el);
+    this.el.console.scrollTop = this.el.console.scrollHeight;
+  }
+
+  private agentEvent(e: AgentEvent): void {
+    if (e.type === 'thinking') this.consoleStream('thinking', e.text);
+    else if (e.type === 'text') this.consoleStream('text', e.text);
+    else if (e.type === 'calling') {
+      // One live line per streaming tool call, updated as its arguments arrive.
+      const last = this.el.console.lastElementChild as HTMLElement | null;
+      const label = `▸ ${e.name}${e.bytes ? ` (${(e.bytes / 1024).toFixed(1)} KB…)` : ''}`;
+      if (last?.dataset.kind === 'ac-calling') last.textContent = label;
+      else this.consoleLine('ac-calling', label);
+    } else if (e.type === 'tool') {
+      const last = this.el.console.lastElementChild as HTMLElement | null;
+      if (last?.dataset.kind === 'ac-calling') last.remove();
+      const bad = /^(ERROR|REJECTED|NOT)/.test(e.summary);
+      this.consoleLine(bad ? 'ac-tool bad' : 'ac-tool', `● ${e.name} → ${e.summary}`);
+    } else if (e.type === 'craft') this.previewCraft(e.craft, e.partial);
+  }
+
+  /** Throttled turntable preview: the vehicle builds up as parts stream in. */
+  private previewCraft(craft: CraftDef, partial: boolean): void {
+    const show = () => {
+      this.previewAt = performance.now();
+      this.previewTimer = null;
+      this.host.preview(craft);
+    };
+    if (this.previewTimer) clearTimeout(this.previewTimer);
+    const wait = 350 - (performance.now() - this.previewAt);
+    if (!partial || wait <= 0) show();
+    else this.previewTimer = setTimeout(show, wait);
   }
 
   private showResult(r: DesignResult, entry: LibraryEntry): void {
@@ -530,42 +604,9 @@ export class Studio {
     this.el.result.classList.remove('hidden');
   }
 
-  /** Detail the current craft: visual secondary/tertiary geometry, physics untouched, re-tested. */
-  private async detailCurrent(): Promise<void> {
-    const designer = this.guard('designer');
-    if (!designer) return;
-    if (isAgenticOnly(designer.model)) {
-      return this.setStatus(`Add detail is a one-shot call, and ${designer.model} may only be used through the agent harness. Use Refine current in Agent mode (it adds detail with add_detail), or pick another Designer.`, 'error');
-    }
-    const cur = this.host.current();
-    const concept = this.el.prompt.value.trim() || cur.craft.name;
-    await this.run('Detail', async (signal) => {
-      this.setStatus(`Flight-testing "${cur.craft.name}" before detailing…`);
-      const baseReport = await runFlightTest(cur.craft);
-      this.setStatus(`Detailer (${shortName(designer.model)}) adding detail to "${cur.craft.name}"…`);
-      const d = await detailCraft(this.host.client, { model: designer.model, fallbacks: designer.fallbacks, craft: cur.craft, concept, tester: runFlightTest, baseReport, signal });
-      this.updateSpend();
-      if (!d.accepted) {
-        this.setStatus(`No detail kept: ${d.notes.join('; ')}.`, 'error');
-        return;
-      }
-      const parent = cur.entryId ? this.host.library.get(cur.entryId) : undefined;
-      const entry = this.host.library.add({
-        name: `${cur.craft.name} (detailed)`,
-        craft: d.craft,
-        provenance: {
-          ...(parent?.provenance ?? { source: 'generated' as const }),
-          model: d.model,
-          score: d.report?.score,
-          costUsd: d.cost,
-          createdAt: new Date().toISOString(),
-          parentId: cur.entryId ?? undefined,
-        },
-      });
-      this.renderHangar();
-      this.host.select(entry);
-      this.setStatus(`Added ${d.added} detail parts${d.notes.length ? ` (${d.notes.join('; ')})` : ''}. Still ${d.report?.score}/100.`);
-    });
+  /** Detail the current craft through the agent (physics untouched, re-tested). */
+  private detailCurrent(): Promise<void> {
+    return this.runAgent('detail');
   }
 
   private async compose(): Promise<void> {

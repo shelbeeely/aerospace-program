@@ -377,6 +377,7 @@ async function start() {
   let currentEntry: LibraryEntry | null = null;
   /** Load a craft (null = built-in trainer): on the turntable in the hangar, on the runway in flight. */
   const select = (entry: LibraryEntry | null) => {
+    previewSaved = null; // a real selection ends any agent preview
     sim.loadCraft(entry ? entry.craft : TEST_PLANE);
     replaceCraftView();
     viewVersion = sim.version;
@@ -678,7 +679,34 @@ async function start() {
       if (mode === 'hangar') select(entry);
     },
     fly: () => fly(),
+    // The agent building a vehicle: show it on the turntable as its parts stream in. The craft
+    // that was there is remembered and comes back if the job is cancelled or fails.
+    preview: (def) => {
+      if (mode !== 'hangar') return;
+      if (def === null) {
+        if (previewSaved) {
+          const saved = previewSaved;
+          previewSaved = null;
+          showDef(saved);
+        }
+        return;
+      }
+      previewSaved ??= sim.craft.def;
+      showDef(def);
+    },
   });
+  let previewSaved: CraftDef | null = null;
+  function showDef(def: CraftDef): void {
+    try {
+      sim.loadCraft(def);
+    } catch {
+      return; // a partial craft that doesn't validate yet: keep the last good frame
+    }
+    replaceCraftView();
+    viewVersion = sim.version;
+    rig.fitCraft(sim.craft.boundingRadius());
+    showOnTurntable();
+  }
 
   // Resize on window changes, phone rotation and mobile browser bars appearing/disappearing.
   const resize = () => {

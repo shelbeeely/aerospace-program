@@ -29,11 +29,59 @@ export interface AgentRequest extends DesignRequest {
   /** Model turns (default 28) and flight tests (default 8) the agent may use. */
   maxTurns?: number;
   maxTests?: number;
+  /** How hard the model thinks each turn (default medium). */
+  effort?: 'low' | 'medium' | 'high';
   /** Force the fixed pipeline (no tools). */
   noAgent?: boolean;
 }
 
-export type AgentEvent = { type: 'tool'; name: string; summary: string; turn: number };
+/** What the agent is doing, live: for the Studio's console and the turntable. */
+export type AgentEvent =
+  /** A tool ran; `summary` is the first line of its result. */
+  | { type: 'tool'; name: string; summary: string; turn: number }
+  /** Reasoning text streaming in (a delta). */
+  | { type: 'thinking'; text: string; turn: number }
+  /** Visible text streaming in (a delta). */
+  | { type: 'text'; text: string; turn: number }
+  /** A tool call streaming in: its name and how much argument text has arrived. */
+  | { type: 'calling'; name: string; bytes: number; turn: number }
+  /** The craft as it stands: `partial` while a tool call is still streaming its parts in. */
+  | { type: 'craft'; craft: CraftDef; partial: boolean; turn: number };
+
+/**
+ * Complete part objects found so far in a tool call's argument JSON, which may be cut off
+ * anywhere: every balanced {...} that parses and looks like a part (id, shape, position, mass).
+ */
+export function partialParts(text: string): PartDef[] {
+  const out: PartDef[] = [];
+  const seen = new Set<string>();
+  const stack: number[] = [];
+  let inStr = false, esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') stack.push(i);
+    else if (ch === '}' && stack.length) {
+      const start = stack.pop()!;
+      const s = text.slice(start, i + 1);
+      if (!s.includes('"shape"') || !s.includes('"position"')) continue;
+      try {
+        const p = JSON.parse(s) as PartDef;
+        if (p && typeof p.id === 'string' && p.shape && Array.isArray(p.position) && typeof p.mass === 'number' && !seen.has(p.id)) {
+          seen.add(p.id);
+          out.push(p);
+        }
+      } catch { /* an outer object still open, or junk */ }
+    }
+  }
+  return out;
+}
 
 export const AGENT_TOOLS: ToolDef[] = [
   tool('submit_craft', 'Set the working craft to a complete design (your first draft, or a full rewrite). It is validated, auto-fixed (control signs, wheel springs), connectivity-checked and restyled to the 1982 palette; the result reports any problems.', {
@@ -190,6 +238,7 @@ export async function designWithAgent(client: OpenRouter, req: AgentRequest, onT
         : `Design this vehicle: ${req.prompt}`,
     },
   ];
+  if (req.detail === false) (messages[1] as { content: string }).content += '\n\nSkip add_detail: finish as soon as the design passes.';
 
   const run = async (call: ToolCall): Promise<string> => {
     let args: Record<string, unknown> = {};
@@ -239,6 +288,22 @@ export async function designWithAgent(client: OpenRouter, req: AgentRequest, onT
     }
   };
 
+  // Live preview: parts streaming in through submit_craft / patch / add_detail, shown as they arrive.
+  let lastPreview = { name: '', count: -1, at: 0 };
+  const preview = (name: string, args: string, turn: number) => {
+    if (!onTool || !/^(submit_craft|patch|add_detail)$/.test(name)) return;
+    const now = Date.now();
+    if (now - lastPreview.at < 150 && lastPreview.name === name) return;
+    const parts = partialParts(args).filter((p) => validateCraft({ name: 'x', formatVersion: 1, parts: [p] }).length === 0);
+    if (parts.length === lastPreview.count && lastPreview.name === name) return;
+    lastPreview = { name, count: parts.length, at: now };
+    if (!parts.length) return;
+    const base = name === 'submit_craft' ? [] : (st.craft?.parts ?? []);
+    const ids = new Set(base.map((p) => p.id));
+    const craft: CraftDef = { name: st.craft?.name ?? 'Draft', formatVersion: 1, parts: [...base, ...parts.filter((p) => !ids.has(p.id))] };
+    onTool({ type: 'craft', craft, partial: true, turn });
+  };
+
   let nudges = 0;
   for (let turn = 1; turn <= maxTurns && !st.finished; turn++) {
     let res;
@@ -246,7 +311,15 @@ export async function designWithAgent(client: OpenRouter, req: AgentRequest, onT
       res = await client.chat({
         // tool_choice is left at the provider default ('auto'): some endpoints don't accept the field.
         model: req.model, fallbacks: req.designerFallbacks, messages, tools: AGENT_TOOLS,
-        temperature: turn === 1 ? 0.7 : 0.35, maxTokens: 64000, reasoningEffort: turn === 1 ? 'medium' : 'low', signal: req.signal,
+        temperature: turn === 1 ? 0.7 : 0.35, maxTokens: 64000, reasoningEffort: req.effort ?? 'medium', signal: req.signal,
+        onDelta: (d) => {
+          if (d.kind === 'reasoning') onTool?.({ type: 'thinking', text: d.text, turn });
+          else if (d.kind === 'content') onTool?.({ type: 'text', text: d.text, turn });
+          else {
+            onTool?.({ type: 'calling', name: d.name, bytes: d.args.length, turn });
+            preview(d.name, d.args, turn);
+          }
+        },
       });
     } catch (e) {
       if (req.signal?.aborted) throw e;
@@ -276,7 +349,10 @@ export async function designWithAgent(client: OpenRouter, req: AgentRequest, onT
       continue;
     }
     for (const call of res.toolCalls) {
+      const before = st.craft;
       const out = await run(call);
+      if (st.craft && st.craft !== before) onTool?.({ type: 'craft', craft: st.craft, partial: false, turn });
+      lastPreview = { name: '', count: -1, at: 0 };
       onTool?.({ type: 'tool', name: call.function.name, summary: out.split('\n')[0].slice(0, 160), turn });
       emit({ type: 'status', message: `Agent: ${call.function.name} → ${out.split('\n')[0].slice(0, 100)}` });
       messages.push({ role: 'tool', tool_call_id: call.id, content: out });

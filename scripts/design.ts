@@ -3,6 +3,7 @@
  *
  *   npm run design -- "a stubby twin-boom cargo plane" [--designer id] [--engineer id] [--rounds 4] [--drafts 2] [--base crafts/x.json] [--agent] [--no-detail]
  *
+ * --effort low|medium|high: reasoning effort (agent). --think: stream the model's reasoning live.
  * --agent: the designer runs the whole pipeline with tools (submit, check, analyze, patch,
  * flight test, add detail, finish); models without tool calling fall back to the fixed rounds.
  *
@@ -33,6 +34,8 @@ const drafts = Number(opt('drafts') ?? 2);
 const basePath = opt('base');
 const flag = (name: string) => { const i = args.indexOf(`--${name}`); if (i >= 0) args.splice(i, 1); return i >= 0; };
 const agent = flag('agent');
+const think = flag('think');
+const effort = (opt('effort') ?? 'medium') as 'low' | 'medium' | 'high';
 const detail = !flag('no-detail');
 const prompt = args.join(' ').trim();
 if (!prompt) {
@@ -50,7 +53,10 @@ const base = basePath ? JSON.parse(readFileSync(basePath, 'utf8')).craft ?? unde
 const t0 = Date.now();
 const models = agent ? await client.models().catch(() => []) : [];
 const design = agent
-  ? (r: Parameters<typeof designCraft>[1]) => designWithAgent(client, { ...r, modelInfo: models.find((m) => m.id === model) }, (e) => console.log(`  agent ${e.turn} · ${e.name}: ${e.summary}`))
+  ? (r: Parameters<typeof designCraft>[1]) => designWithAgent(client, { ...r, effort, modelInfo: models.find((m) => m.id === model) }, (e) => {
+      if (e.type === 'tool') console.log(`${think ? '\n' : ''}  agent ${e.turn} · ${e.name}: ${e.summary}`);
+      else if (think && (e.type === 'thinking' || e.type === 'text')) (process as unknown as { stdout: { write(s: string): void } }).stdout.write(e.text);
+    })
   : (r: Parameters<typeof designCraft>[1]) => designCraft(client, r);
 const result = await design({
   model,

@@ -16,7 +16,8 @@ import type { CraftDef } from '../src/craft/types.ts';
 import { LIGHT_CAR } from '../src/craft/lightCar.ts';
 import { designCraft, DESIGNER_SYSTEM_PROMPT } from '../src/gen/craftDesigner.ts';
 import { mergeDetail } from '../src/gen/detailer.ts';
-import { designWithAgent } from '../src/gen/agent.ts';
+import { designWithAgent, partialParts } from '../src/gen/agent.ts';
+import { OpenRouter as Client } from '../src/gen/openrouter.ts';
 import { defaultModel, fallbacksFor, modelsForJob } from '../src/gen/catalog.ts';
 import { detailCraft } from '../src/gen/detailer.ts';
 import type { ModelInfo } from '../src/gen/openrouter.ts';
@@ -166,7 +167,7 @@ console.log('\n--- agent harness');
     },
   } as unknown as OpenRouter;
   const tools: string[] = [];
-  const res = await designWithAgent(stub, { model: 'stub/agent', prompt: 'a light car' }, (e) => tools.push(`${e.name}: ${e.summary}`));
+  const res = await designWithAgent(stub, { model: 'stub/agent', prompt: 'a light car' }, (e) => { if (e.type === 'tool') tools.push(`${e.name}: ${e.summary}`); });
   console.log('  ' + tools.join('\n  '));
   check(tools.some((t) => /^submit_craft:.*OK/.test(t)) && results.some((r) => /floating/.test(r)), 'the agent sees the floating part it submitted');
   check(res.report.passed && res.name === 'Agent Car', 'the agent runs check, analyze, test and detail, and finishes with a passing craft', `${res.report.vehicle} ${res.report.score}/100`);
@@ -225,6 +226,38 @@ console.log('\n--- agentic-only endpoints (Inkling 2 Small free)');
   check(!fallbacksFor(catalog, 'designer', 'nvidia/nemotron-3-ultra-550b-a55b:free').includes(INK), 'it is never a fallback');
   check(defaultModel(catalog, 'designer') !== INK, 'it is never picked by default (opt in after reading its terms)');
   check(!modelsForJob(catalog, 'engineer').some((m) => m.id === INK) && modelsForJob(catalog, 'designer').some((m) => m.id === INK), 'it is offered for the Designer only');
+}
+
+// ---------------------------------------------------------------- 8. streaming
+console.log('\n--- streaming');
+{
+  // A streamed reply: reasoning, text, and a submit_craft call whose arguments arrive in pieces.
+  const args = JSON.stringify({ craft: { name: 'S', formatVersion: 1, parts: LIGHT_CAR.parts.slice(0, 3) } });
+  const cut = [0, 40, 130, 260, args.length];
+  const events = [
+    { choices: [{ delta: { reasoning: 'Thinking about ' } }] },
+    { choices: [{ delta: { reasoning: 'a car.' } }] },
+    { choices: [{ delta: { content: 'Drafting.' } }] },
+    ...cut.slice(1).map((end, i) => ({ choices: [{ delta: { tool_calls: [{ index: 0, ...(i === 0 ? { id: 'call_1', function: { name: 'submit_craft', arguments: args.slice(cut[i], end) } } : { function: { arguments: args.slice(cut[i], end) } }) }] } }] })),
+    { choices: [{ delta: {} }], usage: { prompt_tokens: 10, completion_tokens: 20, cost: 0.0001 } },
+  ];
+  const sse = events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('') + ': OPENROUTER PROCESSING\n\ndata: [DONE]\n\n';
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(new ReadableStream({
+    start(c) { const b = new TextEncoder().encode(sse); for (let i = 0; i < b.length; i += 97) c.enqueue(b.slice(i, i + 97)); c.close(); },
+  }), { status: 200 })) as typeof fetch;
+  const deltas: string[] = [];
+  const res = await new Client({ baseUrl: 'http://stub' }).chat({ model: 'm', messages: [], tools: [], onDelta: (d) => deltas.push(d.kind === 'tool' ? `tool:${d.name}:${d.args.length}` : `${d.kind}:${d.text}`) });
+  globalThis.fetch = realFetch;
+  check(res.reasoning === 'Thinking about a car.' && deltas[0] === 'reasoning:Thinking about ', 'reasoning streams in as it arrives', res.reasoning);
+  check(deltas.includes('content:Drafting.'), 'visible text streams too');
+  check(res.toolCalls.length === 1 && res.toolCalls[0].function.name === 'submit_craft' && res.toolCalls[0].function.arguments === args, 'a tool call assembled from pieces', `${deltas.filter((d) => d.startsWith('tool')).length} tool deltas`);
+  check(Math.abs(res.usage.cost - 0.0001) < 1e-9, 'usage from the last chunk');
+  // Parts appear one by one while the arguments are still incomplete.
+  // Cut just before and just after the end of each part's JSON.
+  const ends = LIGHT_CAR.parts.slice(0, 3).map((p) => args.indexOf(JSON.stringify(p)) + JSON.stringify(p).length);
+  const counts = [ends[0] - 1, ends[0], ends[1] - 1, ends[1], ends[2]].map((n) => partialParts(args.slice(0, n)).length);
+  check(counts.join(',') === '0,1,1,2,3', 'the turntable gets each part as soon as it is complete', counts.join(','));
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');

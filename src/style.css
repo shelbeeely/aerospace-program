@@ -546,3 +546,15 @@ body.armed .tfire { display: block; }
 #craft-card .craft-pick select { flex: 1; min-width: 0; background: rgba(0,0,0,0.35); color: inherit; border: 1px solid rgba(255,255,255,0.22); border-radius: 4px; font: inherit; padding: 2px 4px; }
 #craft-card .craft-step { width: 28px; height: 28px; flex: none; border-radius: 4px; background: rgba(0,0,0,0.35); color: #eaf2f8; border: 1px solid rgba(255,255,255,0.22); font: 600 16px/1 ui-monospace, monospace; cursor: pointer; }
 #craft-card .craft-step:hover { border-color: #00d4ff; }
+
+/* ---------------------------------------------------------------- agent console (Studio) */
+.agent-console {
+  max-height: 260px; overflow-y: auto; margin: 8px 0; padding: 8px 10px; border-radius: 6px;
+  background: rgba(4, 10, 22, 0.85); border: 1px solid rgba(0, 212, 255, 0.18);
+  font: 12px/1.45 ui-monospace, monospace; white-space: pre-wrap; word-break: break-word;
+}
+.agent-console .ac-thinking { color: #7f93a8; font-style: italic; }
+.agent-console .ac-text { color: #dbe8f4; }
+.agent-console .ac-calling { color: #ffb000; }
+.agent-console .ac-tool { color: #00d4ff; margin: 2px 0; }
+.agent-console .ac-tool.bad { color: #ff6a4a; }

@@ -30,7 +30,8 @@ export const JOBS: Record<JobId, JobInfo> = {
       'dots-studio/dots-3-note-preview:free',
       'google/gemma-4-31b-it:free',
     ],
-    paid: ['anthropic/claude-sonnet-5.5', 'openai/gpt-6.1-sol', 'google/gemini-3.8-flash'],
+    // Muse Ember: cheap ($0.10/$0.50 per M), reasoning and reliable tool calls: a strong agent.
+    paid: ['meta/muse-ember', 'anthropic/claude-sonnet-5.5', 'openai/gpt-6.1-sol', 'google/gemini-3.8-flash'],
   },
   engineer: {
     label: 'Engineer',
