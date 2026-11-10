@@ -15,7 +15,8 @@ import type { CraftDef } from '../src/craft/types.ts';
 import type { ControlInputs } from '../src/sim/controls.ts';
 import { CITY, PLANET, wrapCoord } from '../src/sim/layout.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
-import { butteCell, highwayDistance, OUTLANDS, TERRAIN, terrainHeight, wastelandAt } from '../src/sim/terrain.ts';
+import { highwayDistance, OUTLANDS, TERRAIN, terrainHeight, wastelandAt } from '../src/sim/terrain.ts';
+import { bigCellForms } from '../src/arch/DigitalTerrainGenerator.ts';
 import { GroundPilot } from '../src/sim/vehicleTests.ts';
 import { landingSite, landingSites } from '../src/world/landingSites.ts';
 import { STREET_SITE } from '../src/world/spawnSites.ts';
@@ -113,7 +114,7 @@ function drive(def: CraftDef, x: number, z: number, heading: number, dist: numbe
       if (clear && walls > 40) site = { x: lx, z };
     }
   }
-  check(site !== null, 'found an Outlands highway between butte walls', site ? `x ${site.x.toFixed(0)}, z ${site.z.toFixed(0)}` : '');
+  check(site !== null, 'found an Outlands highway between landform walls', site ? `x ${site.x.toFixed(0)}, z ${site.z.toFixed(0)}` : '');
   if (site) for (const [name, def] of [...VEHICLES, ['light cycle', LIGHT_CYCLE], ...OUTLAND_VEHICLES] as Array<[string, CraftDef]>) {
     // Lane on the right of the centre line, heading south (+Z).
     const r = drive(def, site.x - 3.5, site.z, 180, 550, 15);
@@ -122,11 +123,11 @@ function drive(def: CraftDef, x: number, z: number, heading: number, dist: numbe
 }
 {
   // A basin (no butte) deep in the Outlands, strewn with rubble: cross 250 m of it.
-  const n = TERRAIN.bigCells, big = C / n, fine = C / OUTLANDS.rubbleCells;
+  const n = TERRAIN.bigCells, big = C / n, fine = C / TERRAIN.fineCells;
   let site: { x: number; z: number; rocks: number } | null = null;
   for (let i = 0; i < n && !site; i++) for (let j = 0; j < n && !site; j++) {
     const cx = (i + 0.5) * big, cz = (j + 0.5) * big;
-    if (butteCell(i, j) || wastelandAt(cx, cz) < 0.6) continue;
+    if (bigCellForms(i, j).length || wastelandAt(cx, cz) < 0.6) continue;
     const wz = wrapCoord(cz);
     if (Math.abs(wz) > C / 2 - 2000 || highwayDistance(cx, CITY.x0) < 60 || highwayDistance(cz, CITY.z0) < 160) continue;
     // Count shards the 3 m wide track runs over; the start must be on bare ground.
@@ -185,7 +186,9 @@ for (const [name, def] of VEHICLES) {
   sim.spawnSite = pad;
   sim.respawn();
   let { t, worstRoll } = settle(sim);
-  check(near(t.position[0], pad.x, 3) && near(t.position[2], pad.z, 3) && t.onGround && worstRoll < 10 && !sim.exploded, `${name}: spawns on ${pad.name}`);
+  // Ground vehicles never start on a landing site: on the road nearest it instead (AGENTS.md §14).
+  const fromPad = Math.hypot(t.position[0] - pad.x, t.position[2] - pad.z);
+  check(fromPad > pad.width && fromPad < 700 && t.onGround && worstRoll < 10 && !sim.exploded, `${name}: chosen ${pad.name}, starts on the nearest road instead`, `${fromPad.toFixed(0)} m from the pad`);
 
   // Nearest street, from a few places around the Grid.
   for (const [x, z] of [[0, 360], [-1000, -300], [-3000, -1200], [1500, 3000], [4000, 0]]) {
@@ -197,7 +200,8 @@ for (const [name, def] of VEHICLES) {
     sim.respawn();
     const p0 = sim.telemetry().position;
     const pitch = CITY.block + CITY.street;
-    const onLine = (v: number, o: number) => Math.abs(((v - o) % pitch + pitch * 1.5) % pitch - pitch / 2) < 1.5;
+    // On a street: within its right-hand lane (the lane is 6 m off the centreline).
+    const onLine = (v: number, o: number) => Math.abs(((v - o) % pitch + pitch * 1.5) % pitch - pitch / 2) < 8;
     ({ t, worstRoll } = settle(sim, 2));
     const pilot = new GroundPilot(t.heading, 12);
     const drove = run(sim, 5, (tt) => pilot.sample(sim.dt, tt));

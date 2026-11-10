@@ -1,39 +1,39 @@
+import { districtPlan } from '../arch/DistrictGenerator.ts';
+import { GRID } from '../arch/grid.ts';
 import { CITY, GROUND_HELIPADS, RUNWAYS, type LandingSite } from '../sim/layout.ts';
-import { cityPlan } from './City.ts';
 import { worldStructures } from './structures.ts';
 
 let cached: LandingSite[] | null = null;
 
 /**
- * Every place to land: the runways, the street-level helipads, and rooftop helipads on flat-
- * topped towers (two near each downtown hub, picked deterministically from the city plan).
- * A rooftop pad belongs to its tower's structure group and is unusable while it is fractured.
+ * Every place to land: the runways, the street-level helipads, and rooftop helipads on the flat
+ * roofs the architecture generator marks (two near each central hub, picked deterministically).
+ * A rooftop pad belongs to its structure's group and is unusable while it is fractured.
  */
 export function landingSites(): LandingSite[] {
   if (cached) return cached;
   const ws = worldStructures();
-  const spires = cityPlan().spires;
+  const groupOf = new Map<string, number>();
+  for (const g of ws.groups) if (g.arch) groupOf.set(g.arch, g.id);
   const roofs: Array<{ x: number; z: number; y: number; group: number; r: number }> = [];
-  for (const g of ws.groups) {
-    if (!g.name.startsWith('city:') || g.kit) continue;
-    let top = null as (typeof ws.list)[number] | null;
-    for (const i of g.pieces) {
-      const p = ws.list[i];
-      if (!top || p.y + p.sy / 2 > top.y + top.sy / 2) top = p;
-    }
-    if (!top || top.shape !== 'box') continue;
-    const y = top.y + top.sy / 2;
-    const r = Math.min(top.sx, top.sz) / 2;
-    if (r < 9 || y < 50 || y > 260) continue;
-    if (spires.some((s) => Math.abs(s.x - top!.x) < top!.sx / 2 && Math.abs(s.z - top!.z) < top!.sz / 2)) continue;
-    roofs.push({ x: top.x, z: top.z, y, group: g.id, r });
+  const nx = Math.ceil(GRID.centralX / GRID.chunkBlocks), nz = Math.ceil(GRID.centralZ / GRID.chunkBlocks);
+  for (let ci = 0; ci < nx; ci++) for (let cj = 0; cj < nz; cj++) {
+    const d = districtPlan(ci, cj);
+    d.structures.forEach((s, i) => {
+      if (!d.lots[i].central || !s.roof) return;
+      const group = groupOf.get(s.id);
+      if (group === undefined) return;
+      const { x, y, z, r } = s.roof;
+      if (r < 9 || y < 30 || y > 260) return;
+      roofs.push({ x, z, y, group, r });
+    });
   }
   const names = ['Downtown', 'Southwest', 'South', 'Northwest', 'Northeast'];
   const rooftop: LandingSite[] = [];
   CITY.hubs.forEach((hub, h) => {
     const near = roofs
       .map((r) => ({ r, d: Math.hypot(r.x - hub.x, r.z - hub.z) }))
-      .filter((c) => c.d < hub.r * 0.8)
+      .filter((c) => c.d < hub.r * 1.2)
       .sort((a, b) => a.d - b.d);
     const picked: typeof roofs = [];
     for (const c of near) {

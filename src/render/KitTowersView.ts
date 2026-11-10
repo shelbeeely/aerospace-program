@@ -48,9 +48,9 @@ export class KitTowersView {
       metalLight: facadeMaterial('#00eaff', false),
       walls: facadeMaterial('#1f6bff', false),
       floor: facadeMaterial('#1f8bff', false),
-      glow: glowMaterial('#00eaff', 3.2),
-      emissive: glowMaterial('#ff8a1f', 3.6),
-      strip: glowMaterial('#1f8bff', 4),
+      glow: glowMaterial('#36e2ff', 1.8),
+      emissive: glowMaterial('#ff7a1a', 2),
+      strip: glowMaterial('#2f74ff', 2),
       glass: new THREE.MeshStandardNodeMaterial({ color: '#050a26', metalness: 0.9, roughness: 0.12, emissive: '#0a1a5a', emissiveIntensity: 0.6 }),
     };
     const roleNames = Object.keys(roles);
@@ -129,7 +129,7 @@ export class KitTowersView {
     return geo;
   }
 
-  /** Kit towers of the planet city's near chunks, drawn as real models (PlanetCityView). */
+  /** Kit towers of the planet city's registered (near) chunks, drawn as real models. */
   setOuter(groups: StructureGroup[]): void {
     this.outerGroups = groups;
     this.fillOuter();

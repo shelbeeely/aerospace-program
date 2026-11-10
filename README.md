@@ -14,6 +14,8 @@ npm run design -- "a twin-boom cargo plane" --model anthropic/claude-sonnet-5.5
 npm run sim            # headless physics regression (takeoff, turn, stalls, CoM shift, crash)
 npm run weather        # weather impact checks (rain, icing, ground effect, vortex ring, wet runway)
 npm run ground         # ground vehicles: flat ground, skid steering, Outlands highways and rubble, spawn sites
+npm run arch           # digital world: five families vs the ten checks, districts, interiors, Outlands
+npm run drive          # road network: one graph, every destination by road, the flight computer driving
 npm run build          # typecheck + production build
 ```
 
@@ -433,11 +435,33 @@ and reset regressions. In the browser console, `game.sim.triggerLightning()` tri
 near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)` starts a fire.
 
 
+## The digital world (1982)
+
+The world is generated in the visual language of the original 1982 TRON digital world (see
+[AGENTS.md](AGENTS.md) for the rules, [docs/architecture-grammar.md](docs/architecture-grammar.md)
+for how it works). Open **`explore.html`** (the Digital World Explorer) to fly or walk through it
+with the debug panel and the archetype lab; in the game, **K** opens the inspector.
+
+- **Hierarchy:** World → Region → District → Structure → Component, all from one seed. Seven
+  civilised region identities (control centres, machine cities, industrial zones,
+  communication districts, transport networks, open plains, electronic caverns) and five
+  Outlands archetypes (grid plains, Sea of Simulation, electronic canyons, geometric wastelands,
+  mechanical caverns), blended at their borders.
+- **Five architectural families** (circuit-board structures, monumental processing towers,
+  industrial megastructures, electronic caverns, radial/communication structures) plus the
+  imported kit towers, each structure validated by ten architectural checks. Accessible halls
+  have real interiors you can drive or walk into.
+- **Light is architecture:** selective edges and emissive faces by role (structure, data,
+  energy, entrance, process, warning) and per-structure activity states (active, idle, damaged,
+  inactive). Painted skies and haze follow the region below.
+- **Roads:** every road is on one network. The flight computer's **Go to** drives ground
+  vehicles there (J): right lane, corner speeds, re-routing. Ground vehicles start on a road.
+
 ## The Grid (city, airport, autopilot)
 
-- **The Grid** covers the whole land: ~6,500 seeded towers across five downtown hubs, data
-  highways every sixth street with light-cycle traffic, raised freeways, a 530 m Grid Spire,
-  a stepped arena, a stadium and floating slabs. The airport keeps real obstacle-limitation
+- **The Grid** covers the land with procedurally generated districts (see *The digital world*
+  above): data highways every sixth street with light-cycle traffic, a ~490 m Grid Spire at
+  the main hub, landmarks at every hub, Solar Sailer routes between them. The airport keeps real obstacle-limitation
   zoning (airfield clear, approach/departure funnels rising 2%, a 40 m climb-out corridor).
 - **Everything is destructible.** Every structure is a block grid: cheap static colliders while
   intact (streamed within 1 km of the craft), fractured into breakable blocks on a hard hit.
@@ -454,13 +478,13 @@ near the aircraft using the same conductor rules; `game.sim.fire.ignite(partId)`
 - **Earthquakes** bring the city down: intact structures within 1.2 km of the craft whose tops
   would shake past their strength (tall, slender towers and raised highways first) fracture,
   then the shaking knocks blocks out and whatever they held up falls as rubble.
-- **The Outlands.** Vast wastelands outside the cities' boundaries (~25% of the land), craggy
-  and treacherous: sheer-walled buttes up to 320 m split by deep, straight ravines, needle crags
-  on their tops and sharp rubble strewn over ravine floors and basins. Lit in the contrasting
-  palette: amber strata up the walls, orange-to-red rims and ridgelines over an electric-blue
-  survey grid. Outlands highways (every 37th street line, both ways) cut clean through, so it
-  all stays drivable: highways, ravine floors and basins are at street level. Physics uses one
-  convex hull per landform, so you hit exactly what you see (`src/sim/terrain.ts`).
+- **The Outlands.** Immense abstract landscapes outside the cities (~24% of the land), in five
+  archetypes blended at their borders: grid plains with elevated platforms, the Sea of
+  Simulation's pale domes and floating orbs, electronic canyons of stepped mesas and narrow
+  passages, sparse geometric wastelands, and mechanical caverns of roof slabs on pillars. Every
+  landform is an exact convex solid that physics collides with (`src/arch/DigitalTerrainGenerator.ts`).
+  Outlands highways (every 37th street line) cut clean through, and sparse landmarks stand deep
+  inside, linked by Solar Sailer routes.
 - **Outlands vehicles.** Street light cycles are not built for rocky ground. Built for it: the
   **Light Crawler** (six-wheel drive, counter-steering rear axle), the **Light Runner** (fast
   four-wheel drive on tall wheels), the **Light Snowmobile** (two steering skis and a driven

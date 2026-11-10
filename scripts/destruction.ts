@@ -130,6 +130,7 @@ console.log('\n--- jet into a 0.3 m wall at 300 m/s');
 console.log('\n--- voxel bites and crash speed');
 const crash = (def: CraftDef, v: number) => {
   const sim = new Simulation(def);
+  sim.traffic.enabled = false; // ground vehicles start on a road: keep riders out of a controlled drop
   run(sim, 2);
   const b = sim.craft.body;
   const t = b.translation();

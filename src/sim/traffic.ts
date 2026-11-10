@@ -1,10 +1,12 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { cityPlan, mulberry32 } from '../world/City.ts';
+import { mulberry32 } from '../world/City.ts';
 import { blockSummary, GRID } from '../world/planetCity.ts';
 import type { ChipEmitter } from './chips.ts';
 import type { ContactForceInfo } from './damage.ts';
 import { CITY, hash01, PLANET, wrapCoord } from './layout.ts';
 import { DEREZ_TIME, type TrailPoint, type TrailSystem } from './trails.ts';
+import { segmentExists } from './roadRules.ts';
+import { isHighwayLine as gridHighway } from '../arch/grid.ts';
 
 /**
  * AI light-cycle traffic: programs riding the planet's street grid (Rule 4: each lays a short
@@ -98,11 +100,11 @@ const mod = (v: number, m: number) => ((v % m) + m) % m;
 export const lineX = (i: number) => GRID.x0 + i * P;
 export const lineZ = (j: number) => GRID.z0 + j * P;
 
-/** Block kind byte (0 city, 64 Outlands, 128 open, 192 airfield, 255 sea), from blockSummary. */
+/** Block kind byte (0 lot, 32 open plain, 64 Outlands, 128 open, 192 airfield, 255 sea), from blockSummary. */
 export function blockKind(gi: number, gj: number): number {
   return blockSummary()[(mod(gj, N) * N + mod(gi, N)) * 4 + 2];
 }
-/** Blocks with streets around them (the ground shader draws none on airfields, sea, Outlands). */
+/** Blocks with streets around them (the ground shader draws none on airfields, sea, Outlands, open plains). */
 export const roadBlock = (gi: number, gj: number) => {
   const k = blockKind(gi, gj);
   return k === 0 || k === 128;
@@ -110,41 +112,16 @@ export const roadBlock = (gi: number, gj: number) => {
 
 /** Is grid line i a data highway? The same rule the ground shader uses (in the wrapped frame). */
 export function isHighwayLine(i: number): boolean {
-  const k = Math.round((wrapCoord(GRID.x0 + mod(i, N) * P) - GRID.x0) / P);
-  return mod(k, CITY.highwayEvery) === 0;
-}
-
-let blocked: Set<number> | null = null;
-const segKey = (alongX: boolean, i: number, j: number) => (alongX ? 0 : N * N) + mod(i, N) * N + mod(j, N);
-/** Segments of the hand-built centre a ground-level structure stands in (arena, stadium, ...). */
-function blockedSegments(): Set<number> {
-  if (blocked) return blocked;
-  blocked = new Set();
-  const m = 0.5 + TRAFFIC.half[0];
-  const hitsLane = (lo: number, hi: number, line: number) => TRAFFIC.lanes.some((l) => [line - l, line + l].some((c) => hi > c - m && lo < c + m));
-  for (const p of cityPlan().pieces) {
-    if (p.y - p.sy / 2 > 3) continue;
-    const x0 = p.x - p.sx / 2, x1 = p.x + p.sx / 2, z0 = p.z - p.sz / 2, z1 = p.z + p.sz / 2;
-    // Along-z segments on x-lines i crossing the piece.
-    for (let i = Math.floor((x0 - 11 - GRID.x0) / P); i <= Math.ceil((x1 + 11 - GRID.x0) / P); i++) {
-      if (!hitsLane(x0, x1, lineX(i))) continue;
-      for (let j = Math.floor((z0 - GRID.z0) / P); j <= Math.floor((z1 - GRID.z0) / P); j++) blocked.add(segKey(false, i, j));
-    }
-    for (let j = Math.floor((z0 - 11 - GRID.z0) / P); j <= Math.ceil((z1 + 11 - GRID.z0) / P); j++) {
-      if (!hitsLane(z0, z1, lineZ(j))) continue;
-      for (let i = Math.floor((x0 - GRID.x0) / P); i <= Math.floor((x1 - GRID.x0) / P); i++) blocked.add(segKey(true, i, j));
-    }
-  }
-  return blocked;
+  return gridHighway(i);
 }
 
 /**
  * Can riders use the street segment? `alongX`: on z-line j from node i to i + 1 (blocks (i, j-1)
  * and (i, j) either side); otherwise on x-line i from node j to j + 1 (blocks (i-1, j), (i, j)).
+ * The shared road rules (sim/roadRules.ts), riders' subset: city streets and highways only.
  */
 export function segmentOpen(alongX: boolean, i: number, j: number): boolean {
-  const ok = alongX ? roadBlock(i, j - 1) && roadBlock(i, j) : roadBlock(i - 1, j) && roadBlock(i, j);
-  return ok && !blockedSegments().has(segKey(alongX, i, j));
+  return segmentExists(blockSummary(), alongX, i, j, true);
 }
 
 /** The segment leaving intersection (i, j) along heading h. */

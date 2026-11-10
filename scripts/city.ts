@@ -20,7 +20,7 @@ function check(ok: boolean, label: string, detail = ''): void {
 }
 
 const w = worldStructures();
-const city = w.groups.filter((g) => g.name.startsWith('city:') || g.name.startsWith('highway:'));
+const city = w.groups.filter((g) => g.name.startsWith('arch:') && !g.name.startsWith('arch:infra:'));
 const airport = w.groups.filter((g) => g.name.startsWith('airport:'));
 console.log(`${w.groups.length} structures (${city.length} city, ${airport.length} airport), ${w.list.length} pieces`);
 
@@ -56,9 +56,9 @@ check(span.x1 - span.x0 > 6000 && span.z1 - span.z0 > 9000, 'the city covers the
   check(sites.filter((s) => s.group !== undefined).length >= 6, 'rooftop helipads sit on towers across the hubs', `${sites.filter((s) => s.group !== undefined).length} rooftop pads`);
 }
 const kits = w.groups.filter((g) => g.kit).length;
-check(kits > 500, 'imported kit towers are placed across the grid', `${kits} towers`);
+check(kits > 20, 'imported kit towers are placed across the grid', `${kits} towers in the centre`);
 const tallest = city.reduce((a, b) => (b.size[1] * b.blockSize > a.size[1] * a.blockSize ? b : a));
-check(tallest.size[1] * tallest.blockSize > 450, 'the landmark spire tops 450 m', `${(tallest.size[1] * tallest.blockSize).toFixed(0)} m`);
+check(tallest.size[1] * tallest.blockSize > 400, 'the Grid Spire landmark tops 400 m', `${(tallest.size[1] * tallest.blockSize).toFixed(0)} m`);
 
 const sim = new Simulation(JET);
 sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
@@ -72,11 +72,20 @@ check(streamed > 0 && streamed < w.list.length / 4, 'only structures near the cr
 }
 
 // --- Jet flown into a tower at 80 m/s
-const target = city.filter((g) => g.name.startsWith('city:') && g.size[1] * g.blockSize > 150 && g.size[1] * g.blockSize < 300)[0];
+// A tower with a broad solid face at 60 m (the jet flies into that face).
+const pick = (() => {
+  for (const g of city) {
+    if (g.size[1] * g.blockSize < 120 || g.size[1] * g.blockSize > 300 || Math.hypot(g.x0, g.z0 - 360) < 600) continue;
+    const p = g.pieces.map((i) => w.list[i]).find((q) => q.shape === 'box' && q.y - q.sy / 2 < 50 && q.y + q.sy / 2 > 90 && q.sx > 25 && q.sz > 25);
+    if (p) return { g, p };
+  }
+  throw new Error('no tower with a broad face');
+})();
+const target = pick.g;
 const s = target.blockSize;
-const cx = target.x0 + (target.size[0] * s) / 2;
+const cx = pick.p.x;
 
-const zFace = target.z0 + target.size[2] * s;
+const zFace = pick.p.z + pick.p.sz / 2;
 const body = sim.craft.body;
 body.setTranslation({ x: cx, y: 60, z: zFace + 30 }, true);
 body.setLinvel({ x: 0, y: 0, z: -80 }, true);
@@ -93,7 +102,7 @@ const blocks = sim.staticWorld.fractured.get(target.id);
 check(fractured, 'the struck tower fractured into its block grid', blocks ? `${blocks.list.length} blocks of ${s.toFixed(1)} m` : 'not fractured');
 check(sim.town.destroyed > 0, 'blocks around the impact were destroyed', `${sim.town.destroyed} blocks`);
 check(sim.failures.length > 0, 'the jet broke apart on impact', sim.failures.map((f) => f.partId).join(', '));
-check(sim.position.z > target.z0 - 5 || sim.town.destroyed > 0, 'no tunnelling through the tower');
+check(sim.position.z > pick.p.z - pick.p.sz / 2 - 5 || sim.town.destroyed > 0, 'no tunnelling through the tower');
 check(ms < 25, 'physics step stays affordable during the crash', `${ms.toFixed(2)} ms/step`);
 
 // --- Middle tier blown out: the top must lose support and fall
@@ -119,7 +128,7 @@ check(sim.town.destroyed > destroyedBefore, 'the falling top shatters when it la
 
 // --- Floating slab: no anchor at all, so it drops when broken
 sim.resetToRunway();
-const slab = w.groups.find((g) => g.name.startsWith('city:') && w.list[g.pieces[0]].y > 200 && g.pieces.length === 1)!;
+const slab = w.groups.find((g) => g.pieces.length === 1 && w.list[g.pieces[0]].y - w.list[g.pieces[0]].sy / 2 > 12)!;
 const slabB = sim.staticWorld.fracture(slab.id, { impulse: 1e4, x: w.list[slab.pieces[0]].x, y: w.list[slab.pieces[0]].y, z: w.list[slab.pieces[0]].z }, sim.time);
 for (let i = 0; i < 30; i++) sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 0 });
 check(slabB.list.every((b) => !b.alive), 'a struck floating slab has no anchor and falls', `${slabB.list.filter((b) => b.alive).length} blocks still floating`);

@@ -20,7 +20,7 @@ import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
 import { vehicleKind } from './vehicleTests.ts';
-import { nearestStreetPoint, siteSpawnPoint, type SpawnPoint, type SpawnSite } from '../world/spawnSites.ts';
+import { nearestRoadPoint, siteSpawnPoint, type SpawnPoint, type SpawnSite } from '../world/spawnSites.ts';
 import { orbitElements, type OrbitTelemetry, type Telemetry } from './telemetry.ts';
 
 function roundOrbit(o: OrbitTelemetry): OrbitTelemetry {
@@ -322,7 +322,13 @@ export class Simulation {
     const h = craft ? craft.restingHeight() : 3;
     let p: SpawnPoint | null = null;
     const use = craft ? this.effectiveSpawnSite(site) : null;
-    if (use) p = use.kind === 'street' ? nearestStreetPoint(this.position.x, this.position.z) : siteSpawnPoint(use);
+    // Ground vehicles always start on the road network, never on an airstrip: on the road
+    // nearest the chosen site (or where they were, for "Nearest street"; or Grid International).
+    const ground = !!craft && craft.wheels.some((w) => (w.def.drive ?? 0) > 0) && !craft.rotors.length;
+    if (ground) {
+      const at = site?.kind === 'street' ? this.position : site ? site : { x: 0, z: LAYOUT.spawnZ };
+      p = nearestRoadPoint(at.x, at.z);
+    } else if (use && use.kind !== 'street') p = siteSpawnPoint(use);
     if (craft && p) {
       // The centre of mass (not the arbitrary origin) over the spot, facing along the strip/street.
       const rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.yaw);
