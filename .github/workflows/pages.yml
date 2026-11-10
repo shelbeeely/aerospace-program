@@ -32,6 +32,9 @@ jobs:
       - run: npm run build
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
+          # The deployed multiplayer relay (repo Settings → Variables → GRID_SERVER, e.g.
+          # wss://grid-relay.onrender.com). Empty: players type a server into Grid Link.
+          VITE_GRID_SERVER: ${{ vars.GRID_SERVER }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

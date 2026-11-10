@@ -139,8 +139,14 @@ export class NetClient {
     this.hookSimulation();
   }
 
-  /** ws://<page host>:8787 (wss on https pages). */
+  /**
+   * The relay to use by default: the build's VITE_GRID_SERVER (the deployed relay, e.g.
+   * wss://grid-relay.onrender.com), else ws://<page host>:8787 (wss on https pages).
+   */
   static defaultServer(): string {
+    const env = (import.meta as { env?: Record<string, string | undefined> }).env;
+    const built = env?.VITE_GRID_SERVER?.trim();
+    if (built) return built;
     const host = typeof location !== 'undefined' && location.hostname ? location.hostname : 'localhost';
     const secure = typeof location !== 'undefined' && location.protocol === 'https:';
     return `${secure ? 'wss' : 'ws'}://${host.includes(':') ? `[${host}]` : host}:8787`;

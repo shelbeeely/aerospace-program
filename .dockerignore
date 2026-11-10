@@ -1,0 +1,5 @@
+# Only server/ and src/net/protocol.ts go into the relay image.
+*
+!server/index.ts
+!server/rooms.ts
+!src/net/protocol.ts
