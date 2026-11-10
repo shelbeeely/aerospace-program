@@ -13,6 +13,7 @@ import { Wheel } from '../modules/Wheel.ts';
 import { Chute } from '../modules/Airbrake.ts';
 import { WeaponMount } from '../modules/WeaponMount.ts';
 import { NEON, glow, neonFillMaterial, neonize, neonTint, type TslNode } from './neon.ts';
+import { buildGrammar, driveGrammarLights, type GrammarModel } from './VehicleGrammarView.ts';
 
 export function geometryFor(shape: ShapeDef): THREE.BufferGeometry {
   switch (shape.type) {
@@ -108,13 +109,50 @@ export class CraftView {
     }
     for (const m of craft.modules) {
       if (m instanceof AeroSurface && m.def.control) this.addFlap(m);
-      else if (m instanceof Engine) this.addProp(m);
+      else if (m instanceof Engine && (m.isProp || m.def.kind === 'prop')) this.addProp(m);
       else if (m instanceof Wheel) this.addWheel(m);
       else if (m instanceof Rotor) this.addRotor(m);
       else if (m instanceof Chute) this.addChute(m);
       else if (m instanceof WeaponMount) this.addWeapon(m);
     }
+    // Secondary and tertiary geometry from what each part does (the vehicle grammar).
+    this.grammar = buildGrammar(craft.def, this.root);
+    for (const [id, objs] of this.grammar.byPart) for (const o of objs) this.track(id, o);
+    this.engines = craft.modules.filter((m): m is Engine => m instanceof Engine);
+    this.rotors = craft.modules.filter((m): m is Rotor => m instanceof Rotor);
     this.hideParts(craft.detached);
+  }
+
+  private readonly grammar: GrammarModel;
+  private readonly engines: Engine[];
+  private readonly rotors: Rotor[];
+  private readonly lastPos = new THREE.Vector3();
+  private lastT = 0;
+  private speed = 0;
+  /** Set when the craft is wrecked or switched off: its lights go dark. */
+  inactive = false;
+
+  /** Pieces the vehicle grammar added (tests, debug). */
+  get grammarPieces(): number {
+    return this.grammar.pieces;
+  }
+
+  private driveLights(position: THREE.Vector3): void {
+    const now = performance.now() / 1000;
+    const dt = now - this.lastT;
+    if (this.lastT > 0 && dt > 0 && dt < 0.5) this.speed += (position.distanceTo(this.lastPos) / dt - this.speed) * Math.min(1, dt * 4);
+    this.lastT = now;
+    this.lastPos.copy(position);
+    let activity = Math.min(1, this.speed / 30);
+    for (const e of this.engines) activity = Math.max(activity, e.spool);
+    for (const r of this.rotors) activity = Math.max(activity, r.omega / Math.max(1, r.maxOmega));
+    driveGrammarLights(this.grammar, {
+      activity,
+      inactive: this.inactive,
+      time: now,
+      engine: (i) => this.engines[i],
+      integrity: (id) => (this.craft.detached.has(id) ? 0 : this.craft.voxels.get(id)?.integrity ?? 1),
+    });
   }
 
   private track(partId: string, o: THREE.Object3D): void {
@@ -428,6 +466,7 @@ export class CraftView {
       if (g.visible) g.scale.setScalar(0.2 + 0.8 * m.open);
     }
     for (const a of this.animated) a.update();
+    this.driveLights(position);
     for (const v of this.voxelParts) if (v.voxels.version !== v.seen) this.rebuildVoxels(v);
   }
 

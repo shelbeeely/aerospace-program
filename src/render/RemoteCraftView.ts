@@ -5,6 +5,7 @@ import { validateCraft } from '../craft/validate.ts';
 import { edgeColor, fillColor, geometryFor } from './CraftView.ts';
 import { style1982 } from '../craft/style1982.ts';
 import { glow, neonFillMaterial, neonize, neonTint } from './neon.ts';
+import { buildGrammar, driveGrammarLights } from './VehicleGrammarView.ts';
 
 /**
  * Another player's craft, drawn from their CraftDef alone (no physics body): one neon primitive
@@ -47,6 +48,8 @@ export class RemoteCraftView {
           else if (m.type === 'rotor') this.addDisc(at, q, m.radius, true, color);
         }
       }
+      // The vehicle grammar's detail, lights steady (no engine state for a remote craft).
+      driveGrammarLights(buildGrammar(def, this.root), { activity: 1, time: 0, engine: () => ({ spool: 0.7, afterburner: 0 }) });
     } else {
       const geo = new THREE.BoxGeometry(2, 1, 4);
       const fill = neonFillMaterial(neonTint(color).multiplyScalar(0.035));

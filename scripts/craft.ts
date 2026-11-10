@@ -25,6 +25,10 @@ import type { ModelInfo } from '../src/gen/openrouter.ts';
 import type { OpenRouter } from '../src/gen/openrouter.ts';
 import { flightTest } from '../src/sim/flightTest.ts';
 import { initPhysics } from '../src/sim/Simulation.ts';
+import { halfExtents, pieceArea, vehicleGrammar } from '../src/craft/grammar.ts';
+import { partQuaternion } from '../src/craft/massProperties.ts';
+import { readFileSync } from 'node:fs';
+import * as THREE_ from 'three';
 
 await initPhysics();
 let failed = 0;
@@ -266,6 +270,49 @@ console.log('\n--- streaming');
   const ends = LIGHT_CAR.parts.slice(0, 3).map((p) => args.indexOf(JSON.stringify(p)) + JSON.stringify(p).length);
   const counts = [ends[0] - 1, ends[0], ends[1] - 1, ends[1], ends[2]].map((n) => partialParts(args.slice(0, n)).length);
   check(counts.join(',') === '0,1,1,2,3', 'the turntable gets each part as soon as it is complete', counts.join(','));
+}
+
+// ---------------------------------------------------------------- vehicle grammar
+console.log('\n--- vehicle grammar (architecture rules applied to vehicles)');
+{
+  const surface = (d: CraftDef) => d.parts.reduce((a, p) => { const h = halfExtents(p.shape); return a + 8 * (h.x * h.y + h.y * h.z + h.x * h.z); }, 0);
+  let thin = 0, heavyLight = 0, loose = 0, worst = 0;
+  const notes: string[] = [];
+  for (const b of BUILTINS) {
+    const d = style1982(b.craft);
+    const a = vehicleGrammar(d), again = vehicleGrammar(d);
+    if (JSON.stringify(a) !== JSON.stringify(again)) notes.push(`${b.id} not deterministic`);
+    const sec = a.filter((p) => p.tier === 'secondary').length, ter = a.filter((p) => p.tier === 'tertiary').length;
+    if (a.length < 10 || !sec || !ter) { thin++; notes.push(`${b.id}: ${sec}+${ter}`); }
+    const lit = a.filter((p) => p.tone === 'light').reduce((s, p) => s + pieceArea(p.shape), 0);
+    const share = lit / (surface(d) + a.filter((p) => p.tone !== 'light').reduce((s, p) => s + pieceArea(p.shape), 0));
+    worst = Math.max(worst, share);
+    if (share > 0.1) heavyLight++;
+    // Every piece sits on the craft: on its own part, or (a nozzle carried through a tailcone)
+    // on the part it was carried through (within the box, plus the piece's own reach).
+    for (const p of a) {
+      const reach = p.shape.type === 'box' ? Math.max(...p.shape.size) / 2 : p.shape.type === 'frustum' ? p.shape.length : 0.3;
+      const on = (part: CraftDef['parts'][number]) => {
+        const h = halfExtents(part.shape);
+        const l = new THREE_.Vector3(...p.position).sub(new THREE_.Vector3(...part.position)).applyQuaternion(partQuaternion(part).invert());
+        return Math.abs(l.x) <= h.x + reach + 0.3 && Math.abs(l.y) <= h.y + reach + 0.3 && Math.abs(l.z) <= h.z + reach + 0.3;
+      };
+      const own = d.parts.find((q) => q.id === p.partId)!;
+      if (!on(own) && !(p.func.startsWith('engine.') && d.parts.some(on))) { loose++; notes.push(`${b.id}/${p.func} off ${own.id}`); }
+    }
+  }
+  check(thin === 0, 'every built-in gets secondary and tertiary geometry from its functions', notes.filter((n) => n.includes(':')).join('; ') || `${BUILTINS.length} craft`);
+  check(!notes.some((n) => n.includes('deterministic')), 'the grammar is deterministic (seeded by the craft)');
+  check(heavyLight === 0, 'light stays selective (lit pieces under 10% of the surface)', `worst ${(worst * 100).toFixed(1)}%`);
+  check(loose === 0, 'every piece sits on the craft', notes.filter((n) => n.includes(' off ')).slice(0, 4).join('; '));
+  const funcs = (d: CraftDef) => new Set(vehicleGrammar(style1982(d)).map((p) => p.func));
+  const jet = funcs(BUILTINS.find((b) => b.id === 'jet')!.craft);
+  check(['engine.nozzle', 'engine.petals', 'engine.glow', 'engine.intake', 'wing.tip', 'hull.spine', 'hull.plate', 'cockpit.frame'].every((f) => jet.has(f)), 'the jet: nozzle, petals, glow, intake, wingtips, spine, plates, canopy frame', [...jet].join(','));
+  const car = funcs(LIGHT_CAR);
+  check(car.has('wheel.fender') && car.has('trail.emitter'), 'a ground car: fenders over its wheels and a trail emitter', [...car].join(','));
+  const renamed = vehicleGrammar(style1982({ ...LIGHT_CAR, name: 'Another car' }));
+  check(JSON.stringify(renamed) !== JSON.stringify(vehicleGrammar(style1982(LIGHT_CAR))), 'different craft vary (the seed is the craft)');
+  check(!/Math\.random/.test(readFileSync('src/craft/grammar.ts', 'utf8')), 'no Math.random in the grammar');
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');

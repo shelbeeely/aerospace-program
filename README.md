@@ -17,7 +17,7 @@ npm run ground         # ground vehicles: flat ground, skid steering, Outlands h
 npm run arch           # digital world: five families vs the ten checks, districts, interiors, Outlands
 npm run drive          # road network: one graph, every destination by road, the flight computer driving
 npm run weapons        # weapons: fitted multiples, cannon cratering, tank bulldozer, bombs, missiles, laser, discs, armour
-npm run craft          # vehicle rules: connected parts, the 1982 palette, ground-vehicle design loop (offline)
+npm run craft          # vehicle rules: connected parts, the 1982 palette, the vehicle grammar, ground-vehicle design loop (offline)
 npm run engines        # fast flight: compressibility, ramjet/scramjet/solid/turbojet, thrust vectoring, airbrake, chute, cone/capsule parts, weight floors
 npm run air            # AI air traffic: count, clearance, destinations and circling, shot down and replaced
 npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
@@ -87,6 +87,13 @@ npm run build          # typecheck + production build
    game volume (M mutes). The Studio's Music section composes or removes the theme of the
    vehicle you're in.
    There are no custom liveries: every vehicle wears the 1982 palette.
+   Every vehicle, stock or generated, is also dressed by the **vehicle grammar**
+   (`src/craft/grammar.ts`): the building rules applied to vehicles. From what each part does it
+   adds secondary machinery (hull spines and armour plates, wingtip caps and fences, nozzle
+   rings and petals, intake cowls, canopy frames, fender arcs, rotor guards) and tertiary seams
+   and light lines, seeded by the craft. Lights are functional: running lights brighten when
+   the vehicle is active, nozzles glow with the engine's spool and flare on afterburner,
+   damaged parts flicker. It is drawn only, so it never changes how a craft flies.
 
 ### The crew: one model per job, free first
 
