@@ -451,6 +451,10 @@ with the debug panel and the archetype lab; in the game, **K** opens the inspect
   industrial megastructures, electronic caverns, radial/communication structures) plus the
   imported kit towers, each structure validated by ten architectural checks. Accessible halls
   have real interiors you can drive or walk into.
+- **Weather in the same language:** raymarched volumetric clouds shaped by the simulation's own
+  cloud cells (the ones that rain, ice and buffet you), shaded in posterised airbrush bands with
+  a warm rim and a survey grid on their bases; from altitude the planet's limb glows through a
+  stylised scattering shell. The flat gridded deck remains on `?quality=low`.
 - **Light is architecture:** selective edges and emissive faces by role (structure, data,
   energy, entrance, process, warning) and per-structure activity states (active, idle, damaged,
   inactive). Painted skies and haze follow the region below.
@@ -532,6 +536,11 @@ with the debug panel and the archetype lab; in the game, **K** opens the inspect
 Checks: `npm run city`, `npm run autopilot`, `npm run destruction`, `npm run design-pipeline`.
 
 ### Credits
+
+Volumetric clouds and atmosphere scattering: rewritten in a stylised form for this renderer from
+"Universal Planetary Volumetric Clouds & Scattering Atmosphere Engine"
+(https://github.com/leoawen/volumetric_cloud_atmosphere_scattering) by Leonardo Soares
+Gonçalves, MIT License (`src/render/arch/VolumetricClouds.ts`, `SkyAtmosphere.ts` scatterNode).
 
 Tower kit: This work is based on "Tron Buildings 1"
 (https://sketchfab.com/3d-models/tron-buildings-1-88ca3618bfbe42dea14f5b438250c9e2) by

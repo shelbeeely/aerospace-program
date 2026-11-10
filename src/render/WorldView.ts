@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { abs, cameraPosition, clamp, color, dot, float, fwidth, max, normalize, positionWorld, pow, smoothstep, step, uniform, uv, vec2, vec3 } from 'three/tsl';
 import { COAST, PLANET, RUNWAYS, type LandingSite } from '../sim/layout.ts';
-import { AtmosphereController, paintedSkyNode, SKY } from './arch/SkyAtmosphere.ts';
+import { AtmosphereController, paintedSkyNode, SCATTER, SKY } from './arch/SkyAtmosphere.ts';
 import { CITY_LIGHTS_FROM, CITY_LIGHTS_GAIN, GLOBE_VIEW, GLOBE_VIEW_ALT, cityGroundNode } from './cityGround.ts';
 import { curveOrigin, flatWorld } from './curvature.ts';
 import { GRID_SKY, NEON, SKY_PLANET, glow, type TslNode } from './neon.ts';
@@ -127,6 +127,7 @@ export class WorldView {
     this.oceanCut.value = globe || !this.hasOcean ? 0 : 1;
     CITY_LIGHTS_GAIN.value = 1 + 0.25 * Math.min(1, Math.max(0, (alt - 3000) / 20000));
     this.atmosphere.update(dt, camera.position.x, camera.position.z);
+    SCATTER.altitude.value = Math.max(0, alt);
     // Clear-weather sky (WeatherView, when present, dims it after this).
     const c = this.atmosphere.clear;
     this.horizon.copy(c.horizon);

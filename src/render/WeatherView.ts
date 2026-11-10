@@ -5,6 +5,7 @@ import { SKY_PLANET } from './neon.ts';
 import type { Atmosphere, Precipitation } from '../sim/atmosphere.ts';
 import { NEON, glow, gridLines, type TslNode } from './neon.ts';
 import type { WorldView } from './WorldView.ts';
+import { CLOUD_PARAMS, VolumetricClouds } from './arch/VolumetricClouds.ts';
 
 const MAX_DROPS = 9000;
 const BOX = 44; // metres, cube of falling drops around the camera
@@ -50,6 +51,9 @@ export class WeatherView {
   private readonly baseGrid = new THREE.Color();
   private readonly baseRunway = new THREE.Color();
   private snowCover = 0;
+  /** Raymarched, stylised volumetric clouds (false: the flat gridded deck, for low quality). */
+  volumetric = true;
+  private clouds: VolumetricClouds | null = null;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -92,6 +96,7 @@ export class WeatherView {
       m.visible = false;
       scene.add(m);
     }
+    this.clouds = new VolumetricClouds(scene, this.cloudTex);
     this.baseGround.copy(world.groundBase);
     this.baseGrid.copy(world.gridColor);
     this.baseRunway.copy(world.runwayBase);
@@ -145,14 +150,22 @@ export class WeatherView {
       // Ground fog (base at the surface) is drawn by the fog alone: a plane there would fight
       // the ground for depth.
       // From inside the layer only the fog shows; from below only the base, from above only the tops.
-      this.cloudBase.visible = base > 30 && cam.y < base;
-      this.cloudTop.visible = cam.y > top;
+      const vol = this.volumetric && !!this.clouds;
+      this.cloudBase.visible = !vol && base > 30 && cam.y < base;
+      this.cloudTop.visible = !vol && cam.y > top;
+      if (this.clouds) {
+        this.clouds.mesh.visible = vol;
+        if (vol) this.clouds.update(Math.max(base, 20), top, this.cloudCenter.x, this.cloudCenter.y, CLOUD_SPAN, cover, storm);
+      }
       this.cloudBase.position.set(this.cloudCenter.x, base, this.cloudCenter.y);
       this.cloudTop.position.set(this.cloudCenter.x, top, this.cloudCenter.y);
       const look = storm > 0.3 ? CLOUD_BASE_STORM : CLOUD_BASE;
       this.baseFill.copy(look.fill);
       this.baseLine.copy(look.line);
-    } else this.cloudTimer = 1e9;
+    } else {
+      this.cloudTimer = 1e9;
+      if (this.clouds) this.clouds.mesh.visible = false;
+    }
 
     // --- Light and sky: overcast when under (or in) the deck
     const below = cam.y < top ? 1 : 0.15;
@@ -229,4 +242,9 @@ export class WeatherView {
     }
     (this.drops.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
   }
+}
+
+/** Cloud march steps for a render quality (the volumetric clouds' cost knob). */
+export function setCloudQuality(steps: number): void {
+  CLOUD_PARAMS.steps.value = steps;
 }
