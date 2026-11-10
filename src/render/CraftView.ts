@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { isBodyColor } from '../craft/style1982.ts';
+import { axisRotation } from '../craft/Craft.ts';
 import { abs, float, max, min, positionLocal, smoothstep } from 'three/tsl';
 import type { Craft } from '../craft/Craft.ts';
 import { partQuaternion } from '../craft/massProperties.ts';
@@ -9,6 +10,7 @@ import { AeroSurface } from '../modules/AeroSurface.ts';
 import { Engine } from '../modules/Engine.ts';
 import { Rotor } from '../modules/Rotor.ts';
 import { Wheel } from '../modules/Wheel.ts';
+import { Chute } from '../modules/Airbrake.ts';
 import { NEON, glow, neonFillMaterial, neonize, neonTint, type TslNode } from './neon.ts';
 
 export function geometryFor(shape: ShapeDef): THREE.BufferGeometry {
@@ -22,6 +24,15 @@ export function geometryFor(shape: ShapeDef): THREE.BufferGeometry {
       const g = new THREE.CylinderGeometry(shape.radius, shape.radius, shape.length, 12);
       if (shape.axis === 'x') g.rotateZ(Math.PI / 2);
       if (shape.axis === 'z') g.rotateX(Math.PI / 2);
+      return g;
+    }
+    case 'cone':
+    case 'capsule': {
+      // Same frame as the collider: built along +Y (a cone's apex at +Y), then onto its axis.
+      const g = shape.type === 'cone'
+        ? new THREE.ConeGeometry(shape.radius, shape.length, 12)
+        : new THREE.CapsuleGeometry(shape.radius, Math.max(0.001, shape.length - 2 * shape.radius), 3, 12);
+      g.applyQuaternion(axisRotation(shape.axis ?? 'y', shape.type === 'cone' ? (shape.tip ?? -1) : 1));
       return g;
     }
   }
@@ -99,6 +110,7 @@ export class CraftView {
       else if (m instanceof Engine) this.addProp(m);
       else if (m instanceof Wheel) this.addWheel(m);
       else if (m instanceof Rotor) this.addRotor(m);
+      else if (m instanceof Chute) this.addChute(m);
     }
     this.hideParts(craft.detached);
   }
@@ -267,9 +279,39 @@ export class CraftView {
   }
 
   /** Place the craft at an (interpolated) pose and animate moving parts. */
+  /**
+   * A drag chute: a canopy (open cone, edges lit in the craft's circuit colour) with shroud lines,
+   * streaming behind its pack point, growing as it opens; hidden while packed or once cut away.
+   */
+  private readonly chutes: Array<{ m: Chute; g: THREE.Group }> = [];
+  private addChute(m: Chute): void {
+    const r = Math.sqrt(m.def.cdA / (Math.PI * 1.4)); // canopy radius from Cd ≈ 1.4
+    const g = new THREE.Group();
+    const canopy = new THREE.ConeGeometry(r, r * 0.9, 16, 1, true).rotateX(-Math.PI / 2); // mouth toward the craft
+    const accent = this.craft.def.parts.find((p) => !isBodyColor(p.color))?.color ?? '#00d4ff';
+    const mesh = this.neonPart(canopy, accent);
+    mesh.position.z = r * 3 + r * 0.45;
+    const lines = new THREE.BufferGeometry().setFromPoints(
+      Array.from({ length: 8 }, (_, i) => {
+        const a = (i / 8) * Math.PI * 2;
+        return [new THREE.Vector3(0, 0, 0), new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, r * 3)];
+      }).flat(),
+    );
+    g.add(mesh, new THREE.LineSegments(lines, new THREE.LineBasicNodeMaterial({ color: neonTint(accent).multiplyScalar(0.6) })));
+    g.position.copy(m.localPosition);
+    g.visible = false;
+    this.root.add(g);
+    this.track(m.partId, g);
+    this.chutes.push({ m, g });
+  }
+
   update(position: THREE.Vector3, rotation: THREE.Quaternion): void {
     this.root.position.copy(position);
     this.root.quaternion.copy(rotation);
+    for (const { m, g } of this.chutes) {
+      g.visible = m.state === 'deployed' && m.open > 0.02;
+      if (g.visible) g.scale.setScalar(0.2 + 0.8 * m.open);
+    }
     for (const a of this.animated) a.update();
     for (const v of this.voxelParts) if (v.voxels.version !== v.seen) this.rebuildVoxels(v);
   }

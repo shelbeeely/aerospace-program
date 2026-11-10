@@ -42,6 +42,8 @@ function partVolume(p: PartDef): number {
   const s = p.shape;
   if (s.type === 'box') return s.size[0] * s.size[1] * s.size[2];
   if (s.type === 'sphere') return (4 / 3) * Math.PI * s.radius ** 3;
+  if (s.type === 'cone') return (Math.PI * s.radius * s.radius * s.length) / 3;
+  if (s.type === 'capsule') return Math.PI * s.radius * s.radius * (s.length - (2 / 3) * s.radius);
   return Math.PI * s.radius * s.radius * s.length;
 }
 

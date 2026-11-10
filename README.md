@@ -18,6 +18,7 @@ npm run arch           # digital world: five families vs the ten checks, distric
 npm run drive          # road network: one graph, every destination by road, the flight computer driving
 npm run weapons        # weapons: mounts, cannon cratering, tank bulldozer, bombs, missiles, armour
 npm run craft          # vehicle rules: connected parts, the 1982 palette, ground-vehicle design loop (offline)
+npm run engines        # fast flight: compressibility, ramjet/scramjet/solid/turbojet, thrust vectoring, airbrake, chute, cone/capsule parts, weight floors
 npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
 ```
@@ -229,6 +230,32 @@ air temperature, precipitation and cloud (IMC), and flags ICE, VORTEX RING and A
 What you see comes from the same model the physics flies through: rain and snow fall with the
 wind's drift, the cloud deck is drawn from the same drifting cells that make showers, thermals
 and icing, fog follows visibility, and the runway darkens when wet.
+
+## Going fast: engines, parts and modules
+
+- **No speed wall.** Rapier clamps bodies to 400 m/s × its length unit, which kept every
+  craft below ~Mach 1.2; the simulation now runs at length unit 10 (4 km/s, ~Mach 13 high
+  up) with its contact tolerances scaled back so collisions are unchanged
+  (`TUNING.physicsLengthUnit`).
+- **Compressibility** (`src/modules/compressibility.ts`): wing wave drag rises from the
+  critical Mach to a peak just past Mach 1 (smaller for thin sections) and falls as
+  1/√(M²−1); the lift slope follows Prandtl-Glauert then Ackeret; bodies get a transonic
+  drag bump.
+- **Engines:** `turbojet` (no bypass, Mach 3-4), `ramjet` (no static thrust, Mach 0.5-6, best
+  2.5-4), `scramjet` (Mach 3.5-12, best 6-9, works high), `solid` booster (lit once, burns
+  `burnTime` at full thrust, can't be throttled), plus the existing prop, turbofan and rocket.
+  Any engine can vector its thrust (`gimbalDeg`) from the pitch and yaw stick.
+- **Parts:** `cone` (nose cones, nozzles, spikes) and `capsule` (rounded fuselages, pods)
+  shapes, with colliders, mass and inertia, voxel damage and rendering.
+- **Modules:** `airbrake` (panels on the brake input) and `chute` (a drag chute that streams
+  out on the brake at speed, one use, drawn as a canopy).
+- **Weight:** modules stay massless (a part's mass covers what it carries, as every design
+  already assumes), but parts can't be lighter than their modules allow: jets thrust/8g,
+  props thrust/4g, rockets thrust/100g, ramjets /15g, scramjets /10g, solids their
+  propellant, batteries 250 Wh/kg. The design pipeline raises a part that's too light and
+  tells the model (`src/craft/moduleMass.ts`).
+
+A ramjet dart (solid booster to Mach 2, then a ramjet) passes Mach 3.2 in `npm run engines`.
 
 ## Weapons and derez
 

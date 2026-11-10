@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { partQuaternion } from '../craft/massProperties.ts';
 import type { CraftDef, PartDef, Vec3Tuple } from '../craft/types.ts';
+import { partMinMass } from '../craft/moduleMass.ts';
 
 const G = 9.81;
 
@@ -8,6 +9,7 @@ const G = 9.81;
  * Deterministic repairs for the mistakes designer models make most often, applied before a
  * draft is flight-tested (so a good concept isn't thrown away over a sign error):
  *
+ * - Weight floors: a part lighter than its modules can be (moduleMass.ts) is raised to the floor.
  * - Control gain signs: each control surface's gain is checked against the torque its lift
  *   actually makes about the centre of mass (r × n): pitch input +1 must pitch the nose up,
  *   roll +1 must roll right, yaw +1 must yaw the nose right.
@@ -19,6 +21,15 @@ const G = 9.81;
 export function autoFix(input: CraftDef): { craft: CraftDef; fixes: string[] } {
   const craft = structuredClone(input) as CraftDef;
   const fixes: string[] = [];
+  // Weight floors: a part can't weigh less than what it carries (engines, boosters, batteries).
+  for (const p of craft.parts) {
+    const min = partMinMass(p);
+    if (min.kg > p.mass * 1.001) {
+      const kg = Math.ceil(min.kg);
+      fixes.push(`part "${p.id}" weighed ${p.mass} kg, too light for its ${min.reasons.join(' + ')}: raised to ${kg} kg (budget the mass in your design)`);
+      p.mass = kg;
+    }
+  }
   const total = craft.parts.reduce((s, p) => s + p.mass, 0);
   if (!(total > 0)) return { craft, fixes };
   const com = new THREE.Vector3();

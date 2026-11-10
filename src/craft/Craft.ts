@@ -524,6 +524,12 @@ function halfHeight(p: PartDef): number {
   return (s.axis ?? 'y') === 'y' ? s.length / 2 : s.radius;
 }
 
+/** Rotation taking +Y onto the shape's axis, pointing to its `sign` end (cones' apex direction). */
+export function axisRotation(axis: 'x' | 'y' | 'z', sign: number): THREE.Quaternion {
+  const target = new THREE.Vector3(axis === 'x' ? sign : 0, axis === 'y' ? sign : 0, axis === 'z' ? sign : 0);
+  return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), target);
+}
+
 function colliderFor(part: PartDef): RAPIER.ColliderDesc {
   const s = part.shape;
   let desc: RAPIER.ColliderDesc;
@@ -531,16 +537,12 @@ function colliderFor(part: PartDef): RAPIER.ColliderDesc {
   if (s.type === 'box') desc = RAPIER.ColliderDesc.cuboid(s.size[0] / 2, s.size[1] / 2, s.size[2] / 2);
   else if (s.type === 'sphere') desc = RAPIER.ColliderDesc.ball(s.radius);
   else {
-    desc = RAPIER.ColliderDesc.cylinder(s.length / 2, s.radius);
-    // Rapier cylinders are along Y; rotate for other axes.
-    const axis = s.axis ?? 'y';
-    if (axis !== 'y') {
-      const extra = new THREE.Quaternion().setFromAxisAngle(
-        axis === 'x' ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0),
-        Math.PI / 2,
-      );
-      rot.multiply(extra);
-    }
+    // Rapier's cylinder, cone and capsule are along Y (a cone's apex at +Y); rotate onto the
+    // shape's axis, with a cone's tip toward the axis's negative end unless tip is 1.
+    if (s.type === 'cone') desc = RAPIER.ColliderDesc.cone(s.length / 2, s.radius);
+    else if (s.type === 'capsule') desc = RAPIER.ColliderDesc.capsule(Math.max(0.001, s.length / 2 - s.radius), s.radius);
+    else desc = RAPIER.ColliderDesc.cylinder(s.length / 2, s.radius);
+    rot.multiply(axisRotation(s.axis ?? 'y', s.type === 'cone' ? (s.tip ?? -1) : 1));
   }
   return desc
     .setTranslation(part.position[0], part.position[1], part.position[2])

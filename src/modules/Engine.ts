@@ -32,8 +32,18 @@ export class Engine implements ForceModule {
   readonly localRotation: THREE.Quaternion;
   readonly def: EngineDef;
   readonly isProp: boolean;
+  /** Turbofan or turbojet (a turbofan with no bypass). */
   readonly isTurbofan: boolean;
+  /** Carries its own oxidiser (liquid rocket or solid booster): thrust ignores the air. */
   readonly isRocket: boolean;
+  readonly isRamjet: boolean;
+  readonly isScramjet: boolean;
+  readonly isSolid: boolean;
+  /** Solid booster: lit (it can't be stopped) and seconds of burn left. */
+  lit = false;
+  burnLeft = 0;
+  /** Thrust-vector deflection last step (0..1 of gimbalDeg), for visuals and tests. */
+  gimbal = 0;
   readonly propDirection: number;
   readonly fuelFlow: number;
   /** Afterburner level 0..1 (lags the throttle crossing the light-up threshold). */
@@ -62,13 +72,19 @@ export class Engine implements ForceModule {
     this.def = def;
     this.localPosition = position;
     this.localRotation = rotation;
-    this.isTurbofan = def.kind === 'turbofan';
-    this.isRocket = def.kind === 'rocket';
-    this.isProp = !this.isTurbofan && !this.isRocket && def.propMaxSpeed !== undefined;
+    this.isTurbofan = def.kind === 'turbofan' || def.kind === 'turbojet';
+    this.isSolid = def.kind === 'solid';
+    this.isRocket = def.kind === 'rocket' || this.isSolid;
+    this.isRamjet = def.kind === 'ramjet';
+    this.isScramjet = def.kind === 'scramjet';
+    this.isProp = !this.isTurbofan && !this.isRocket && !this.isRamjet && !this.isScramjet && def.propMaxSpeed !== undefined;
+    this.burnLeft = def.burnTime ?? 20;
     // Turbofans and rockets have no propeller: no reaction torque or P-factor.
     this.propDirection = this.isTurbofan || this.isRocket ? 0 : (def.propDirection ?? (this.isProp ? 1 : 0));
+    // Ram/scramjets burn about twice / two and a half times a turbofan's fuel per newton.
+    const airBreathingFuel = def.maxThrust * TUNING.fuelPerNewtonSecond * (this.isRamjet ? 2 : this.isScramjet ? 2.5 : 1);
     this.fuelFlow =
-      def.fuelFlow ?? (this.isRocket ? Engine.rocketFuelFlow(def.maxThrust, def.isp ?? TUNING.rocketDefaultIsp) : def.maxThrust * TUNING.fuelPerNewtonSecond);
+      def.fuelFlow ?? (this.isRocket ? Engine.rocketFuelFlow(def.maxThrust, def.isp ?? (this.isSolid ? 250 : TUNING.rocketDefaultIsp)) : airBreathingFuel);
   }
 
   reset(): void {
@@ -78,6 +94,27 @@ export class Engine implements ForceModule {
     this.afterburner = 0;
     this.mach = 0;
     this.rcs = 0;
+    this.lit = false;
+    this.burnLeft = this.def.burnTime ?? 20;
+    this.gimbal = 0;
+  }
+
+  /** Ramjet thrust fraction vs Mach: nothing static, rising from Mach 0.4, best 2.5-4, gone by 6. */
+  static ramjetCurve(m: number): number {
+    if (m <= 0.4 || m >= 6) return 0;
+    if (m < 2.5) { const t = (m - 0.4) / 2.1; return t * t * (3 - 2 * t); }
+    if (m <= 4) return 1;
+    const t = (6 - m) / 2;
+    return t * t * (3 - 2 * t);
+  }
+
+  /** Scramjet thrust fraction vs Mach: nothing below Mach 3.5, best 6-9, gone by 12. */
+  static scramjetCurve(m: number): number {
+    if (m <= 3.5 || m >= 12) return 0;
+    if (m < 6) { const t = (m - 3.5) / 2.5; return t * t * (3 - 2 * t); }
+    if (m <= 9) return 1;
+    const t = (12 - m) / 3;
+    return t * t * (3 - 2 * t);
   }
 
   /** Rocket propellant flow (kg/s) at a thrust (N) and specific impulse (s): T / (isp · g0). */
@@ -103,13 +140,20 @@ export class Engine implements ForceModule {
     const def = this.def;
     const tau = def.spoolTime ?? (this.isRocket ? TUNING.rocketSpoolTime : TUNING.engineSpoolTime);
     const k = 1 - Math.exp(-ctx.dt / Math.max(1e-3, tau));
-    const command = this.starved ? 0 : ctx.controls.throttle;
+    let command = this.starved ? 0 : ctx.controls.throttle;
+    if (this.isSolid) {
+      // A solid booster lights once (throttle past half) and burns flat out until it's spent.
+      if (!this.lit && command > 0.5 && this.burnLeft > 0) this.lit = true;
+      if (this.lit) this.burnLeft -= ctx.dt;
+      command = this.lit && this.burnLeft > 0 ? 1 : 0;
+      if (this.lit && this.burnLeft <= 0) this.spool = 0; // burnt out: thrust stops, no tail-off
+    }
     this.spool += (command - this.spool) * k;
 
     ctx.toWorldPoint(this.localPosition, _p);
     ctx.toWorldDir(this.localDirection(_dir), _dir);
     ctx.airVelocity(_p, _v);
-    const air = this.isTurbofan ? ctx.air(_p.y) : undefined;
+    const air = this.isTurbofan || this.isRamjet || this.isScramjet ? ctx.air(_p.y) : undefined;
     const density = air ? air.density : ctx.airDensity(_p.y);
     const sigma = density / TUNING.seaLevelDensity;
 
@@ -119,7 +163,7 @@ export class Engine implements ForceModule {
     let fuelFactor = 1;
     if (this.isTurbofan) {
       this.mach = _v.length() / air!.speedOfSound;
-      const dry = Engine.turbofanLapse(sigma, this.mach, def.bypassRatio ?? 1);
+      const dry = Engine.turbofanLapse(sigma, this.mach, def.kind === 'turbojet' ? 0 : def.bypassRatio ?? 1);
       const ab = def.afterburner;
       // Reheat lights only at full military power: throttle past the detent AND spooled up.
       const lit = ab && !this.starved && command > TUNING.afterburnerThrottle && this.spool > TUNING.afterburnerThrottle ? 1 : 0;
@@ -132,6 +176,13 @@ export class Engine implements ForceModule {
     } else if (this.isRocket) {
       // Rocket: carries its own oxidiser, so the same thrust at sea level and in vacuum.
       thrustFactor = 1;
+      if (this.isSolid) fuelFactor = 0; // its propellant is in the casing (the part's mass)
+    } else if (this.isRamjet || this.isScramjet) {
+      // Ram compression only: thrust from the inlet's Mach, scaled by the air it swallows.
+      this.mach = _v.length() / air!.speedOfSound;
+      const curve = this.isRamjet ? Engine.ramjetCurve(this.mach) : Engine.scramjetCurve(this.mach);
+      thrustFactor = curve * (this.isScramjet ? Math.sqrt(sigma) : sigma);
+      fuelFactor = curve > 0 ? Math.max(0.2, thrustFactor) : 0;
     } else {
       // Air-breathing: thrust scales with density.
       thrustFactor = sigma;
@@ -183,8 +234,35 @@ export class Engine implements ForceModule {
       }
     }
 
+    if (def.gimbalDeg) this.vector(ctx, _dir);
     _f.copy(_dir).multiplyScalar(thrust);
     ctx.applyForce('thrust', _f, _at);
+  }
+
+  /**
+   * Thrust vectoring: tilt the thrust line so its moment about the CoM is the one the pitch/yaw
+   * stick asks for (nose up = +X about the craft, nose right = -Y), up to gimbalDeg. For an
+   * engine behind the CoM that swings the nozzle one way, ahead of it the other.
+   */
+  private vector(ctx: StepContext, dir: THREE.Vector3): void {
+    const c = ctx.controls;
+    const pitch = c.pitch, yaw = c.yaw;
+    const amount = Math.min(1, Math.hypot(pitch, yaw));
+    this.gimbal = amount;
+    if (amount < 1e-3) return;
+    // Desired torque direction in world space, and the engine's arm from the CoM.
+    _iq.copy(ctx.rotation);
+    _tau.set(pitch, -yaw, 0).applyQuaternion(_iq);
+    _w.copy(_p).sub(ctx.com);
+    const r2 = _w.lengthSq();
+    if (r2 < 1e-4) return;
+    // δ = τ × r / |r|² gives r × δ = τ (for τ ⟂ r); keep it perpendicular to the thrust.
+    _q.copy(_tau).cross(_w).divideScalar(r2);
+    _q.addScaledVector(dir, -_q.dot(dir));
+    const len = _q.length();
+    if (len < 1e-6) return;
+    const tilt = Math.tan(((this.def.gimbalDeg ?? 0) * Math.PI) / 180) * amount;
+    dir.addScaledVector(_q, tilt / len).normalize();
   }
 
   /**
