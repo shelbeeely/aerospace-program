@@ -17,6 +17,8 @@ import { LIGHT_CAR } from '../src/craft/lightCar.ts';
 import { designCraft, DESIGNER_SYSTEM_PROMPT } from '../src/gen/craftDesigner.ts';
 import { mergeDetail } from '../src/gen/detailer.ts';
 import { designWithAgent } from '../src/gen/agent.ts';
+import { defaultModel, fallbacksFor, modelsForJob } from '../src/gen/catalog.ts';
+import { detailCraft } from '../src/gen/detailer.ts';
 import type { ModelInfo } from '../src/gen/openrouter.ts';
 import type { OpenRouter } from '../src/gen/openrouter.ts';
 import { flightTest } from '../src/sim/flightTest.ts';
@@ -199,6 +201,30 @@ console.log('\n--- agent harness');
   } as unknown as OpenRouter;
   const res = await designWithAgent(stub, { model: 'stub/plain', prompt: 'a light car', detail: false });
   check(res.report.passed && calls >= 4, 'a model that won\'t call tools falls back to the fixed pipeline', `${calls} calls`);
+}
+
+// ---------------------------------------------------------------- 7. agentic-only endpoints
+console.log('\n--- agentic-only endpoints (Inkling 2 Small free)');
+{
+  const INK = 'thinkingmachines/inkling-2-small:free';
+  let called = 0;
+  const silent = {
+    async chat() {
+      called++;
+      return { model: INK, content: 'I will just describe it.', images: [], audio: [], reasoning: '', usage: { promptTokens: 0, completionTokens: 0, cost: 0 }, toolCalls: [] };
+    },
+  } as unknown as OpenRouter;
+  const refuses = async (f: () => Promise<unknown>) => { try { await f(); return false; } catch (e) { return /agent harness/.test(String(e)); } };
+  check(await refuses(() => designCraft(silent, { model: INK, prompt: 'x' })), 'the fixed rounds refuse it');
+  check(await refuses(() => detailCraft(silent, { model: INK, craft: LIGHT_CAR, concept: 'x' })), 'the one-shot detail call refuses it');
+  const before = called;
+  check(await refuses(() => designWithAgent(silent, { model: INK, prompt: 'x' })), 'if it won\'t use tools, the harness stops instead of falling back to the fixed rounds');
+  check(called - before === 3, 'and it only ever saw agent turns', `${called - before} agent turns`);
+  const info = (id: string, tools = true) => ({ id, name: id, description: '', contextLength: 0, maxCompletionTokens: 0, inputModalities: ['text'], outputModalities: ['text'], pricing: { prompt: 0, completion: 0 }, supportedParameters: tools ? ['tools'] : [], created: 1 }) as ModelInfo;
+  const catalog = [info(INK), info('nvidia/nemotron-3-ultra-550b-a55b:free'), info('google/gemma-4-31b-it:free')];
+  check(!fallbacksFor(catalog, 'designer', 'nvidia/nemotron-3-ultra-550b-a55b:free').includes(INK), 'it is never a fallback');
+  check(defaultModel(catalog, 'designer') !== INK, 'it is never picked by default (opt in after reading its terms)');
+  check(!modelsForJob(catalog, 'engineer').some((m) => m.id === INK) && modelsForJob(catalog, 'designer').some((m) => m.id === INK), 'it is offered for the Designer only');
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');

@@ -8,6 +8,7 @@ import { vehicleKind } from '../sim/vehicleTests.ts';
 import { autoFix } from './autofix.ts';
 import { designCraft, DESIGNER_SYSTEM_PROMPT, type DesignAttempt, type DesignRequest, type DesignResult } from './craftDesigner.ts';
 import { mergeDetail } from './detailer.ts';
+import { isAgenticOnly } from './catalog.ts';
 import { supportsTools, type ChatMessage, type ModelInfo, type OpenRouter, type ToolCall, type ToolDef } from './openrouter.ts';
 
 /**
@@ -150,7 +151,13 @@ async function analyzeText(craft: CraftDef): Promise<string> {
  * Returns the same DesignResult as designCraft, so the Studio and the hangar treat both alike.
  */
 export async function designWithAgent(client: OpenRouter, req: AgentRequest, onTool?: (e: AgentEvent) => void): Promise<DesignResult> {
-  if (req.noAgent || (req.modelInfo && !supportsTools(req.modelInfo))) return designCraft(client, req);
+  const agentic = isAgenticOnly(req.model);
+  // The fixed rounds as a fallback, except for agentic-only endpoints (their terms forbid it).
+  const fixed = (why: string): Promise<DesignResult> => {
+    if (agentic) throw new Error(`${req.model} ${why}, and it may only be used through the agent harness, so there is no fixed-round fallback. Try again or pick another model.`);
+    return designCraft(client, req);
+  };
+  if (req.noAgent || (req.modelInfo && !supportsTools(req.modelInfo))) return fixed('cannot call tools');
   const emit = req.onEvent ?? (() => {});
   const maxTurns = req.maxTurns ?? 28;
   const maxTests = req.maxTests ?? 8;
@@ -237,7 +244,8 @@ export async function designWithAgent(client: OpenRouter, req: AgentRequest, onT
     let res;
     try {
       res = await client.chat({
-        model: req.model, fallbacks: req.designerFallbacks, messages, tools: AGENT_TOOLS, toolChoice: 'auto',
+        // tool_choice is left at the provider default ('auto'): some endpoints don't accept the field.
+        model: req.model, fallbacks: req.designerFallbacks, messages, tools: AGENT_TOOLS,
         temperature: turn === 1 ? 0.7 : 0.35, maxTokens: 64000, reasoningEffort: turn === 1 ? 'medium' : 'low', signal: req.signal,
       });
     } catch (e) {
@@ -245,7 +253,7 @@ export async function designWithAgent(client: OpenRouter, req: AgentRequest, onT
       // A model that can't take tools at all: run the fixed pipeline instead.
       if (turn === 1) {
         emit({ type: 'status', message: `Agent mode unavailable (${e instanceof Error ? e.message.slice(0, 80) : e}); running the fixed pipeline.` });
-        return designCraft(client, req);
+        return fixed(`failed on its first agent turn (${e instanceof Error ? e.message.slice(0, 120) : e})`);
       }
       break; // keep what we have
     }
@@ -260,7 +268,7 @@ export async function designWithAgent(client: OpenRouter, req: AgentRequest, onT
       if (++nudges > 2) {
         if (!st.craft) {
           emit({ type: 'status', message: 'The model would not use tools; running the fixed pipeline.' });
-          return designCraft(client, req);
+          return fixed('would not use the tools');
         }
         break;
       }

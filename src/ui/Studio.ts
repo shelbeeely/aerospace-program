@@ -1,6 +1,6 @@
 import { BUILTINS, type BuiltinCraft } from '../craft/builtins.ts';
 import type { CraftDef } from '../craft/types.ts';
-import { defaultModel, fallbacksFor, isFree, JOBS, modelsForJob, priceLabel, type JobId } from '../gen/catalog.ts';
+import { AGENTIC_ONLY, defaultModel, fallbacksFor, isAgenticOnly, isFree, JOBS, modelsForJob, priceLabel, type JobId } from '../gen/catalog.ts';
 import { designCraft, type DesignResult } from '../gen/craftDesigner.ts';
 import { fromImportJson, toExportJson, type Library, type LibraryEntry } from '../gen/library.ts';
 import { composeMusic, MUSIC_STYLES } from '../gen/music.ts';
@@ -91,6 +91,8 @@ export class Studio {
   private search = '';
   private toolsOnly = false;
   private searchInfo!: HTMLElement;
+  /** The selected Designer's endpoint terms, when it is agentic-only. */
+  private termsNote!: HTMLElement;
   private readonly audioEl: HTMLAudioElement;
 
   private readonly el: {
@@ -128,6 +130,7 @@ export class Studio {
     search.addEventListener('input', () => { this.search = search.value.trim().toLowerCase(); this.fillSelects(); });
     const toolsOnly = h('input', { type: 'checkbox', onchange: () => { this.toolsOnly = toolsOnly.checked; this.fillSelects(); } }) as HTMLInputElement;
     this.searchInfo = h('div', { class: 'muted small' });
+    this.termsNote = h('div', { class: 'small warn hidden', role: 'note' });
 
     const keyInput = h('input', { type: 'password', placeholder: 'sk-or-… (optional)', autocomplete: 'off' });
     keyInput.value = safeGet(KEY_STORAGE) ?? '';
@@ -229,6 +232,7 @@ export class Studio {
         h('div', { class: 'row spread' }, h('h4', {}, 'Crew'), h('label', { class: 'inline' }, freeOnly, ' Free only'), h('label', { class: 'inline', title: 'Designer/Engineer: only models that can call tools (needed for Agent mode)' }, toolsOnly, ' Tools')),
         h('div', { class: 'row' }, search),
         this.searchInfo,
+        this.termsNote,
         crew, h('label', {}, 'Design and repair rounds', rounds), h('label', {}, 'Parallel first drafts (best one kept)', drafts),
       ),
       h('section', {},
@@ -316,7 +320,8 @@ export class Studio {
       const groups: Array<[string, ModelInfo[]]> = [
         ...(q ? [[`Search "${q}" (${hits.length})`, hits] as [string, ModelInfo[]]] : []),
         ['Recommended free', info.free.map((id) => list.find((m) => m.id === id)).filter((m): m is ModelInfo => !!m)],
-        ['Other free', list.filter((m) => isFree(m) && !info.free.includes(m.id))],
+        ['Other free', list.filter((m) => isFree(m) && !info.free.includes(m.id) && !isAgenticOnly(m.id))],
+        ['Free, Agent mode only (read its terms)', list.filter((m) => isAgenticOnly(m.id))],
         ['Recommended paid', list.filter((m) => !isFree(m) && paidPref.has(m.id))],
         ['All paid (newest first)', list.filter((m) => !isFree(m) && !paidPref.has(m.id))],
       ];
@@ -336,6 +341,7 @@ export class Studio {
     }
     if (this.searchInfo) {
       const n = this.search ? modelsForJob(this.models, 'designer', this.prefs.freeOnly).filter((m) => `${m.id} ${m.name} ${m.description}`.toLowerCase().includes(this.search)).length : 0;
+      this.showTerms();
       this.searchInfo.textContent = this.search ? `${n} matching text model(s) of ${this.models.length} in the catalog; matches are listed first in each job.` : '';
     }
     this.savePrefs();
@@ -344,6 +350,17 @@ export class Studio {
   private pick(job: JobId, id: string): void {
     this.prefs.jobs[job] = id;
     this.savePrefs();
+    this.showTerms();
+  }
+
+  /** Show the provider's notice while an agentic-only endpoint is the Designer. */
+  private showTerms(): void {
+    if (!this.termsNote) return;
+    const id = this.prefs.jobs.designer;
+    const note = id ? AGENTIC_ONLY[id] : undefined;
+    this.termsNote.textContent = note ?? '';
+    this.termsNote.classList.toggle('hidden', !note);
+    if (note && this.el?.agentMode) this.el.agentMode.checked = true;
   }
 
   private setFreeOnly(v: boolean): void {
@@ -437,6 +454,9 @@ export class Studio {
     const engineer = this.crew('engineer');
     const text = this.el.prompt.value.trim();
     if (!text && !refine) return this.setStatus('Describe the craft you want.', 'error');
+    if (isAgenticOnly(designer.model) && !this.el.agentMode.checked) {
+      return this.setStatus(`${designer.model} may only be used through the agent harness: turn on Agent mode, or pick another Designer.`, 'error');
+    }
     const cur = this.host.current();
     this.el.log.replaceChildren();
     this.el.result.classList.add('hidden');
@@ -514,6 +534,9 @@ export class Studio {
   private async detailCurrent(): Promise<void> {
     const designer = this.guard('designer');
     if (!designer) return;
+    if (isAgenticOnly(designer.model)) {
+      return this.setStatus(`Add detail is a one-shot call, and ${designer.model} may only be used through the agent harness. Use Refine current in Agent mode (it adds detail with add_detail), or pick another Designer.`, 'error');
+    }
     const cur = this.host.current();
     const concept = this.el.prompt.value.trim() || cur.craft.name;
     await this.run('Detail', async (signal) => {

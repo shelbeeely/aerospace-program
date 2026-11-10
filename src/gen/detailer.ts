@@ -6,6 +6,7 @@ import type { CraftDef, PartDef } from '../craft/types.ts';
 import { validateCraft } from '../craft/validate.ts';
 import { flightTest, type FlightReport } from '../sim/flightTest.ts';
 import { extractJson, type ChatMessage, type OpenRouter } from './openrouter.ts';
+import { assertNotAgenticOnly } from './catalog.ts';
 
 /** Most a detail part may weigh (kg), and the share of the craft's mass all of them together may add. */
 const DETAIL_MAX_KG = 2;
@@ -185,6 +186,7 @@ export interface DetailResult {
  * still passes (and scores no worse).
  */
 export async function detailCraft(client: OpenRouter, req: DetailRequest): Promise<DetailResult> {
+  assertNotAgenticOnly(req.model, 'Add detail');
   const base = req.craft;
   const messages: ChatMessage[] = [
     { role: 'system', content: (await import('./craftDesigner.ts')).DESIGNER_SYSTEM_PROMPT },

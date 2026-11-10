@@ -53,6 +53,25 @@ export const JOBS: Record<JobId, JobInfo> = {
   },
 };
 
+/**
+ * Free endpoints whose terms allow them ONLY through an agentic harness, with the provider's
+ * notice. They are offered for the Designer in Agent mode only: never as a fallback, never for
+ * a one-shot job (the fixed rounds, Add detail, the Engineer, the Composer).
+ */
+export const AGENTIC_ONLY: Record<string, string> = {
+  'thinkingmachines/inkling-2-small:free':
+    'Inkling 2 Small (free) may only be used through an agentic harness: it runs in Agent mode only. ' +
+    'Thinking Machines Lab logs prompts and outputs on this free endpoint and uses them (disassociated from your account) ' +
+    'to improve its models, under the TML Free Research API Terms of Service and its Privacy Notice. ' +
+    'Do not put confidential information or personal data in your descriptions.',
+};
+export const isAgenticOnly = (id: string | undefined): boolean => !!id && id in AGENTIC_ONLY;
+
+/** Refuse an agentic-only model outside the agent harness (one-shot calls). */
+export function assertNotAgenticOnly(id: string, what: string): void {
+  if (isAgenticOnly(id)) throw new Error(`${id} may only be used through the agent harness (Agent mode); ${what} is a one-shot call. Turn on Agent mode or pick another model.`);
+}
+
 export function isFree(m: ModelInfo): boolean {
   return m.id.endsWith(':free') || (m.pricing.prompt === 0 && m.pricing.completion === 0 && !m.id.startsWith('openrouter/auto'));
 }
@@ -67,6 +86,8 @@ export function modelsForJob(models: ModelInfo[], job: JobId, freeOnly = false):
     // Speech models (gpt-audio) output audio but only talk: they can't compose music.
     .filter((m) => job !== 'composer' || !/gpt-audio|tts|speech/i.test(m.id))
     .filter((m) => !m.id.endsWith(':batch') && !m.id.startsWith('openrouter/auto') && m.id !== 'openrouter/free')
+    // Agentic-only endpoints: the Designer (Agent mode) only.
+    .filter((m) => job === 'designer' || !isAgenticOnly(m.id))
     .filter((m) => !freeOnly || isFree(m))
     .sort((a, b) => b.created - a.created);
 }
@@ -76,7 +97,9 @@ export function defaultModel(models: ModelInfo[], job: JobId, freeOnly = true): 
   const ids = new Set(models.map((m) => m.id));
   const j = JOBS[job];
   const pref = [...j.free, ...(freeOnly ? [] : j.paid)].find((id) => ids.has(id));
-  return pref ?? modelsForJob(models, job, true)[0]?.id ?? modelsForJob(models, job, freeOnly)[0]?.id;
+  // Never default to an agentic-only endpoint: the player opts in after reading its terms.
+  const pick = (list: ModelInfo[]) => list.find((m) => !isAgenticOnly(m.id))?.id;
+  return pref ?? pick(modelsForJob(models, job, true)) ?? pick(modelsForJob(models, job, freeOnly));
 }
 
 /**
@@ -94,7 +117,7 @@ export function fallbacksFor(models: ModelInfo[], job: JobId, primary: string): 
     // Keep image-output models with image-output models, text with text.
     return !p || p.outputModalities.includes('image') === m.outputModalities.includes('image');
   };
-  return JOBS[job].free.filter((id) => id !== primary && sameKind(id)).slice(0, 2);
+  return JOBS[job].free.filter((id) => id !== primary && sameKind(id) && !isAgenticOnly(id)).slice(0, 2);
 }
 
 /** Short price label like "$3.00 / $15.00 per M" or "free". */

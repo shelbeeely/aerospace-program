@@ -80,6 +80,15 @@ catalog by name, id or description; matches are listed first in every job's pick
 Designer jumps to the best hit). *Tools* keeps only models that can call tools (Agent mode);
 those are marked "tools" in the pickers.
 
+**Agentic-only endpoints.** Some free endpoints may only be used through an agentic harness.
+Inkling 2 Small (free, `thinkingmachines/inkling-2-small:free`) is one: it is offered for the
+Designer in Agent mode only (its own group in the picker, never a default or a fallback, never
+for the fixed rounds, Add detail, the Engineer or the Composer; `src/gen/catalog.ts`
+`AGENTIC_ONLY`). Its provider logs prompts and outputs on the free endpoint and uses them,
+disassociated from your account, to improve its models (TML Free Research API Terms of
+Service, Privacy Notice); the Studio shows that notice while it is selected. Don't put
+confidential information or personal data in descriptions sent to it.
+
 | Job | Default (free) | Free backups | What it does |
 | --- | --- | --- | --- |
 | Designer | Nemotron 3 Ultra 550B | Nemotron 3 Nano Omni, Dots 3 Note | Drafts craft from your description |

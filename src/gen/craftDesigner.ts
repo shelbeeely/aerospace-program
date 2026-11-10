@@ -16,6 +16,7 @@ import { PLANET } from '../sim/layout.ts';
 import { flightTest, formatReport, type FlightReport } from '../sim/flightTest.ts';
 import { extractJson, type ChatMessage, type OpenRouter } from './openrouter.ts';
 import { detailCraft } from './detailer.ts';
+import { assertNotAgenticOnly, isAgenticOnly } from './catalog.ts';
 
 /**
  * The spec a designer model gets. It documents the craft format and the physics conventions
@@ -272,9 +273,14 @@ type Outcome =
  * or the budget runs out. Returns the best design seen.
  */
 export async function designCraft(client: OpenRouter, req: DesignRequest): Promise<DesignResult> {
+  assertNotAgenticOnly(req.model, 'the fixed design rounds');
+  if (req.engineerModel) assertNotAgenticOnly(req.engineerModel, 'the Engineer');
   const emit = req.onEvent ?? (() => {});
   const maxIterations = req.maxIterations ?? 3;
   const drafts = Math.max(1, Math.min(4, Math.round(req.drafts ?? 1)));
+  // Agentic-only endpoints never ride along as backups for one-shot calls.
+  const clean = (l?: string[]) => l?.filter((m) => !isAgenticOnly(m));
+  req = { ...req, designerFallbacks: clean(req.designerFallbacks), engineerFallbacks: clean(req.engineerFallbacks) };
   const messages: ChatMessage[] = [{ role: 'system', content: DESIGNER_SYSTEM_PROMPT }];
 
   let userMsg = req.base
