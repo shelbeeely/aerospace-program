@@ -1,4 +1,5 @@
 import type { Telemetry } from '../sim/telemetry.ts';
+import { TUNING } from '../tuning.ts';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const MS_TO_KT = 1.943844;
@@ -101,6 +102,8 @@ export class Hud {
       t.vortexRing > 0.3 ? 'VORTEX RING' : '',
       w.aquaplaning > 0.3 ? 'AQUAPLANING' : '',
       t.brokenParts.length ? `BROKEN: ${t.brokenParts.join(', ')}` : '',
+      t.position[1] > TUNING.systemBoundary - TUNING.systemBoundaryWarning
+        ? `⚠ SYSTEM BOUNDARY ${Math.max(0, (TUNING.systemBoundary - t.position[1]) / 1000).toFixed(1)} km` : '',
       ...electricalFlags(e),
     ]
       .filter(Boolean)

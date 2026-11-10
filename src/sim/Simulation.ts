@@ -90,6 +90,8 @@ export class Simulation {
   readonly explosions: Array<{ x: number; y: number; z: number; time: number; radius: number; color?: string; speed?: number }> = [];
   /** The craft blew up (controls dead until a new plane is spawned). */
   exploded = false;
+  /** Why the craft derezzed last ('boundary': it crossed the edge of the Grid). */
+  derezCause: 'crash' | 'boundary' | null = null;
   /** Sum of craft contact impulses this step (N·s): decides explosions. */
   private stepImpact = 0;
   /** Craft velocity over the last ~0.15 s (ring buffer) and steps left since the last hard contact. */
@@ -409,6 +411,7 @@ export class Simulation {
     this.debrisSpawn.clear();
     if (this.craft.detached.size || this.exploded) this.rebuildCraft(this.craft.def);
     this.exploded = false;
+    this.derezCause = null;
     this.stepImpact = 0;
     this.contactWindow = 0;
     this.failures.length = 0;
@@ -510,6 +513,11 @@ export class Simulation {
     oldest.copy(this.linvel);
     this.velHead = (this.velHead + 1) % this.velHistory.length;
     if (!this.exploded && this.contactWindow > 0 && dv > this.explodeSpeed()) this.explode();
+    // The edge of the Grid: past the system boundary (above every orbit) a craft derezzes.
+    if (!this.exploded && this.position.y > TUNING.systemBoundary) {
+      this.derezCause = 'boundary';
+      this.explode();
+    }
     this.staticWorld.update(this.time);
     this.town.update(this.time);
     this.stepHazards();
@@ -844,6 +852,7 @@ export class Simulation {
   explode(): void {
     if (this.exploded) return;
     this.exploded = true;
+    this.derezCause ??= 'crash';
     this.trails.derez(this.time); // a derezzed vehicle's trails go with it
     const c = this.position.clone();
     const radius = 10 + Math.min(20, this.craft.fuel * 0.15);
