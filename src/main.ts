@@ -44,6 +44,7 @@ import { ChipsView } from './render/ChipsView.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
 import { FlightAutopilot, type AutopilotKind } from './sim/flightAutopilot.ts';
+import { wallSegmentsNear } from './sim/lightWalls.ts';
 import { analyzeDesign } from './sim/flightTest.ts';
 import { AutopilotPanel } from './ui/AutopilotPanel.ts';
 import { initPhysics, Simulation } from './sim/Simulation.ts';
@@ -225,6 +226,8 @@ async function start() {
     if (connected) player.rumble(0.4, 150);
   };
   const autopilot = new FlightAutopilot(player);
+  // Autonomous ground driving steers clear of every light wall: ours, traffic's, other players'.
+  autopilot.driver.walls = (x, z, r) => wallSegmentsNear(sim, x, z, r, net.remoteWalls());
   autopilot.onDisengage = (thr) => { player.throttle = thr; };
   autopilot.fractured = sim.staticWorld.fractured;
   // Flight computer: approach speeds come from the design's estimated stall speed.

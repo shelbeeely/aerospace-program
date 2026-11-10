@@ -127,7 +127,7 @@ class Heap {
  * intersection to the nearest one at the destination, with access legs at both ends. Points are
  * unbounded (continuous across the planet's wrap, starting near x0, z0). Null if unreachable.
  */
-export function findRoute(x0: number, z0: number, x1: number, z1: number, maxExpanded = 400000): Route | null {
+export function findRoute(x0: number, z0: number, x1: number, z1: number, maxExpanded = 400000, blocked?: (alongX: boolean, i: number, j: number) => boolean): Route | null {
   const s = nearestNode(x0, z0);
   // The goal in the image nearest the start, so the search runs the short way round.
   const gx = x0 + wrapCoord(x1 - x0), gz = z0 + wrapCoord(z1 - z0);
@@ -154,7 +154,7 @@ export function findRoute(x0: number, z0: number, x1: number, z1: number, maxExp
     const [i, j] = pos.get(k)!;
     const ck = cost.get(k)!;
     for (const [di, dj, ax, si, sj] of exits(i, j)) {
-      if (!roadOpen(ax, si, sj)) continue;
+      if (!roadOpen(ax, si, sj) || blocked?.(ax, mod(si, N), mod(sj, N))) continue;
       const kind = roadKind(ax, si, sj);
       const ni = i + di, nj = j + dj;
       const nk = key(ni, nj);
@@ -205,3 +205,10 @@ export function roadSpots(x: number, z: number, ring = 6): Array<[number, number
 
 void CITY;
 void C;
+
+/** The road segment a point lies on (nearest street line), as [alongX, i, j] (canonical indices). */
+export function segmentAt(x: number, z: number): [boolean, number, number] {
+  const fx = (x - GRID.x0) / P, fz = (z - GRID.z0) / P;
+  const dx = Math.abs(fx - Math.round(fx)), dz = Math.abs(fz - Math.round(fz));
+  return dx < dz ? [false, mod(Math.round(fx), N), mod(Math.floor(fz), N)] : [true, mod(Math.floor(fx), N), mod(Math.round(fz), N)];
+}

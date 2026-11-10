@@ -682,6 +682,11 @@ export class NetClient {
     if (flight && ++this.wallTick % 6 === 0) this.updateWallColliders();
   }
 
+  /** Remote players' lit jetwalls (for autonomous ground vehicles to steer clear of). */
+  *remoteWalls(): Generator<{ points: TrailPoint[] }> {
+    for (const p of this.players.values()) for (const t of p.trails.values()) if (t.kind === 'wall' && t.derezAt === null) yield t;
+  }
+
   /** Remote jetwalls near the local craft are solid; far ones carry no colliders. */
   private updateWallColliders(): void {
     const sim = this.game.sim;

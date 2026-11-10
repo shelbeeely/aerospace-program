@@ -14,6 +14,7 @@ import { distance, destinations } from '../src/sim/nav.ts';
 import { RUNWAYS, runwayFrame } from '../src/sim/layout.ts';
 import { findRoute, roadOpen } from '../src/sim/roads.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
+import { wallSegmentsNear } from '../src/sim/lightWalls.ts';
 import { blockSummary, roadStats } from '../src/world/planetCity.ts';
 
 await initPhysics();
@@ -95,6 +96,38 @@ function drive(def: CraftDef, destId: string, limit: number): { arrived: boolean
 for (const [def, dest] of [[LIGHT_CAR, 'pad-apron'], [LIGHT_CAR, 'spire'], [LIGHT_CYCLE, 'pad-town']] as Array<[CraftDef, string]>) {
   const r = drive(def, dest, 900);
   check(r.arrived && r.dist < 450, `the flight computer drives the ${def.name} to ${dest}`, `${(r.route / 1000).toFixed(1)} km route, arrived ${r.arrived} in ${r.time.toFixed(0)} s, ${r.dist.toFixed(0)} m from the site, max ${r.maxOff.toFixed(1)} m off path`);
+}
+
+// --- Light walls: the driver stops short of a jetwall across its road, then finds another way.
+{
+  const sim = new Simulation(LIGHT_CAR);
+  sim.traffic.enabled = false;
+  for (let i = 0; i < 120; i++) sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
+  const ap = new FlightAutopilot(new Idle());
+  ap.driver.walls = (x, z, r) => wallSegmentsNear(sim, x, z, r, extra);
+  let t = sim.telemetry();
+  ap.engage(t, 'ground', undefined, { mode: 'goto', destination: 'spire', speed: 22 });
+  // A wall laid across the route ~250 m ahead (as another program's jetwall would be).
+  const path = ap.driver.path;
+  let acc = 0, k = 1;
+  for (; k < path.length && acc < 250; k++) acc += Math.hypot(path[k][0] - path[k - 1][0], path[k][1] - path[k - 1][1]);
+  const [ax, az] = path[k - 1], [bx, bz] = path[k];
+  const L = Math.hypot(bx - ax, bz - az), nx = -(bz - az) / L, nz = (bx - ax) / L;
+  const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+  const extra = [{ points: [-30, 30].map((o) => ({ x: mx + nx * o, z: mz + nz * o, y0: 0, y1: 1.6, time: 0, arc: 0 })) }];
+  let minD = Infinity, rerouted = false;
+  const first = ap.driver.length;
+  for (let i = 0; i < 120 * 120 && ap.state.phase !== 'arrived'; i++) {
+    sim.step(ap.sample(sim.dt, t));
+    t = sim.telemetry();
+    const d = Math.abs((t.position[0] - mx) * (bx - ax) / L + (t.position[2] - mz) * (bz - az) / L);
+    const lat = Math.abs((t.position[0] - mx) * nx + (t.position[2] - mz) * nz);
+    if (lat < 30) minD = Math.min(minD, d);
+    if (Math.abs(ap.driver.length - first) > 1) rerouted = true;
+    if (rerouted && i > 120 * 60) break;
+  }
+  check(!sim.exploded && sim.failures.length === 0 && minD > 3, 'the driver never runs into a light wall across its road', `closest ${minD.toFixed(1)} m, intact ${!sim.exploded}`);
+  check(rerouted, 'blocked by the wall, it re-routes around it', `route ${(first / 1000).toFixed(2)} km → ${(ap.driver.length / 1000).toFixed(2)} km`);
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll road checks passed');

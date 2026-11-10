@@ -416,7 +416,7 @@ export class FlightAutopilot implements ControlSource {
       s.status = this.driver.endsAtRoad ? `Arrived at the road nearest ${this.dest.name}` : `Arrived at ${this.dest.name}`;
     } else {
       s.phase = 'drive';
-      s.status = status.stuck ? `Stuck: ${km(status.remaining)} to ${this.dest.name}. Steer or reverse out, then re-engage` : `Driving to ${this.dest.name}: ${km(status.remaining)} by road`;
+      s.status = this.driver.wallAhead < 30 && t.groundSpeed < 1 ? `Light wall ahead: waiting or finding another road to ${this.dest.name}` : status.stuck ? `Stuck: ${km(status.remaining)} to ${this.dest.name}. Steer or reverse out, then re-engage` : `Driving to ${this.dest.name}: ${km(status.remaining)} by road`;
     }
     return controls;
   }

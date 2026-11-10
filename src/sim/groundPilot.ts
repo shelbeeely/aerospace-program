@@ -1,6 +1,7 @@
 import type { ControlInputs } from './controls.ts';
 import { wrapCoord } from './layout.ts';
-import { findRoute, type Route } from './roads.ts';
+import { findRoute, segmentAt, type Route } from './roads.ts';
+import type { WallSegment } from './lightWalls.ts';
 import type { Telemetry } from './telemetry.ts';
 import { obstacleTop } from '../world/structures.ts';
 
@@ -42,11 +43,20 @@ export class GroundDriver {
   goal: [number, number] | null = null;
   /** The destination stands off the road (in a building): the route ends at the nearest road point. */
   endsAtRoad = false;
+  /** Light walls near (x, z) within radius (set by the host: own trails, traffic, remote players). */
+  walls: ((x: number, z: number, radius: number) => WallSegment[]) | null = null;
+  /** Road segments found blocked by light walls (avoided when re-routing), key → time seen. */
+  private readonly blocked = new Map<string, number>();
+  private blockedFor = 0;
+  /** Distance to a light wall across the path ahead (m), or Infinity. */
+  wallAhead = Infinity;
 
   /** Plan a route from (x, z) to (gx, gz). False if no road connects them. */
   plan(x: number, z: number, gx: number, gz: number): boolean {
     this.goal = [gx, gz];
-    const r = findRoute(x, z, gx, gz);
+    const now = this.clock;
+    for (const [k, t] of this.blocked) if (now - t > 120) this.blocked.delete(k);
+    const r = findRoute(x, z, gx, gz, 400000, this.blocked.size ? (ax, i, j) => this.blocked.has(`${ax ? 1 : 0},${i},${j}`) : undefined);
     if (!r) { this.route = null; this.path = []; return false; }
     // The legs between the road and the start/destination are driven only if nothing stands on
     // them (a destination inside a building ends at the nearest road point instead).
@@ -71,7 +81,10 @@ export class GroundDriver {
     return this.cum[this.cum.length - 1] ?? 0;
   }
 
+  private clock = 0;
+
   drive(dt: number, t: Telemetry, cruise: number): { controls: ControlInputs; status: DriveStatus } {
+    this.clock = t.time;
     const stop: ControlInputs = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 };
     if (this.path.length < 2) return { controls: stop, status: { remaining: 0, target: 0, arrived: true, stuck: false, offPath: 0 } };
     // Position in the path's frame (the path is continuous from where it was planned).
@@ -113,6 +126,21 @@ export class GroundDriver {
     target = Math.min(target, Math.sqrt(2 * ACCEL * Math.max(0, remaining - 5)));
     // Big heading error: slow down to turn.
     if (Math.abs(err) > 45) target = Math.min(target, 5);
+    // Light walls across the path ahead: stop short of them; if one blocks the road, re-route.
+    const hit = this.walls ? this.scanWalls(x, z, along, Math.min(remaining, 25 + (v * v) / (2 * ACCEL) + 15), t) : null;
+    this.wallAhead = hit ? hit.d : Infinity;
+    if (hit) {
+      target = Math.min(target, Math.sqrt(2 * ACCEL * Math.max(0, hit.d - 9)));
+      this.blockedFor = hit.d < 20 && v < 1 ? this.blockedFor + dt : 0;
+      if (this.blockedFor > 1.5 && this.goal && t.time - this.lastReroute > 2) {
+        this.lastReroute = t.time;
+        this.blockedFor = 0;
+        const [ax, i, j] = segmentAt(hit.x, hit.z);
+        this.blocked.set(`${ax ? 1 : 0},${i},${j}`, t.time);
+        const gx = this.goal[0], gz = this.goal[1];
+        if (this.plan(t.position[0], t.position[2], gx, gz)) return this.drive(dt, t, cruise);
+      }
+    } else this.blockedFor = 0;
     const ev = target - v;
     let throttle = Math.max(0, Math.min(1, 0.25 + ev * 0.18));
     let brake = 0;
@@ -123,6 +151,23 @@ export class GroundDriver {
       controls: { pitch: 0, roll: 0, yaw, throttle, brake },
       status: { remaining, target, arrived: false, stuck: this.stuckTime > 6, offPath: bd },
     };
+  }
+
+  /** First light wall crossing the lane path within `reach` m ahead (with a 2.2 m body margin). */
+  private scanWalls(x: number, z: number, along: number, reach: number, t: Telemetry): { d: number; x: number; z: number } | null {
+    // Walls in the path's frame (the path is unbounded; walls come in world coordinates).
+    const segs = this.walls!(t.position[0], t.position[2], reach + 10);
+    if (!segs.length) return null;
+    const ox = x - t.position[0], oz = z - t.position[2];
+    const step = 2;
+    for (let s = 3; s <= reach; s += step) {
+      const [px, pz] = this.pointAt(along + s);
+      for (const [ax, az, bx, bz] of segs) {
+        const [d] = segDist(px, pz, [ax + ox, az + oz], [bx + ox, bz + oz]);
+        if (d < 2.2) return { d: s, x: px - ox, z: pz - oz };
+      }
+    }
+    return null;
   }
 
   private pointAt(s: number): [number, number] {
