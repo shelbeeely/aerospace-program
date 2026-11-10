@@ -41,6 +41,8 @@ import { ExplosionView } from './render/ExplosionView.ts';
 import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
 import { updateSkyPlanet } from './render/neon.ts';
 import { ChipsView } from './render/ChipsView.ts';
+import { WeaponsView } from './render/WeaponsView.ts';
+import { LOADOUTS, WEAPONS, type WeaponKind } from './sim/weapons.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
 import { FlightAutopilot, type AutopilotKind } from './sim/flightAutopilot.ts';
@@ -185,6 +187,7 @@ async function start() {
   const trafficView = new TrafficView(scene, sim.traffic);
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
+  const weaponsView = new WeaponsView(scene, sim.weapons);
   let explosionHeardAt = -Infinity;
   let explodedAt: number | null = null;
   const _wind10 = new THREE.Vector3();
@@ -333,6 +336,10 @@ async function start() {
   const triggerDisaster = (kind: EventKind) => sim.atmosphere.events.trigger(kind, {
     x: sim.position.x - (kind === 'hurricane' ? 1200 : 500), z: sim.position.z - 500,
   });
+  // Tornadoes form at random in the game (seeded with the weather; headless tests stay calm).
+  const randomTornado = document.getElementById('w-random-tornado') as HTMLInputElement | null;
+  sim.atmosphere.events.randomTornadoes = randomTornado?.checked ?? true;
+  randomTornado?.addEventListener('change', () => (sim.atmosphere.events.randomTornadoes = randomTornado.checked));
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-disaster]')) {
     button.addEventListener('click', () => {
       const kind = button.dataset.disaster;
@@ -817,6 +824,10 @@ async function start() {
         const m = sim.trails.cycleMode(sim.craft, sim.isAirplane(), sim.time);
         toast(m === 'wall' ? 'Jetwall: solid light' : m === 'ribbon' ? 'Light ribbon: fades behind you' : 'Trail off');
       }
+      else if (a === 'loadout') {
+        const l = sim.weapons.cycle();
+        toast(l === 'none' ? 'Weapons: unarmed' : `Weapons: ${LOADOUTS[l].label} · V fires guns/cannon, O bombs/missiles`);
+      }
       else if (a === 'screenshot') void takePhoto();
       else if (a === 'nextVehicle') cycleCraft(1);
       else if (a === 'prevVehicle') cycleCraft(-1);
@@ -847,6 +858,10 @@ async function start() {
       return;
     }
 
+    // Weapons triggers (held keys / buttons); the flight computer never fires.
+    const trig = player.firing();
+    sim.weapons.trigger.primary = trig.primary;
+    sim.weapons.trigger.secondary = trig.secondary;
     accumulator += dt;
     stepsThisFrame = 0;
     let stepMs = 0;
@@ -876,6 +891,13 @@ async function start() {
     trafficView.update(sim.time);
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
+    weaponsView.update();
+    {
+      const ammo = sim.weapons.ammo();
+      const kinds = Object.keys(ammo) as WeaponKind[];
+      document.body.classList.toggle('armed', kinds.length > 0);
+      hud.setWeapons(kinds.length ? kinds.map((k) => `${WEAPONS[k].label.slice(0, 3).toUpperCase()} ${ammo[k]}`).join(' ') : null);
+    }
     if (!sim.explosions.length) explosionHeardAt = -Infinity;
     for (const e of sim.explosions) {
       if (e.time <= explosionHeardAt) continue;

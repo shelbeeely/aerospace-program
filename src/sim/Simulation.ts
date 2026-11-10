@@ -18,6 +18,7 @@ import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
+import { craftBounds, WeaponSystem, type WeaponHost, type WeaponImpact } from './weapons.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
 import { vehicleKind } from './vehicleTests.ts';
 import { nearestRoadPoint, siteSpawnPoint, type SpawnPoint, type SpawnSite } from '../world/spawnSites.ts';
@@ -83,6 +84,11 @@ export class Simulation {
   damage: DamageModel;
   /** Breakable block buildings and their rubble (src/world). */
   readonly town: Town;
+  /** Guns, cannon, bombs and missiles (Rapier ray-swept projectiles); see sim/weapons.ts. */
+  readonly weapons = new WeaponSystem();
+  private dozeAt = -Infinity;
+  /** Blocks of structure cleared by bulldozing so far (tests, stats). */
+  bulldozed = 0;
   /** Visual voxel chips knocked off buildings and aircraft (the renderer flies them). */
   readonly chips = new ChipEmitter();
   /** Explosions (renderer: fireball and shockwave; audio: boom). Newest last. */
@@ -194,10 +200,13 @@ export class Simulation {
     const { position, rotation } = this.spawnPose(null);
     this.craft = new Craft(this.world, craftDef, position, rotation);
     this.damage = new DamageModel(this.craft);
+    this.weapons.arm(craftDef);
+    this.weapons.onImpact = (h) => this.weaponImpact(h);
     this.onContactForce((e) => {
       // Fresh debris spawns overlapping the airframe; separating them isn't an impact.
       if (this.isFreshDebris(e.collider1) || this.isFreshDebris(e.collider2)) return;
       if (this.town.isFreshDebris(e.collider1, this.time) || this.town.isFreshDebris(e.collider2, this.time)) return;
+      if (this.dozing(e)) return;
       this.damage.onContact(e);
     });
     this.onContactForce((e) => this.town.onContact(e));
@@ -348,6 +357,7 @@ export class Simulation {
   loadCraft(def: CraftDef): void {
     assertValidCraft(def);
     this.rebuildCraft(def);
+    this.weapons.arm(def);
     this.explosionResets = 0;
     this.respawn(); // a different craft; the world stays as it is
   }
@@ -423,6 +433,7 @@ export class Simulation {
     this.failures.length = 0;
     this.filteredLoads.clear();
     this.damage.reset(this.craft);
+    this.weapons.reset();
     const { position, rotation } = this.spawnPose(this.craft);
     this.craft.reset(position, rotation);
     this.fire.reset(this.craft.parts, this.tankFuel());
@@ -473,6 +484,8 @@ export class Simulation {
 
     while (this.debugForces.length) this.forcePool.push(this.debugForces.pop()!);
 
+    this.atmosphere.events.focus.x = this.position.x;
+    this.atmosphere.events.focus.z = this.position.z;
     this.atmosphere.advance(this.dt);
     this.updateGroundMotion();
     const body = this.craft.body;
@@ -501,6 +514,9 @@ export class Simulation {
     this.readBodyState();
     this.wrapAround();
     this.trails.step(this.time, this.craft, this.rotation, this.position, this.linvel.length(), this.craft.wheels.some((w) => w.grounded));
+    if (this.exploded) this.weapons.trigger.primary = this.weapons.trigger.secondary = false;
+    this.weapons.step(this.weaponHost, this.dt, this.time);
+    this.bulldoze();
     const resets = this.explosionResets;
     this.guardAgainstExplosion();
     // After an explosion reset the step's contacts belong to a craft that's gone: drop them.
@@ -735,6 +751,97 @@ export class Simulation {
     }
   }
 
+  /** The weapon system's view of the craft (live getters: the craft is rebuilt on respawn). */
+  private readonly weaponHost: WeaponHost = (() => {
+    const self = this;
+    return {
+      get world() { return self.world; },
+      get body() { return self.craft.body; },
+      get position() { return self.position; },
+      get rotation() { return self.rotation; },
+      get linvel() { return self.linvel; },
+      get color() { return self.circuitColor(); },
+      groundAt: (x: number, z: number) => (isSea(x) ? -COAST.depth : terrainHeight(x, z)),
+    };
+  })();
+
+  /** Fire one round of a trigger group now (scripts, tests, the LLM pilot). */
+  fireWeapon(group: 'primary' | 'secondary' = 'primary'): number {
+    return this.exploded ? 0 : this.weapons.fireOnce(this.weaponHost, group, this.time);
+  }
+
+  /**
+   * A round hits: it derezzes the rider it struck (and, with a blast, any nearby), shoves loose
+   * bodies (debris, rubble, other craft pieces), craters structures (fracturing them into Rapier
+   * blocks), and flashes and shatters into voxels in the shooter's circuit colour.
+   */
+  private weaponImpact(h: WeaponImpact): void {
+    const p = h.point;
+    const col = h.collider;
+    if (col) this.traffic.derezCollider(col.handle, this.time);
+    if (h.blast >= 3) this.traffic.derezWithin(p.x, p.z, h.blast * 0.8, this.time);
+    const body = col?.parent();
+    if (body && body.isDynamic()) {
+      const k = h.mass * (h.kind === 'gun' ? 1.5 : 4);
+      body.applyImpulseAtPoint({ x: h.vel.x * k, y: h.vel.y * k + h.blast * h.mass, z: h.vel.z * k }, { x: p.x, y: p.y, z: p.z }, true);
+    }
+    // Blast impulse on every loose body nearby (rubble, debris): outward, falling off with distance.
+    if (h.blast >= 3) {
+      this.world.forEachRigidBody((b) => {
+        if (!b.isDynamic() || b === this.craft.body) return;
+        const t = b.translation();
+        const dx = t.x - p.x, dy = t.y - p.y, dz = t.z - p.z;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 > h.blast * h.blast * 4 || d2 < 1e-6) return;
+        const d = Math.sqrt(d2);
+        const j = (b.mass() * h.blast * 1.5) / (1 + d);
+        b.applyImpulse({ x: (dx / d) * j, y: (Math.abs(dy) / d) * j + j * 0.3, z: (dz / d) * j }, true);
+      });
+    }
+    this.staticWorld.blastAt(p.x, p.y, p.z, h.blast, this.time);
+    if (h.blast >= 3) for (const b of this.town.buildings) this.town.blast(b, p.x, p.y, p.z, h.blast * 0.6, this.time);
+    if (h.kind === 'gun') {
+      this.chips.emit({ x: p.x, y: p.y, z: p.z, radius: 0.3, vx: h.normal.x * 4, vy: h.normal.y * 4 + 1, vz: h.normal.z * 4, speed: 5, count: 5, size: 0.12, color: h.color });
+      return;
+    }
+    const speed = h.vel.length();
+    this.explosions.push({ x: p.x, y: p.y, z: p.z, time: this.time, radius: h.blast, color: h.color, speed });
+    if (this.explosions.length > 32) this.explosions.splice(0, this.explosions.length - 32);
+    this.chips.emit({ x: p.x, y: p.y, z: p.z, radius: h.blast * 0.15, vx: 0, vy: 4, vz: 0, speed: 6 + h.blast, count: Math.round(40 + h.blast * 12), size: 0.22, color: h.color, persist: true });
+    this.chips.emit({ x: p.x, y: p.y, z: p.z, radius: 0.5, vx: h.vel.x * 0.1, vy: 0, vz: h.vel.z * 0.1, speed: 8 + h.blast * 1.2, count: Math.round(60 + h.blast * 10), size: 0.14, color: h.color, splash: true });
+  }
+
+  /** A bulldozer shoving through structure or rubble: no damage to it (the rubble still feels it). */
+  private dozing(e: ContactForceInfo): boolean {
+    if (!this.craft.def.bulldozer) return false;
+    const mine = this.craft.partIdForCollider(e.collider1) ? e.collider2 : this.craft.partIdForCollider(e.collider2) ? e.collider1 : null;
+    if (mine === null) return false;
+    return !!(this.town.blockForCollider(mine) || this.town.chunkForCollider(mine) || this.staticWorld.isStructure(mine));
+  }
+
+  /**
+   * Bulldozer (the tank): driving into a structure crushes it. Every ~0.1 s at speed, the blocks
+   * in a column just ahead of the hull (in the direction of travel) are knocked out; a whole
+   * structure first fractures into its Rapier blocks, which the hull then shoves aside.
+   */
+  private bulldoze(): void {
+    if (!this.craft.def.bulldozer || this.exploded || this.time - this.dozeAt < 0.1) return;
+    const v = this.linvel;
+    const speed = Math.hypot(v.x, v.z);
+    if (speed < 1) return;
+    this.dozeAt = this.time;
+    const fwd = _tmp.set(0, 0, -1).applyQuaternion(this.rotation);
+    const sign = fwd.x * v.x + fwd.z * v.z >= 0 ? 1 : -1;
+    const b = craftBounds(this.craft.def);
+    const reach = (sign > 0 ? -b.min.z : b.max.z) + 1.4;
+    const half = Math.max(1.5, (b.max.x - b.min.x) / 2);
+    const fx = this.position.x + fwd.x * sign * reach, fz = this.position.z + fwd.z * sign * reach;
+    const ground = terrainHeight(fx, fz);
+    for (let y = ground + 0.8; y < ground + Math.max(3.5, b.max.y + 1.5); y += 2.2) {
+      this.bulldozed += this.staticWorld.blastAt(fx, y, fz, half + 0.6, this.time);
+    }
+  }
+
   /** The vehicle's circuit colour: its trail's light, else the colour of its heaviest part. */
   circuitColor(): string {
     for (const m of this.craft.modules) if (m instanceof TrailEmitter) return m.def.color;
@@ -796,7 +903,7 @@ export class Simulation {
   explodeSpeed(): number {
     const parts = this.craft.parts;
     const avg = parts.length ? parts.reduce((a, p) => a + Math.min(3, Math.max(0, p.reinforce ?? 0)), 0) / parts.length : 0;
-    return TUNING.explodeSpeed * (1 + 0.3 * avg);
+    return TUNING.explodeSpeed * (1 + 0.3 * avg) * Math.sqrt(Math.max(1, this.craft.def.armor ?? 1));
   }
 
   /**
@@ -805,6 +912,7 @@ export class Simulation {
    * mass, lift, thrust; below `TUNING.voxelBreakIntegrity` the part breaks off.
    */
   private voxelHit(e: ContactForceInfo): void {
+    if (this.dozing(e)) return;
     if (this.isFreshDebris(e.collider1) || this.isFreshDebris(e.collider2)) return;
     if (this.town.isFreshDebris(e.collider1, this.time) || this.town.isFreshDebris(e.collider2, this.time)) return;
     const craft = this.craft;
@@ -818,7 +926,7 @@ export class Simulation {
       this.stepImpact += impulse;
       const level = Math.min(3, Math.max(0, Math.round(part.reinforce ?? 0)));
       const gear = !!part.modules?.some((m) => m.type === 'wheel') || /^(gear|skid)/.test(part.kind);
-      const tol = craft.massProps.mass * (gear ? TUNING.gearSinkLimit : TUNING.impactSafeSpeed) * (1 + 0.5 * level);
+      const tol = craft.massProps.mass * (gear ? TUNING.gearSinkLimit : TUNING.impactSafeSpeed) * (1 + 0.5 * level) * Math.max(1, craft.def.armor ?? 1);
       if (impulse <= tol) continue;
       // Where on the part: the first solver contact point, in the part's frame.
       const c1 = this.world.getCollider(mine);

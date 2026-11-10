@@ -271,6 +271,11 @@ export const DISASTER_TUNING = {
   tornadoPeakSpeed: 55,
   tornadoHeight: 900,
   tornadoTravelSpeed: 4,
+  /** Random tornadoes (when enabled): mean seconds between them, the quiet time before the first, how far from the player they form (m) and their lifetimes (s). */
+  randomTornadoMean: 360,
+  randomTornadoFirst: 60,
+  randomTornadoDistance: [1400, 3200],
+  randomTornadoDuration: [150, 320],
   hurricaneDuration: 240,
   hurricaneMaxRadius: 1200,
   hurricanePeakSpeed: 48,

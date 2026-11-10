@@ -30,11 +30,15 @@ const track = (side: 1 | -1): PartDef => ({
 /**
  * Program tank: a heavy, slow armoured hull on six road wheels per side. It skid-steers: the
  * yaw channel drives the two tracks in opposite directions, so it can turn on the spot. Every
- * part is fully reinforced, and it lays a red jetwall behind it.
+ * part is fully reinforced and armoured (4x strength), it bulldozes through buildings it drives
+ * into, fires its cannon and coaxial gun, and lays a red jetwall behind it.
  */
 export const TANK: CraftDef = {
   name: 'Program Tank',
   formatVersion: 1,
+  armor: 4,
+  bulldozer: true,
+  loadout: 'tank',
   parts: [
     {
       id: 'hull',

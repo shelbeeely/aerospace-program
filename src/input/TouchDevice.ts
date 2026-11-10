@@ -39,6 +39,8 @@ export class TouchDevice implements InputDevice {
   private left: Drag | null = null;
   private right: Drag | null = null;
   private brake = false;
+  private fire = false;
+  private fireAlt = false;
   private pendingThrottle: number | null = null;
   private flapCycle = false;
   private actions: Action[] = [];
@@ -68,6 +70,16 @@ export class TouchDevice implements InputDevice {
       });
     }
 
+    // Weapons triggers (shown only while the craft is armed: body.armed).
+    const hold = (label: string, cls: string, set: (v: boolean) => void) => {
+      const b = el('button', `tbtn tfire ${cls}`, label);
+      b.addEventListener('pointerdown', (e) => { e.preventDefault(); set(true); b.classList.add('down'); });
+      for (const ev of ['pointerup', 'pointercancel', 'pointerleave'] as const) b.addEventListener(ev, () => { set(false); b.classList.remove('down'); });
+      return b;
+    };
+    const fire = hold('FIRE', 'tfire-1', (v) => (this.fire = v));
+    const fireAlt = hold('DROP', 'tfire-2', (v) => (this.fireAlt = v));
+
     let closeMenu = () => {};
     const button = (label: string, title: string, action: Action | (() => void)) => {
       const b = el('button', 'tbtn', label);
@@ -93,6 +105,7 @@ export class TouchDevice implements InputDevice {
       button('Flight computer', 'Flight computer: land, go to, orbit', 'apPanel'),
       button('Weather', 'Debug & weather', 'debug'),
       button('Flaps', 'Flaps: next detent', () => (this.flapCycle = true)),
+      button('Weapons', 'Weapons loadout: next', 'loadout'),
       button('Sound', 'Sound on/off', 'mute'),
       button('Photo', 'Screenshot', 'screenshot'),
     );
@@ -111,7 +124,7 @@ export class TouchDevice implements InputDevice {
       button('Controls', 'Controls', 'help'), more,
     );
 
-    this.root = el('div', 'touch hidden', leftZone, this.stickZone, brake, bar, menu);
+    this.root = el('div', 'touch hidden', leftZone, this.stickZone, brake, fire, fireAlt, bar, menu);
     document.body.append(this.root);
 
     this.bindLever(leftZone);
@@ -213,6 +226,8 @@ export class TouchDevice implements InputDevice {
       raw.pitch += applyExpo(dy / R, expo) * inv; // drag down = stick back = nose up
     }
     if (this.brake) raw.brake = 1;
+    if (this.fire) raw.fire = true;
+    if (this.fireAlt) raw.fireAlt = true;
     if (this.flapCycle) {
       raw.flapCycle = true;
       this.flapCycle = false;

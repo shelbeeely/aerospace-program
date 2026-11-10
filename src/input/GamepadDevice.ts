@@ -125,6 +125,13 @@ export class GamepadDevice implements InputDevice {
       this.lastCollective = null;
     }
     if (pressed(B.A)) raw.brake = Math.max(raw.brake, value(B.A) || 1);
+    // Weapons: D-pad up fires guns/cannon, D-pad down drops bombs/fires missiles on ground
+    // vehicles; airplanes keep the D-pad for trim, so they fire with LB+RB / LB+A.
+    if (ctx.profile === 'ground') {
+      if (pressed(B.UP)) raw.fire = true;
+      if (pressed(B.DOWN)) raw.fireAlt = true;
+    } else if (pressed(B.LB) && pressed(B.RB)) raw.fire = true;
+    else if (pressed(B.LB) && pressed(B.A)) raw.fireAlt = true;
 
     const edge = (i: number, a: Action) => {
       if (pressed(i) && !this.prevButtons[i]) this.actions.push(a);
@@ -139,6 +146,7 @@ export class GamepadDevice implements InputDevice {
     edge(B.BACK, 'help');
     edge(B.L3, 'trimReset');
     edge(B.R3, 'autopilot');
+    if (pressed(B.X) && !this.prevButtons[B.X] && ctx.profile === 'ground') this.actions.push('loadout');
     this.prevButtons = p.buttons.map((x) => x.pressed);
   }
 

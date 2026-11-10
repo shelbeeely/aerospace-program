@@ -285,7 +285,7 @@ export class Craft {
     for (const s of this.aeroSurfaces) totalArea += s.area;
     const wheels = this.wheels.length || 1;
     for (const part of this.parts) {
-      const k = 1 + 0.6 * reinforceLevel(part);
+      const k = (1 + 0.6 * reinforceLevel(part)) * Math.max(1, this.def.armor ?? 1);
       if (part.strength !== undefined) {
         this.strength.set(part.id, part.strength > 0 ? part.strength * k : Infinity);
         continue;

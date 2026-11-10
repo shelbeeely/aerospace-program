@@ -533,3 +533,10 @@ body.touch-ui #mp-panel { top: auto; bottom: calc(max(8px, env(safe-area-inset-b
 @media (max-width: 700px) {
   #arch-panel { top: auto; bottom: 0; right: 0; left: 0; width: auto; max-height: 55vh; }
 }
+
+/* ---------------------------------------------------------------- weapons triggers (touch) */
+.tfire { display: none; position: absolute; right: max(16px, env(safe-area-inset-right)); font-size: 12px; letter-spacing: 0.08em; padding: 0 14px; z-index: 3; }
+body.armed .tfire { display: block; }
+.tfire-1 { bottom: calc(max(40px, env(safe-area-inset-bottom)) + 56px); min-width: 72px; height: 56px; border-color: rgba(255, 138, 31, 0.7); }
+.tfire-2 { bottom: max(40px, env(safe-area-inset-bottom)); min-width: 72px; }
+.tfire.down { background: rgba(255, 90, 31, 0.7); }

@@ -196,6 +196,24 @@ export class TrafficSystem {
     return this.byCollider.size + this.byWall.size;
   }
 
+  /** Derez the rider whose cycle owns this collider (a weapon hit). True if there was one. */
+  derezCollider(handle: number, time: number): boolean {
+    const r = this.byCollider.get(handle);
+    if (r) this.derez(r, time);
+    return !!r;
+  }
+
+  /** Derez every rider within `radius` of a point (a blast). Returns how many went. */
+  derezWithin(x: number, z: number, radius: number, time: number): number {
+    let n = 0;
+    for (const r of this.riders) {
+      if (r.derezAt !== null || (r.x - x) ** 2 + (r.z - z) ** 2 > radius * radius) continue;
+      this.derez(r, time);
+      n++;
+    }
+    return n;
+  }
+
   /** A contact on a rider's cycle (the player, debris): it derezzes. */
   onContact(e: ContactForceInfo): void {
     const r = this.byCollider.get(e.collider1) ?? this.byCollider.get(e.collider2);

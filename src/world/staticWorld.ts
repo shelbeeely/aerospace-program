@@ -49,6 +49,10 @@ export class StaticWorld {
   private readonly loaded = new Set<string>();
   private centreCell = '';
   private readonly owner = new Map<number, number>();
+  /** Is this collider part of a (whole) structure? */
+  isStructure(handle: number): boolean {
+    return this.owner.has(handle);
+  }
   private readonly pending = new Map<number, { impulse: number; x: number; y: number; z: number }>();
   /** The central Grid's structures, then every planet chunk registered so far (append-only). */
   readonly structures: Structures = (() => {
@@ -324,14 +328,17 @@ export class StaticWorld {
   }
 
   /** An explosion: fracture every intact structure within `radius` and crater it. */
-  blastAt(x: number, y: number, z: number, radius: number, time: number): void {
+  blastAt(x: number, y: number, z: number, radius: number, time: number): number {
+    let n = 0;
     for (const g of this.structures.groups) {
       const x1 = g.x0 + g.size[0] * g.blockSize, z1 = g.z0 + g.size[2] * g.blockSize, y1 = g.size[1] * g.blockSize;
       const dx = Math.max(g.x0 - x, 0, x - x1), dz = Math.max(g.z0 - z, 0, z - z1), dy = Math.max(0, y - y1);
       if (dx * dx + dy * dy + dz * dz > radius * radius) continue;
       const b = this.fractured.get(g.id) ?? (this.fractured.size < TUNING.maxFracturedStructures ? this.fracture(g.id, { impulse: TUNING.structureFractureImpulse * 4, x, y, z }, time) : null);
-      if (b) this.town.blast(b, x, y, z, radius, time);
+      // Blocks the sphere overlaps (centre within radius + half a block), so a small blast still bites big blocks.
+      if (b) n += this.town.blast(b, x, y, z, radius + g.blockSize * 0.5, time);
     }
+    return n;
   }
 
   /** Every structure whole again (call before Town.reset). */

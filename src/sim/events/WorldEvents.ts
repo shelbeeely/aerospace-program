@@ -31,6 +31,15 @@ export class WorldEvents {
   private nextId = 0;
   private events: WorldEvent[] = [];
   private readonly scratch = new THREE.Vector3();
+  /**
+   * Random tornadoes: off by default (headless cards stay calm); the game turns them on. One at
+   * a time forms 1.4-3.2 km from `focus` (the player) after a seeded, exponentially distributed
+   * wait, and travels roughly toward and past it.
+   */
+  randomTornadoes = false;
+  readonly focus = { x: 0, z: 0 };
+  /** Weather time of the next random tornado (NaN: not drawn yet). */
+  nextRandomTornado = NaN;
 
   constructor(seed = 1) {
     this.seed = seed;
@@ -43,6 +52,7 @@ export class WorldEvents {
     this.nextId = 0;
     this.time = 0;
     this.events.length = 0;
+    this.nextRandomTornado = NaN;
   }
 
   private random(): number {
@@ -87,6 +97,29 @@ export class WorldEvents {
     if (!Number.isFinite(dt) || dt < 0) throw new Error('Event dt must be finite and nonnegative');
     this.time += dt;
     this.events = this.events.filter(e => e.start + e.duration > this.time);
+    if (this.randomTornadoes) this.spawnRandomTornado();
+  }
+
+  private spawnRandomTornado(): void {
+    if (!Number.isFinite(this.nextRandomTornado)) {
+      this.nextRandomTornado = this.time + D.randomTornadoFirst - Math.log(1 - this.random()) * D.randomTornadoMean;
+      return;
+    }
+    if (this.time < this.nextRandomTornado) return;
+    this.nextRandomTornado = this.time - Math.log(1 - this.random()) * D.randomTornadoMean;
+    if (this.events.some((e) => e.kind === 'tornado') || this.events.length >= D.maxEvents) return;
+    const bearing = this.random() * Math.PI * 2;
+    const [d0, d1] = D.randomTornadoDistance;
+    const dist = d0 + this.random() * (d1 - d0);
+    const x = this.focus.x + Math.cos(bearing) * dist;
+    const z = this.focus.z + Math.sin(bearing) * dist;
+    const [t0, t1] = D.randomTornadoDuration;
+    const e = this.schedule('tornado', this.time, { x, z, duration: t0 + this.random() * (t1 - t0), strength: 0.7 + this.random() * 0.6 });
+    // Head back toward the focus, give or take 50 degrees, at 3-9 m/s.
+    const heading = bearing + Math.PI + (this.random() - 0.5) * 1.75;
+    const speed = D.tornadoTravelSpeed * (0.75 + this.random() * 1.5);
+    e.tornado.velocityX = Math.cos(heading) * speed;
+    e.tornado.velocityZ = Math.sin(heading) * speed;
   }
 
   get active(): readonly WorldEvent[] {
