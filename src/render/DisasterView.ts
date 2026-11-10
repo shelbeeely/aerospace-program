@@ -1,30 +1,21 @@
 import * as THREE from 'three/webgpu';
 import type { WorldEvent, WorldEvents } from '../sim/events/WorldEvents.ts';
 import { NEON, neonLineMaterial } from './neon.ts';
+import { TornadoView } from './TornadoView.ts';
 
 /** Only visuals: wind and ground motion come from the deterministic headless event models. */
 export class DisasterView {
   private readonly groups = new Map<WorldEvent, THREE.Group>();
+  private readonly tornadoes = new Map<WorldEvent, TornadoView>();
 
   constructor(private readonly scene: THREE.Scene) {}
 
   private create(event: WorldEvent): THREE.Group {
     const group = new THREE.Group();
     if (event.kind === 'tornado') {
-      for (let i = 0; i < 20; i++) {
-        const y = (i / 19) * event.tornado.height;
-        const radius = event.tornado.coreRadius * (0.22 + (i / 19) ** 0.8);
-        const points: THREE.Vector3[] = [];
-        // Broken rings make their rotation legible rather than spinning a symmetric torus.
-        for (let j = 0; j <= 52; j++) {
-          const a = (j / 64) * Math.PI * 2;
-          points.push(new THREE.Vector3(Math.cos(a) * radius, 0, Math.sin(a) * radius));
-        }
-        const ring = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), neonLineMaterial(i % 3 ? NEON.magenta : NEON.cyan, 3));
-        ring.position.y = y;
-        ring.rotation.y = i * 0.6;
-        group.add(ring);
-      }
+      const view = new TornadoView(event.tornado, event.seed, event.strength);
+      this.tornadoes.set(event, view);
+      group.add(view.group);
     } else if (event.kind === 'hurricane') {
       for (let band = 0; band < 3; band++) {
         const points: THREE.Vector3[] = [];
@@ -58,6 +49,8 @@ export class DisasterView {
     const live = new Set(active);
     for (const [event, group] of this.groups) if (!live.has(event)) {
       group.traverse(o => { if (o instanceof THREE.Line) o.geometry.dispose(); });
+      this.tornadoes.get(event)?.dispose();
+      this.tornadoes.delete(event);
       this.scene.remove(group);
       this.groups.delete(event);
     }
@@ -71,7 +64,7 @@ export class DisasterView {
       if (event.kind === 'tornado') {
         group.position.x += age * event.tornado.velocityX;
         group.position.z += age * event.tornado.velocityZ;
-        for (let i = 0; i < group.children.length; i++) group.children[i].rotation.y = age * (1.2 + i * 0.025) + i * 0.6;
+        this.tornadoes.get(event)?.update(age, events.intensity(event));
       } else if (event.kind === 'hurricane') group.rotation.y = age * 0.025;
       else for (let i = 0; i < group.children.length; i++) {
         const scale = 0.1 + ((age * 0.35 + i / group.children.length) % 1) * 5;
@@ -85,6 +78,8 @@ export class DisasterView {
       group.traverse(o => { if (o instanceof THREE.Line) o.geometry.dispose(); });
       this.scene.remove(group);
     }
+    for (const t of this.tornadoes.values()) t.dispose();
+    this.tornadoes.clear();
     this.groups.clear();
   }
 }

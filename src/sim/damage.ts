@@ -90,7 +90,7 @@ export class DamageModel {
             ? p.hp
             : Infinity
           : TUNING.hpPerKg * p.mass + TUNING.hpPerCubicMetre * partVolume(p);
-      const reinforced = hp * (1 + 0.8 * Math.min(3, Math.max(0, Math.round(p.reinforce ?? 0))));
+      const reinforced = hp * (1 + 0.8 * Math.min(3, Math.max(0, Math.round(p.reinforce ?? 0)))) * Math.max(1, craft.def.armor ?? 1);
       this.hp.set(p.id, reinforced);
       this.maxHp.set(p.id, reinforced);
     }

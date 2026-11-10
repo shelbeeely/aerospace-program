@@ -23,6 +23,10 @@ const wing = (side: -1 | 1): PartDef => ({
   rotationDeg: [0, 0, side * 3],
   shape: { type: 'box', size: [4.5, 0.2, 2.3] },
   color: WHITE,
+  // A rocket outruns the airframe a jet would have: rated for the pulls of rocket speeds
+  // (~10 g of the wing's share) so they don't snap (by default they failed at ~4.5 g). An explicit
+  // structural strength, not reinforcement: crash toughness stays that of a light airframe.
+  strength: 340000,
   modules: [
     // Wing tank inboard, near the CoM.
     { type: 'fuel', offset: [-side * 1.2, 0, 0], capacity: 330 },
@@ -128,6 +132,7 @@ export const ORBITER: CraftDef = {
     wing(1),
     {
       id: 'stabilizer.left',
+      strength: 120000,
       kind: 'tail.horizontal',
       mass: 30,
       position: [-1.3, 0.3, 5.3],
@@ -140,6 +145,7 @@ export const ORBITER: CraftDef = {
     },
     {
       id: 'stabilizer.right',
+      strength: 120000,
       kind: 'tail.horizontal',
       mass: 30,
       position: [1.3, 0.3, 5.3],
@@ -152,6 +158,7 @@ export const ORBITER: CraftDef = {
     },
     {
       id: 'stabilizer.vertical',
+      strength: 120000,
       kind: 'tail.vertical',
       mass: 35,
       position: [0, 1.4, 5.0],

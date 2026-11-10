@@ -37,7 +37,7 @@ export class PlayerInput implements ControlSource {
   }
 
   static emptyRaw(): RawInput {
-    return { pitch: 0, roll: 0, yaw: 0, throttleRate: 0, throttleSet: null, brake: 0, trimRate: 0, flapSteps: 0, flapCycle: false };
+    return { pitch: 0, roll: 0, yaw: 0, throttleRate: 0, throttleSet: null, brake: 0, trimRate: 0, flapSteps: 0, flapCycle: false, fire: false, fireAlt: false };
   }
 
   updateSettings(patch: Partial<InputSettings>): void {
@@ -57,6 +57,11 @@ export class PlayerInput implements ControlSource {
     const actions: Action[] = [];
     for (const d of this.devices) d.drainActions(actions);
     return actions;
+  }
+
+  /** Weapon triggers held (from the last poll). */
+  firing(): { primary: boolean; secondary: boolean } {
+    return { primary: this.raw.fire, secondary: this.raw.fireAlt };
   }
 
   /** Haptic feedback on every device that supports it (gamepad rumble, phone vibration). */

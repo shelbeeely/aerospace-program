@@ -41,6 +41,8 @@ import { ExplosionView } from './render/ExplosionView.ts';
 import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
 import { updateSkyPlanet } from './render/neon.ts';
 import { ChipsView } from './render/ChipsView.ts';
+import { WeaponsView } from './render/WeaponsView.ts';
+import { LOADOUT_ORDER, LOADOUTS, WEAPONS, type Loadout, type WeaponKind } from './sim/weapons.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
 import { FlightAutopilot, type AutopilotKind } from './sim/flightAutopilot.ts';
@@ -185,6 +187,7 @@ async function start() {
   const trafficView = new TrafficView(scene, sim.traffic);
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
+  const weaponsView = new WeaponsView(scene, sim.weapons);
   let explosionHeardAt = -Infinity;
   let explodedAt: number | null = null;
   const _wind10 = new THREE.Vector3();
@@ -333,6 +336,10 @@ async function start() {
   const triggerDisaster = (kind: EventKind) => sim.atmosphere.events.trigger(kind, {
     x: sim.position.x - (kind === 'hurricane' ? 1200 : 500), z: sim.position.z - 500,
   });
+  // Tornadoes form at random in the game (seeded with the weather; headless tests stay calm).
+  const randomTornado = document.getElementById('w-random-tornado') as HTMLInputElement | null;
+  sim.atmosphere.events.randomTornadoes = randomTornado?.checked ?? true;
+  randomTornado?.addEventListener('change', () => (sim.atmosphere.events.randomTornadoes = randomTornado.checked));
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-disaster]')) {
     button.addEventListener('click', () => {
       const kind = button.dataset.disaster;
@@ -414,10 +421,7 @@ async function start() {
     const thrust = craft.engines.reduce((sum, e) => sum + e.def.maxThrust, 0);
     const tw = thrust > 0 ? (thrust / (mass * TUNING.gravity)).toFixed(2) : '—';
     const row = (k: string, v: string) => `<div class="row"><span>${k}</span><b>${v}</b></div>`;
-    const name = document.createElement('div');
-    name.className = 'card-name';
-    name.textContent = craft.def.name;
-    craftCard.replaceChildren(name);
+    craftCard.replaceChildren(craftPicker());
     craftCard.insertAdjacentHTML(
       'beforeend',
       row('TYPE', vehicleKind(sim)) +
@@ -425,7 +429,79 @@ async function start() {
         row('SPAN', `${(span * 2).toFixed(1)} m`) +
         row('T/W', tw),
     );
-    craftCard.append(spawnPicker(), reinforcePanel());
+    craftCard.append(spawnPicker(), loadoutPicker(), reinforcePanel());
+  };
+  /**
+   * Choose the craft on the main (hangar) screen: every built-in and saved design in one list,
+   * with ‹ › to step through them (the same list as [ / ]).
+   */
+  const craftPicker = () => {
+    const wrap = document.createElement('div');
+    wrap.className = 'card-name craft-pick';
+    const list = [...BUILTINS.map(builtinEntry), ...library.list()];
+    const sel = document.createElement('select');
+    sel.setAttribute('aria-label', 'Craft');
+    const group = (title: string, entries: LibraryEntry[]) => {
+      if (!entries.length) return;
+      const g = document.createElement('optgroup');
+      g.label = title;
+      for (const e of entries) {
+        const o = document.createElement('option');
+        o.value = e.id;
+        o.textContent = e.name;
+        g.append(o);
+      }
+      sel.append(g);
+    };
+    group('Built-in', list.filter((e) => e.id.startsWith('builtin:')));
+    group('Your designs', list.filter((e) => !e.id.startsWith('builtin:')));
+    const cur = currentEntry?.id ?? 'builtin:trainer';
+    if (!list.some((e) => e.id === cur)) {
+      // An unsaved craft (fresh from the Studio): show it at the top.
+      const o = document.createElement('option');
+      o.value = cur;
+      o.textContent = sim.craft.def.name;
+      sel.prepend(o);
+    }
+    sel.value = cur;
+    sel.addEventListener('change', () => {
+      const e = list.find((x) => x.id === sel.value);
+      if (e) select(e);
+      sel.blur();
+    });
+    const step = (label: string, dir: 1 | -1) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'craft-step';
+      b.textContent = label;
+      b.setAttribute('aria-label', dir > 0 ? 'Next craft' : 'Previous craft');
+      b.addEventListener('click', () => { cycleCraft(dir); b.blur(); });
+      return b;
+    };
+    wrap.append(step('‹', -1), sel, step('›', 1));
+    return wrap;
+  };
+  /** Weapons loadout for the craft (the same choice as I in flight). */
+  const loadoutPicker = () => {
+    const label = document.createElement('label');
+    label.className = 'spawn-at';
+    const name = document.createElement('span');
+    name.textContent = 'ARM';
+    const sel = document.createElement('select');
+    sel.setAttribute('aria-label', 'Weapons loadout');
+    for (const id of LOADOUT_ORDER) {
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = LOADOUTS[id].label;
+      sel.append(o);
+    }
+    sel.value = sim.weapons.loadout;
+    sel.addEventListener('change', () => {
+      sim.weapons.arm(sim.craft.def, sel.value as Loadout);
+      sel.blur();
+    });
+    label.append(name, sel);
+    return label;
   };
   /**
    * "Spawn at": any runway, any helipad, or (ground vehicles) the nearest street. The choice
@@ -817,6 +893,10 @@ async function start() {
         const m = sim.trails.cycleMode(sim.craft, sim.isAirplane(), sim.time);
         toast(m === 'wall' ? 'Jetwall: solid light' : m === 'ribbon' ? 'Light ribbon: fades behind you' : 'Trail off');
       }
+      else if (a === 'loadout') {
+        const l = sim.weapons.cycle();
+        toast(l === 'none' ? 'Weapons: unarmed' : `Weapons: ${LOADOUTS[l].label} · V fires guns/cannon, O bombs/missiles`);
+      }
       else if (a === 'screenshot') void takePhoto();
       else if (a === 'nextVehicle') cycleCraft(1);
       else if (a === 'prevVehicle') cycleCraft(-1);
@@ -847,6 +927,10 @@ async function start() {
       return;
     }
 
+    // Weapons triggers (held keys / buttons); the flight computer never fires.
+    const trig = player.firing();
+    sim.weapons.trigger.primary = trig.primary;
+    sim.weapons.trigger.secondary = trig.secondary;
     accumulator += dt;
     stepsThisFrame = 0;
     let stepMs = 0;
@@ -876,6 +960,13 @@ async function start() {
     trafficView.update(sim.time);
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
+    weaponsView.update();
+    {
+      const ammo = sim.weapons.ammo();
+      const kinds = Object.keys(ammo) as WeaponKind[];
+      document.body.classList.toggle('armed', kinds.length > 0);
+      hud.setWeapons(kinds.length ? kinds.map((k) => `${WEAPONS[k].label.slice(0, 3).toUpperCase()} ${ammo[k]}`).join(' ') : null);
+    }
     if (!sim.explosions.length) explosionHeardAt = -Infinity;
     for (const e of sim.explosions) {
       if (e.time <= explosionHeardAt) continue;

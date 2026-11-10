@@ -4,7 +4,7 @@ const GAME_CODES = new Set([
   'Backspace', 'KeyL',
   'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyB', 'KeyR', 'KeyC', 'KeyZ', 'KeyX',
   'KeyT', 'KeyG', 'KeyH', 'KeyY', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'F3',
-  'Space', 'KeyN', 'BracketLeft', 'BracketRight', 'KeyM', 'KeyP', 'KeyK', 'KeyF', 'Period', 'Comma', 'F6', 'F7', 'KeyU', 'KeyJ',
+  'Space', 'KeyN', 'BracketLeft', 'BracketRight', 'KeyM', 'KeyP', 'KeyK', 'KeyF', 'Period', 'Comma', 'F6', 'F7', 'KeyU', 'KeyJ', 'KeyV', 'KeyO', 'KeyI',
 ]);
 
 export class KeyboardDevice implements InputDevice {
@@ -38,6 +38,7 @@ export class KeyboardDevice implements InputDevice {
         case 'KeyU': this.actions.push('autopilot'); break;
         case 'KeyJ': this.actions.push('apPanel'); break;
         case 'KeyL': this.actions.push('trail'); break;
+        case 'KeyI': this.actions.push('loadout'); break;
         case 'Period': case 'F7': this.flapSteps++; break; // flaps down a notch
         case 'Comma': case 'F6': this.flapSteps--; break; // flaps up a notch
         case 'KeyZ': this.throttleSet = 1; break;
@@ -62,6 +63,8 @@ export class KeyboardDevice implements InputDevice {
     raw.throttleRate += (up ? 1 : 0) - (dn ? 1 : 0);
     if (this.down.has('KeyB') || this.down.has('Space')) raw.brake = 1;
     raw.trimRate += this.axis('KeyT', 'KeyG'); // T = nose-down trim, G = nose-up trim
+    if (this.down.has('KeyV')) raw.fire = true; // V: guns / cannon (hold)
+    if (this.down.has('KeyO')) raw.fireAlt = true; // O: bombs / missiles (hold)
     raw.flapSteps += this.flapSteps;
     this.flapSteps = 0;
     if (this.throttleSet !== null) {

@@ -15,6 +15,9 @@ export interface RawInput {
   /** Flap detent steps this frame: +1 = one notch down, -1 = one notch up, 'cycle' = next notch (wraps). */
   flapSteps: number;
   flapCycle: boolean;
+  /** Weapons triggers held this frame: primary (guns, cannon) and secondary (bombs, missiles). */
+  fire: boolean;
+  fireAlt: boolean;
 }
 
 export type Action =
@@ -33,7 +36,8 @@ export type Action =
   | 'mouseFlight'
   | 'autopilot'
   | 'apPanel'
-  | 'trail';
+  | 'trail'
+  | 'loadout';
 
 /** What a device may know about the game when it reads. */
 export interface InputContext {

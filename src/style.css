@@ -533,3 +533,16 @@ body.touch-ui #mp-panel { top: auto; bottom: calc(max(8px, env(safe-area-inset-b
 @media (max-width: 700px) {
   #arch-panel { top: auto; bottom: 0; right: 0; left: 0; width: auto; max-height: 55vh; }
 }
+
+/* ---------------------------------------------------------------- weapons triggers (touch) */
+.tfire { display: none; position: absolute; right: max(16px, env(safe-area-inset-right)); font-size: 12px; letter-spacing: 0.08em; padding: 0 14px; z-index: 3; }
+body.armed .tfire { display: block; }
+.tfire-1 { bottom: calc(max(40px, env(safe-area-inset-bottom)) + 56px); min-width: 72px; height: 56px; border-color: rgba(255, 138, 31, 0.7); }
+.tfire-2 { bottom: max(40px, env(safe-area-inset-bottom)); min-width: 72px; }
+.tfire.down { background: rgba(255, 90, 31, 0.7); }
+
+/* ---------------------------------------------------------------- hangar craft picker */
+#craft-card .craft-pick { display: flex; align-items: center; gap: 6px; }
+#craft-card .craft-pick select { flex: 1; min-width: 0; background: rgba(0,0,0,0.35); color: inherit; border: 1px solid rgba(255,255,255,0.22); border-radius: 4px; font: inherit; padding: 2px 4px; }
+#craft-card .craft-step { width: 28px; height: 28px; flex: none; border-radius: 4px; background: rgba(0,0,0,0.35); color: #eaf2f8; border: 1px solid rgba(255,255,255,0.22); font: 600 16px/1 ui-monospace, monospace; cursor: pointer; }
+#craft-card .craft-step:hover { border-color: #00d4ff; }

@@ -36,20 +36,21 @@ import { terrainHeight } from './terrain.ts';
 import { GroundDriver } from './groundPilot.ts';
 
 export type AutopilotKind = 'airplane' | 'rotorcraft' | 'ground';
-export type AutopilotMode = 'hold' | 'takeoff' | 'land' | 'goto' | 'orbit' | 'level';
+export type AutopilotMode = 'hold' | 'takeoff' | 'land' | 'goto' | 'orbit' | 'level' | 'ascent';
 export type AutopilotPhase =
   | 'hold' | 'takeoff' | 'climb' | 'cruise' | 'orbit' | 'level'
   | 'join' | 'final' | 'flare' | 'rollout'
   | 'transit' | 'approach' | 'descend'
   | 'landed'
-  | 'drive' | 'arrived' | 'parked';
+  | 'drive' | 'arrived' | 'parked'
+  | 'boost' | 'coast' | 'circularize' | 'orbiting';
 
 /** Airplane modes in panel order, and the rotorcraft subset. */
-export const AIRPLANE_MODES: readonly AutopilotMode[] = ['hold', 'takeoff', 'land', 'goto', 'orbit', 'level'];
+export const AIRPLANE_MODES: readonly AutopilotMode[] = ['hold', 'takeoff', 'land', 'goto', 'orbit', 'level', 'ascent'];
 export const ROTORCRAFT_MODES: readonly AutopilotMode[] = ['hold', 'takeoff', 'goto', 'land'];
 /** Ground vehicles: stop and hold, or drive to a destination on the road network. */
 export const GROUND_MODES: readonly AutopilotMode[] = ['hold', 'goto'];
-export const MODE_LABELS: Record<AutopilotMode, string> = { hold: 'Hold', takeoff: 'Takeoff', land: 'Land', goto: 'Go to', orbit: 'Orbit', level: 'Level' };
+export const MODE_LABELS: Record<AutopilotMode, string> = { hold: 'Hold', takeoff: 'Takeoff', land: 'Land', goto: 'Go to', orbit: 'Orbit', level: 'Level', ascent: 'To orbit' };
 
 /** Approach guidance while landing (and distance/ETA while going somewhere). */
 export interface AutopilotGuidance {
@@ -215,7 +216,13 @@ export class FlightAutopilot implements ControlSource {
       s.status = s.mode === 'goto' && this.dest ? `Driving to ${this.dest.name}: ${km(this.driver.length)} by road` : 'Stopped, brakes on';
       return;
     }
-    if (kind === 'airplane') {
+    if (kind === 'airplane' && s.mode === 'ascent') {
+      // Reach orbit: the selected altitude is the circular orbit's height.
+      s.altitude = clamp(opts.altitude ?? 30000, 12000, 90000);
+      s.speed = 0;
+      this.plane = new Autopilot({ heading: s.heading, altitude: 600, airspeed: 120 });
+      this.plane.rotateSpeed = clamp(this.stallSpeed * 1.15, 12, 90);
+    } else if (kind === 'airplane') {
       s.altitude = opts.altitude ?? (grounded ? 300 : Math.max(60, Math.round(t.altitude / 10) * 10));
       s.speed = opts.speed ?? Math.max(40, Math.round(t.airspeed));
       if (opts.speed === undefined && grounded && this.perfKnown) s.speed = Math.max(s.speed, Math.round(this.stallSpeed * 1.6));
@@ -262,6 +269,9 @@ export class FlightAutopilot implements ControlSource {
         break;
       case 'level':
         s.phase = 'level';
+        break;
+      case 'ascent':
+        s.phase = grounded ? 'takeoff' : 'boost';
         break;
       case 'orbit': {
         // Around the destination if one is set, else a circle starting where we are.
@@ -435,11 +445,61 @@ export class FlightAutopilot implements ControlSource {
       }
       case 'orbit':
         return this.flyOrbit(dt, t, human);
+      case 'ascent':
+        return this.flyAscent(dt, t);
       case 'goto':
         if (s.phase !== 'takeoff') return this.flyGoto(dt, t, human);
       // fallthrough: take off first
       default:
         return this.flyHold(dt, t, human);
+    }
+  }
+
+  /**
+   * To orbit: take off if on the runway; a gravity turn at full thrust (pitch easing from 35° to
+   * 8° through the lower air) until the apoapsis reaches the selected altitude; coast to the
+   * apoapsis holding the flight path; burn level until the periapsis comes up to meet it; then
+   * hold the orbit, engine off. Attitude comes from the surfaces in air and the RCS in vacuum.
+   */
+  private flyAscent(dt: number, t: Telemetry): ControlInputs {
+    const s = this.state;
+    const target = s.altitude;
+    const ap = t.orbit?.apoapsis ?? Infinity, pe = t.orbit?.periapsis ?? -Infinity;
+    const gamma = Math.atan2(t.verticalSpeed, Math.max(1, t.groundSpeed)) * (180 / Math.PI);
+    const hold = (pitch: number, throttle: number) => this.plane.fly(dt, t, { vs: pitch >= t.pitch ? 9999 : -9999, track: s.heading, throttle, pitchMin: pitch, pitchMax: pitch, maxBank: 0 });
+    const orbitText = `Ap ${km(Number.isFinite(ap) ? ap : 0)} · Pe ${km(Math.max(0, pe))}`;
+    s.guidance = null;
+    if (s.phase === 'takeoff') {
+      if (!t.onGround && t.altitude > 150) s.phase = 'boost';
+      this.plane.targets = { heading: s.heading, altitude: 600, airspeed: 140 };
+      this.plane.maxClimb = 20;
+      s.status = 'To orbit · take-off';
+      return { ...this.plane.sample(dt, t), throttle: 1 };
+    }
+    if (s.phase === 'boost' && ap >= target) s.phase = 'coast';
+    if (s.phase === 'coast' && (t.verticalSpeed < 4 || t.altitude > target * 0.97)) s.phase = 'circularize';
+    // Circularise for the height actually reached (drag may have cost some of the target).
+    if (s.phase === 'circularize' && (pe >= Math.min(target, t.altitude) * 0.92 || ap === Infinity)) s.phase = 'orbiting';
+    if (s.phase === 'orbiting' && pe < Math.min(target, t.altitude) * 0.7) s.phase = 'circularize';
+    switch (s.phase) {
+      case 'boost': {
+        const k = clamp((t.altitude - 1000) / 14000, 0, 1);
+        s.status = `To orbit · gravity turn · ${orbitText} (target ${km(target)})`;
+        return hold(35 + (8 - 35) * k, 1);
+      }
+      case 'coast': {
+        // In the lower air drag eats the apoapsis: top it up along the flight path.
+        const topUp = ap < target * 0.98 ? clamp((target - ap) / (target * 0.05), 0.2, 1) : 0;
+        s.status = `To orbit · coasting to apoapsis${topUp ? ' (drag: topping up)' : ''} · ${orbitText}`;
+        return hold(clamp(gamma, -10, 30), topUp);
+      }
+      case 'circularize':
+        s.status = `To orbit · circularising · ${orbitText}`;
+        // Keep the climb near zero while the burn adds horizontal speed.
+        return hold(clamp(-t.verticalSpeed * 0.6, -6, 12), t.fuel !== null && t.fuel <= 0 ? 0 : 1);
+      default:
+        s.status = `In orbit · ${orbitText}`;
+        return hold(clamp(gamma, -5, 5), 0);
     }
   }
 

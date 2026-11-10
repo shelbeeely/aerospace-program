@@ -32,8 +32,10 @@ const FIELDS: Record<AutopilotMode, Field[]> = {
   goto: ['destination', 'altitude', 'speed', 'orbit'],
   orbit: ['destination', 'orbit', 'altitude', 'speed'],
   level: [],
+  ascent: ['altitude'],
 };
 const HINTS: Record<AutopilotMode, string> = {
+  ascent: 'Flies to a circular orbit at the selected altitude: take-off, gravity turn at full thrust, coast to the apoapsis, circularise. Needs a rocket (or enough of anything) to get there.',
   hold: 'Holds heading, altitude (or a vertical speed) and speed; takes off from a runway. Stick and throttle turn the knobs.',
   takeoff: 'Take-off roll and climb to the selected altitude, then Hold.',
   land: 'Airplanes: join, 3° glideslope, flare, brakes to a stop on a runway long enough. Rotorcraft: any helipad, rooftops too.',

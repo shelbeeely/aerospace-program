@@ -345,4 +345,10 @@ export interface CraftDef {
   name: string;
   formatVersion: 1;
   parts: PartDef[];
+  /** Armour multiplier on structural strength, impact HP and crash tolerance (default 1; the tank is 4). */
+  armor?: number;
+  /** Heavy vehicle that bulldozes through buildings it drives into (the tank). */
+  bulldozer?: boolean;
+  /** Default weapons loadout (see sim/weapons.ts); omitted = unarmed until one is chosen. */
+  loadout?: string;
 }

@@ -26,6 +26,8 @@ export class Hud {
     orb: $('h-orb'),
     orbT: $('h-orb-t'),
     fuelRow: $('h-fuel-row'),
+    armRow: $('h-arm-row'),
+    arm: $('h-arm'),
     batt: $('h-batt'),
     battRow: $('h-batt-row'),
     volts: $('h-volts'),
@@ -118,6 +120,13 @@ export class Hud {
       .join('  ');
     this.set(this.el.flags, flags);
     this.el.stall.classList.toggle('hidden', !(t.stall > 0.35 && !t.onGround && t.airspeed > 5));
+  }
+
+  /** ARM row: the weapons loadout and rounds left (hidden when unarmed). */
+  setWeapons(text: string | null): void {
+    if (!this.el.armRow || !this.el.arm) return;
+    this.el.armRow.style.display = text ? '' : 'none';
+    if (text) this.set(this.el.arm, text);
   }
 
   /** ORB row: apoapsis / periapsis (km) and period, once high or fast enough to care. */
