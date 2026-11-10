@@ -1,4 +1,6 @@
-import { boxesTouch, connectivityErrors, obb } from '../craft/connectivity.ts';
+import { boxesTouch, connectivityErrors, obb, type Obb } from '../craft/connectivity.ts';
+import { partQuaternion } from '../craft/massProperties.ts';
+import * as THREE from 'three';
 import { style1982 } from '../craft/style1982.ts';
 import type { CraftDef, PartDef } from '../craft/types.ts';
 import { validateCraft } from '../craft/validate.ts';
@@ -15,6 +17,22 @@ const MAX_PARTS = 200;
  * secondary and tertiary geometry only. The game enforces the rules below in code (mergeDetail),
  * so a model that breaks one loses that part, never the tested design.
  */
+/** Where the wheels actually are (they are drawn by wheel modules, not parts): centre and size. */
+function wheelNotes(craft: CraftDef): string {
+  const out: string[] = [];
+  for (const p of craft.parts) {
+    const q = partQuaternion(p);
+    for (const m of p.modules ?? []) {
+      if (m.type !== 'wheel') continue;
+      const o = new THREE.Vector3(...(m.offset ?? [0, 0, 0])).applyQuaternion(q).add(new THREE.Vector3(...p.position));
+      const cy = o.y - m.restLength * 0.7; // about where it sits under load
+      const f = (v: number) => +v.toFixed(2);
+      out.push(`- wheel on "${p.id}": centre ≈ [${f(o.x)}, ${f(cy)}, ${f(o.z)}], radius ${m.radius} m (axle along X; its outer face is at x ≈ ${f(o.x + Math.sign(o.x || 1) * 0.15)})`);
+    }
+  }
+  return out.length ? `\nWheels (drawn by wheel modules; put hubs, hubcaps and rim lights on their outer faces, fender arcs above them):\n${out.join('\n')}\n` : '';
+}
+
 export function detailBrief(craft: CraftDef, concept: string): string {
   return `This craft passed its flight test. Now make it look finished and detailed, without changing how it flies.
 
@@ -23,10 +41,12 @@ Concept: ${concept}
 Current craft (${craft.parts.length} parts):
 ${JSON.stringify(craft)}
 
+${wheelNotes(craft)}
 Add 25-80 small VISUAL detail parts (aim for ${Math.min(MAX_PARTS, Math.max(40, craft.parts.length * 3))} parts in total). Rules, enforced by the game:
 - Keep EVERY existing part exactly as it is (same id, position, rotation, shape, mass, modules, collider). Changed or removed parts are restored automatically.
 - New parts: new unique ids, "collider": false, no "modules", mass 0.01-${DETAIL_MAX_KG} kg (all of them together under ${Math.round(DETAIL_MASS_SHARE * 100)}% of the craft's mass).
 - Every new part must overlap or touch the craft (an existing part or another connected detail part). Floating parts are dropped.
+- Detail must be SEEN: put it on the outside surface and let it stand proud of it (3-20 cm out, or more for plates, pods and fairings). A part entirely inside an existing part is invisible and is dropped.
 - 1982 digital-world style: secondary geometry (fairings, armour plates, intakes, nacelle cowls, canopy frames, fender arcs over wheels, wheel hubs, struts and braces, fin caps, sensor pods, antenna masts, exhaust nozzles and rings, vents, steps and ledges) and tertiary geometry (thin panel seams and light lines a few cm thick along edges and around canopies, intakes, nozzles and wheel rims, kind "accent light"). Most detail is dark body colour; light lines use the circuit colour sparingly.
 - Use geometry to make the silhouette richer and more distinctive: layered plates, stepped forms, chamfer-like angled boxes (rotationDeg), ribs, rings of small boxes. Keep the concept's identity.
 - Use only shapes box, cylinder and sphere. Write compact JSON.
@@ -102,6 +122,13 @@ export function mergeDetail(base: CraftDef, proposed: unknown): DetailMerge {
     pending = rest;
   }
   if (pending.length) notes.push(`${pending.length} floating detail part(s) dropped`);
+  // Visible: a detail part wholly inside a tested part can't be seen; drop it.
+  const solids = base.parts.map(obb);
+  const hidden = kept.filter((p) => solids.some((s) => enclosed(boxes.get(p.id)!, s)));
+  if (hidden.length) {
+    notes.push(`${hidden.length} hidden detail part(s) (inside the body) dropped`);
+    for (const h of hidden) kept.splice(kept.indexOf(h), 1);
+  }
   // Part budget, then the mass budget (scaled down together).
   const room = Math.max(0, MAX_PARTS - base.parts.length);
   if (kept.length > room) {
@@ -118,6 +145,15 @@ export function mergeDetail(base: CraftDef, proposed: unknown): DetailMerge {
   }
   const craft: CraftDef = { ...base, parts: [...base.parts, ...kept] };
   return { craft, added: kept.length, notes };
+}
+
+/** Is box `a` wholly inside box `b`? */
+function enclosed(a: Obb, b: Obb): boolean {
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+    const k = a.c.clone().addScaledVector(a.axes[0], sx * a.h.x).addScaledVector(a.axes[1], sy * a.h.y).addScaledVector(a.axes[2], sz * a.h.z).sub(b.c);
+    if (Math.abs(k.dot(b.axes[0])) > b.h.x + 1e-3 || Math.abs(k.dot(b.axes[1])) > b.h.y + 1e-3 || Math.abs(k.dot(b.axes[2])) > b.h.z + 1e-3) return false;
+  }
+  return true;
 }
 
 export interface DetailRequest {

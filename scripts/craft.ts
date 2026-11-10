@@ -91,16 +91,18 @@ for (const [k, re] of [['ground vehicles', /Ground vehicles:/], ['skid steering'
 // ---------------------------------------------------------------- 5. detail round
 console.log('\n--- detail');
 const chassis = LIGHT_CAR.parts.find((p) => p.id === 'chassis')!;
-const top = chassis.position[1] + (chassis.shape.type === 'box' ? chassis.shape.size[1] / 2 : 0.3);
+const side = chassis.position[0] + (chassis.shape.type === 'box' ? chassis.shape.size[0] / 2 : 0.9); // chassis right face
 const detailed = (base: CraftDef): CraftDef => ({
   ...base,
   parts: [
     // A tested part "edited" (heavier) and another one left out: both must come back as they were.
     ...base.parts.slice(1).map((p) => (p.id === 'chassis' ? { ...p, mass: p.mass * 3 } : p)),
     // A plate on the chassis, sent with a collider, a module and a big mass: made visual and light.
-    { id: 'plate.top', kind: 'armour plate', mass: 500, position: [chassis.position[0], top + 0.03, chassis.position[2]], shape: { type: 'box', size: [1.2, 0.06, 1.6] }, color: '#10284f', collider: true, modules: [{ type: 'drag', cdA: 5 }] },
-    // A seam that only touches the plate (connected through it).
-    { id: 'seam.top', kind: 'accent light', mass: 0.05, position: [chassis.position[0], top + 0.08, chassis.position[2]], shape: { type: 'box', size: [1.1, 0.03, 0.03] }, color: '#00d4ff', collider: false },
+    { id: 'plate.top', kind: 'armour plate', mass: 500, position: [side + 0.03, chassis.position[1], chassis.position[2]], shape: { type: 'box', size: [0.06, 0.3, 1.6] }, color: '#10284f', collider: true, modules: [{ type: 'drag', cdA: 5 }] },
+    // A seam that only touches the plate, not the chassis (connected through the plate).
+    { id: 'seam.top', kind: 'accent light', mass: 0.05, position: [side + 0.085, chassis.position[1], chassis.position[2]], shape: { type: 'box', size: [0.03, 0.03, 1.5] }, color: '#00d4ff', collider: false },
+    // Wholly inside the chassis: invisible, dropped.
+    { id: 'buried', kind: 'plate', mass: 0.5, position: [...chassis.position], shape: { type: 'box', size: [0.3, 0.1, 0.3] }, color: '#10284f', collider: false },
     // Floating, and malformed: dropped.
     { id: 'halo', kind: 'ring', mass: 0.5, position: [0, 9, 0], shape: { type: 'box', size: [1, 0.05, 1] }, color: '#ffb000', collider: false },
     { id: 'bad', kind: 'x', mass: 0.5, position: [0, 1, 0], shape: { type: 'cone', radius: 1 }, color: '#ffb000' } as unknown as CraftDef['parts'][number],
@@ -114,7 +116,7 @@ const detailed = (base: CraftDef): CraftDef => ({
   const baseMass = base.parts.reduce((a, p) => a + p.mass, 0);
   const addedMass = extra.reduce((a, p) => a + p.mass, 0);
   check(same, 'every tested part is kept exactly as tested (edits ignored, removals restored)', m.notes.join('; '));
-  check(extra.map((p) => p.id).sort().join(',') === 'plate.top,seam.top', 'connected detail is kept, floating and malformed parts are dropped', extra.map((p) => p.id).join(','));
+  check(extra.map((p) => p.id).sort().join(',') === 'plate.top,seam.top', 'connected, visible detail is kept; floating, buried and malformed parts are dropped', extra.map((p) => p.id).join(','));
   check(extra.every((p) => p.collider === false && !p.modules), 'detail parts are visual only (no collider, no modules)');
   check(addedMass <= baseMass * 0.02 + 0.02, 'detail mass stays under 2% of the craft', `${addedMass.toFixed(1)} kg of ${baseMass.toFixed(0)} kg`);
   check(connectivityErrors(m.craft).length === 0, 'the detailed craft is one connected piece');
