@@ -44,6 +44,9 @@ import { updateSkyPlanet } from './render/neon.ts';
 import { ChipsView } from './render/ChipsView.ts';
 import { WeaponsView } from './render/WeaponsView.ts';
 import { CraterView } from './render/CraterView.ts';
+import { BoomView } from './render/BoomView.ts';
+import { terrainHeight } from './sim/terrain.ts';
+import { craftBounds } from './sim/weapons.ts';
 import { LOADOUT_ORDER, LOADOUTS, WEAPONS, type Loadout, type WeaponKind } from './sim/weapons.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
@@ -191,6 +194,9 @@ async function start() {
   const explosionView = new ExplosionView(scene);
   const weaponsView = new WeaponsView(scene, sim.weapons);
   const craterView = new CraterView(scene);
+  const boomView = new BoomView(scene);
+  let boomHeardAt = -Infinity;
+  let wasSupersonic = false;
   let explosionHeardAt = -Infinity;
   let explodedAt: number | null = null;
   const _wind10 = new THREE.Vector3();
@@ -1001,6 +1007,22 @@ async function start() {
     explosionView.update(sim.time, sim.explosions);
     weaponsView.update();
     craterView.update(sim.time, sim.craters);
+    {
+      // Sonic booms: the Mach cone and vapour, ground shock rings, and the double crack when the
+      // craft goes supersonic or a boom breaks something.
+      const b = craftBounds(sim.craft.def);
+      const length = Math.max(b.max.z - b.min.z, b.max.x - b.min.x);
+      const vel = new THREE.Vector3(...telemetry.velocity);
+      boomView.update(sim.time, renderPos, vel, telemetry.mach, length, sim.booms, (x, z) => terrainHeight(x, z));
+      const supersonic = telemetry.mach > 1.02;
+      if (supersonic && !wasSupersonic) audio.boom(0.6);
+      wasSupersonic = supersonic;
+      for (const e of sim.booms) {
+        if (e.time <= boomHeardAt) continue;
+        boomHeardAt = e.time;
+        if (e.blocks > 0) { audio.boom(Math.min(1, e.groundDp / 3000)); player.rumble(0.8, 400); }
+      }
+    }
     {
       const ammo = sim.weapons.ammo();
       const kinds = Object.keys(ammo) as WeaponKind[];

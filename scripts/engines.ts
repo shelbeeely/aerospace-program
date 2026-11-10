@@ -23,6 +23,8 @@ import { Chute } from '../src/modules/Airbrake.ts';
 import { bodyWaveFactor, liftSlopeFactor, surfaceWaveDrag } from '../src/modules/compressibility.ts';
 import { Engine } from '../src/modules/Engine.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
+import { boomOverpressure } from '../src/sim/sonicBoom.ts';
+import { worldStructures } from '../src/world/structures.ts';
 
 await initPhysics();
 let failed = 0;
@@ -198,6 +200,38 @@ console.log('\n--- weight floors');
   check(ram.mass >= partMinMass(ram).kg && fixes.some((f) => /ramjet.*raised/.test(f)), 'a 20 kg 150 kN ramjet is raised to its floor', fixes.find((f) => /ramjet/.test(f)) ?? '');
   const booster = partMinMass(DART.parts.find((p) => p.id === 'booster')!);
   check(booster.kg > 300 && booster.kg < 900, 'a solid booster must carry its propellant', `${booster.kg.toFixed(0)} kg floor for 90 kN × 15 s`);
+}
+
+// ---------------------------------------------------------------- 8. sonic booms
+console.log('\n--- sonic booms');
+{
+  const concorde = boomOverpressure(2, 16000, 62);
+  const fighter = boomOverpressure(1.2, 50, 15);
+  check(Math.abs(concorde - 96) < 15 && fighter > 1500 && fighter < 3000, 'overpressure calibrated: Concorde at 16 km ~96 Pa, a fighter at 50 m ~2 kPa', `${concorde.toFixed(0)} Pa, ${fighter.toFixed(0)} Pa`);
+  // A structure to fly over, away from the airport.
+  const w = worldStructures();
+  const g = w.groups.find((x) => x.name.startsWith('arch:') && !x.name.startsWith('arch:infra:') && Math.hypot(x.x0, x.z0) > 1500 && Math.hypot(x.x0, x.z0) < 4000 && x.size[1] * x.blockSize > 20 && x.size[1] * x.blockSize < 120)!;
+  const cx = g.x0 + (g.size[0] * g.blockSize) / 2, cz = g.z0 + (g.size[2] * g.blockSize) / 2, top = g.size[1] * g.blockSize;
+  const pass = (height: number, mach: number) => {
+    const sim = new Simulation(DART);
+    sim.traffic.enabled = false;
+    const v = mach * sim.atmosphere.air(top + height).speedOfSound;
+    const b = sim.craft.body;
+    // Run in along z so the pass crosses the structure.
+    for (let i = 0; i < 120 * 2.5; i++) {
+      const z = cz + 0.5 * v * 2.5 - v * (i / 120);
+      b.setTranslation({ x: cx, y: top + height, z }, true);
+      b.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      b.setLinvel({ x: 0, y: 0, z: -v }, true);
+      b.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 0 });
+    }
+    return { blocks: sim.boomDamage, fractured: sim.staticWorld.fractured.has(g.id), booms: sim.booms.length, dp: Math.max(0, ...sim.booms.map((e) => e.groundDp)) };
+  };
+  const low = pass(60, 1.4), high = pass(3000, 1.4), slow = pass(60, 0.9);
+  check(low.blocks > 0 && low.fractured, 'a supersonic pass 60 m over a structure knocks blocks out of it', `${low.blocks} blocks, ${low.booms} booms`);
+  check(high.blocks === 0, 'the same pass at 3 km only rattles the ground', `${high.blocks} blocks, ground ${high.dp.toFixed(0)} Pa`);
+  check(slow.blocks === 0 && slow.booms === 0, 'a subsonic pass makes no boom');
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');

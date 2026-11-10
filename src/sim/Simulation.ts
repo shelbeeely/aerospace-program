@@ -19,6 +19,7 @@ import { LightningSystem, type LightningStrike, type StrikeTarget } from './ligh
 import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
 import { craftBounds, WeaponSystem, type WeaponHost, type WeaponImpact } from './weapons.ts';
+import { BOOM_DAMAGE, BOOM_DEREZ, BOOM_SHATTER, boomBite, boomOverpressure, boomReach, type BoomEvent } from './sonicBoom.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
 import { vehicleKind } from './vehicleTests.ts';
 import { nearestRoadPoint, siteSpawnPoint, type SpawnPoint, type SpawnSite } from '../world/spawnSites.ts';
@@ -96,6 +97,79 @@ export class Simulation {
     const radius = blast * (0.5 + 0.3 * (1 - Math.max(0, y - gy) / (blast * 0.6)));
     this.craters.push({ x, y: gy, z, radius, time: this.time, color });
     if (this.craters.length > 256) this.craters.splice(0, this.craters.length - 256);
+  }
+
+  /** Sonic booms (newest last): where supersonic craft hit the ground and buildings with their shock. */
+  readonly booms: BoomEvent[] = [];
+  /** Blocks knocked out of structures by sonic booms so far (tests, stats). */
+  boomDamage = 0;
+  private boomAt = -Infinity;
+  private boomLengthFor: { def: CraftDef; length: number } | null = null;
+
+  /**
+   * A supersonic craft's shock sweeps the world around it (call ~4×/s per craft): structures
+   * where the overpressure tops BOOM_DAMAGE lose blocks on the face toward it (weaker booms only
+   * shatter surface shards), loose bodies are shoved away, riders under a strong boom derez.
+   * Returns the boom, or null below Mach 1.
+   */
+  boomFrom(src: { x: number; y: number; z: number; vx: number; vy: number; vz: number; length: number }): BoomEvent | null {
+    const speed = Math.hypot(src.vx, src.vy, src.vz);
+    const mach = speed / this.atmosphere.air(src.y).speedOfSound;
+    if (mach <= 1.02) return null;
+    const L = src.length;
+    const ground = isSea(src.x) ? 0 : terrainHeight(src.x, src.z);
+    const groundDp = boomOverpressure(mach, src.y - ground, L);
+    const reach = boomReach(mach, L, BOOM_SHATTER);
+    let blocks = 0, hits = 0, shards = 0;
+    if (src.y - ground < reach) {
+      for (const g of this.staticWorld.structures.groups) {
+        const x1 = g.x0 + g.size[0] * g.blockSize, z1 = g.z0 + g.size[2] * g.blockSize, y1 = g.size[1] * g.blockSize;
+        // The point of the structure nearest the craft: where the shock hits it first.
+        const px = Math.min(x1, Math.max(g.x0, src.x)), py = Math.min(y1, Math.max(0, src.y)), pz = Math.min(z1, Math.max(g.z0, src.z));
+        const d = Math.hypot(px - src.x, py - src.y, pz - src.z);
+        if (d > reach) continue;
+        const dp = boomOverpressure(mach, d, L);
+        if (dp >= BOOM_DAMAGE && hits < 3) {
+          blocks += this.staticWorld.blastAt(px, py, pz, boomBite(dp), this.time);
+          hits++;
+        } else if (dp >= BOOM_SHATTER && shards < 6) {
+          // Surface panels shatter: pale shards fall, the structure stands.
+          shards++;
+          this.chips.emit({ x: px, y: py, z: pz, radius: 3, vx: (px - src.x) / d * 6, vy: 2, vz: (pz - src.z) / d * 6, speed: 4, count: 30, size: 0.18, color: '#bfefff', persist: true });
+        }
+      }
+      for (const r of this.traffic.riders) {
+        if (r.derezAt !== null) continue;
+        if (boomOverpressure(mach, Math.hypot(r.x - src.x, 0.8 - src.y, r.z - src.z), L) >= BOOM_DEREZ) this.traffic.derez(r, this.time);
+      }
+      this.world.forEachRigidBody((b) => {
+        if (!b.isDynamic() || b === this.craft.body) return;
+        const t = b.translation();
+        const dx = t.x - src.x, dy = t.y - src.y, dz = t.z - src.z;
+        const d = Math.hypot(dx, dy, dz);
+        if (d > reach || d < 1) return;
+        const dv = Math.min(20, boomOverpressure(mach, d, L) / 300);
+        if (dv < 0.5) return;
+        b.applyImpulse({ x: (dx / d) * dv * b.mass(), y: (Math.abs(dy) / d) * dv * b.mass() * 0.5, z: (dz / d) * dv * b.mass() }, true);
+      });
+    }
+    this.boomDamage += blocks;
+    const e: BoomEvent = { x: src.x, y: src.y, z: src.z, time: this.time, mach, groundDp, blocks };
+    this.booms.push(e);
+    if (this.booms.length > 64) this.booms.splice(0, this.booms.length - 64);
+    return e;
+  }
+
+  /** The player's craft: a boom check four times a second while it flies faster than sound. */
+  private playerBoom(): void {
+    if (this.exploded || this.time - this.boomAt < 0.25) return;
+    this.boomAt = this.time;
+    if (this.boomLengthFor?.def !== this.craft.def) {
+      const b = craftBounds(this.craft.def);
+      this.boomLengthFor = { def: this.craft.def, length: Math.max(b.max.z - b.min.z, b.max.x - b.min.x) };
+    }
+    const v = this.linvel;
+    this.boomFrom({ x: this.position.x, y: this.position.y, z: this.position.z, vx: v.x, vy: v.y, vz: v.z, length: this.boomLengthFor.length });
   }
 
   /** Guns, cannon, bombs and missiles (Rapier ray-swept projectiles); see sim/weapons.ts. */
@@ -415,6 +489,8 @@ export class Simulation {
     this.chips.reset();
     this.explosions.length = 0;
     this.craters.length = 0;
+    this.booms.length = 0;
+    this.boomDamage = 0;
     this.lightning.reset(this.atmosphere.settings.seed);
     this.atmosphere.restart();
     this.groundMotion.set(0, 0, 0);
@@ -539,6 +615,7 @@ export class Simulation {
     if (this.exploded) this.weapons.trigger.primary = this.weapons.trigger.secondary = false;
     this.weapons.step(this.weaponHost, this.dt, this.time);
     this.bulldoze();
+    this.playerBoom();
     const resets = this.explosionResets;
     this.guardAgainstExplosion();
     // After an explosion reset the step's contacts belong to a craft that's gone: drop them.

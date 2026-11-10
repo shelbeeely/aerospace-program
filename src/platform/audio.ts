@@ -193,6 +193,27 @@ export class FlightAudio {
   }
 
   /** A craft explosion `distance` m from the listener: a sharp crack, then a long low roll. */
+  /** A sonic boom: the N-wave's double crack, a sharp rise and a second one ~0.15 s later. */
+  boom(strength: number): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running') return;
+    const level = Math.min(1.4, 0.4 + strength);
+    for (const dt of [0, 0.16]) {
+      const t = ctx.currentTime + dt;
+      const src = this.loopNoise();
+      const f = ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.setValueAtTime(2400, t);
+      f.frequency.exponentialRampToValueAtTime(60, t + 0.9);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.setValueAtTime(level, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 1);
+      src.connect(f).connect(g).connect(this.master);
+      src.stop(t + 1.05);
+    }
+  }
+
   explosion(distance: number): void {
     const ctx = this.ctx;
     if (!ctx || ctx.state !== 'running') return;
