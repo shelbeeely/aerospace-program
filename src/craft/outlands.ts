@@ -29,18 +29,18 @@ function wheelPair(
   };
 }
 
-// --- Light Crawler: a six-wheeled, all-wheel-drive rock crawler. Slow, sure-footed, tough.
+// --- Light Crawler: a six-wheeled, all-wheel-drive rock crawler. Slow and sure-footed.
 const CRAWLER_Y = 1.55;
 const crawlerWheels = ([[-1.35, -2.1], [1.35, -2.1], [-1.35, 0], [1.35, 0], [-1.35, 2.1], [1.35, 2.1]] as Array<[number, number]>).map((p, i) =>
   wheelPair(`wheel.${i}`, p, CRAWLER_Y, {
-    mountY: -0.35, radius: 0.78, restLength: 0.5, stiffness: 52000, damping: 6200, brakes: true, drive: 2300,
+    mountY: -0.35, radius: 0.78, restLength: 0.5, stiffness: 36000, damping: 4300, brakes: true, drive: 2300,
     width: 0.62, mass: 40, ...(p[1] < 0 ? { maxSteerDeg: 24 } : p[1] > 0 ? { maxSteerDeg: -8 } : {}),
   }));
 
 /**
  * Light Crawler: six huge wheels on long-travel suspension, all driven; the front pair steers
- * and the rear pair counter-steers, so it turns tight among the rocks. A cyan cab on an
- * armoured amber-lit hull, laying a light ribbon from its tail.
+ * and the rear pair counter-steers, so it turns tight among the rocks. A cyan cab on a dark,
+ * amber-lit hull, laying a light ribbon from its tail.
  */
 export const LIGHT_CRAWLER: CraftDef = {
   name: 'Light Crawler',
@@ -53,7 +53,6 @@ export const LIGHT_CRAWLER: CraftDef = {
       position: [0, CRAWLER_Y, 0],
       shape: { type: 'box', size: [2.2, 0.8, 5.2] },
       color: '#0a1424',
-      reinforce: 2,
       modules: [
         ...crawlerWheels.map((w) => w.module),
         { type: 'stabilizer', strength: 40000 },
@@ -114,7 +113,7 @@ export const LIGHT_RUNNER: CraftDef = {
 const SLED_Y = 0.85;
 const skis = ([[-0.8, -1.15], [0.8, -1.15]] as Array<[number, number]>).map((p, i) =>
   wheelPair(`ski.${i ? 'right' : 'left'}`, p, SLED_Y, {
-    mountY: -0.25, radius: 0.3, restLength: 0.32, stiffness: 14000, damping: 1500, brakes: true, maxSteerDeg: 26,
+    mountY: -0.25, radius: 0.3, restLength: 0.32, stiffness: 11000, damping: 1200, brakes: true, maxSteerDeg: 26,
     width: 0.22, mass: 8, color: '#00eaff',
   }));
 const bogies = ([[0, 0.25], [0, 0.85], [0, 1.45]] as Array<[number, number]>).map((p, i) =>
