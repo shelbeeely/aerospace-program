@@ -397,6 +397,13 @@ export class CraftView {
         slots.push(ring); // the disc ready on the launcher
         break;
       }
+      case 'rail':
+        // Twin long rails over a dark breech; the muzzle gap lights when it fires.
+        add(new THREE.BoxGeometry(0.34, 0.26, 0.7), dark, [0, 0, 0.3]);
+        for (const x of [-0.11, 0.11]) add(new THREE.BoxGeometry(0.07, 0.12, 1.9), dark, [x, 0, -0.9]);
+        add(new THREE.BoxGeometry(0.16, 0.02, 0.5), lit, [0, 0.14, 0.3]);
+        flash = add(new THREE.BoxGeometry(0.14, 0.08, 0.05), lit, [0, 0, -1.86]);
+        break;
       case 'pulse':
         for (const x of [-0.12, 0.12]) add(new THREE.BoxGeometry(0.06, 0.06, 0.9), dark, [x, 0, -0.35]);
         flash = add(new THREE.SphereGeometry(0.09, 8, 6), lit, [0, 0, -0.75]);

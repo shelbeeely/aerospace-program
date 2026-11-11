@@ -32,7 +32,7 @@ import type { LockTarget } from './lock.ts';
 export interface Foe {
   side: Side;
   lock: LockTarget;
-  kind: 'player' | 'flyer' | 'turret' | 'remote';
+  kind: 'player' | 'flyer' | 'turret' | 'remote' | 'missile';
   /** May be fired on now (the player only while it is armed). */
   engage: boolean;
   /** A target on the ground (attacked in a diving pass). */
@@ -56,7 +56,25 @@ export interface AirTarget {
 }
 
 /** Why a combat aircraft is here: the player's team, an enemy team, a freelancer, a hired gun. */
-export type FlyerRole = 'civil' | 'friend' | 'enemy' | 'free' | 'merc';
+export type FlyerRole = 'civil' | 'friend' | 'enemy' | 'free' | 'merc' | 'strike';
+
+/** An attack order: go to a point and fight what's there, until `until` or it's been quiet a while. */
+export interface AirOrder {
+  x: number;
+  z: number;
+  until: number;
+  /** When it last saw nothing to fight there (s), or null while fighting. */
+  quietSince: number | null;
+}
+
+/** A bomber's run: fly to the target and drop on it when `release` says so. */
+export interface StrikeRun {
+  x: number;
+  z: number;
+  dropped: boolean;
+  /** Called each step on the run; drops the bomb and returns true when it's time. */
+  release: (f: AiFlyer) => boolean;
+}
 
 export type CombatState = 'patrol' | 'attack' | 'extend' | 'evade';
 
@@ -109,6 +127,12 @@ export interface AiFlyer {
   /** It, as a lock target and as a foe to others. */
   handle: LockTarget;
   foe: Foe | null;
+  /** An EMP has knocked its engines and lights out until then (s): it glides and holds fire. */
+  disabledUntil: number;
+  /** An attack order (friendlies and mercenaries), or null. */
+  order: AirOrder | null;
+  /** A bomber on a strike run, or null. */
+  run: StrikeRun | null;
   hp: number;
   maxHp: number;
   /** Time it was last hit (its lights flicker; a hostile breaks away). */
@@ -239,6 +263,13 @@ export class AiAirTraffic {
     return false;
   }
 
+  /** An EMP: engines and lights out until `until`, it glides and holds fire. */
+  disable(f: AiFlyer, until: number): void {
+    f.disabledUntil = Math.max(f.disabledUntil, until);
+    f.target = null;
+    if (f.weapons) f.weapons.trigger.primary = f.weapons.trigger.secondary = false;
+  }
+
   /** Live aircraft that fight the player's side (enemy teams and freelancers). */
   hostileFlyers(): AiFlyer[] {
     return this.flyers.filter((f) => f.side !== null && f.derezAt === null && sidesHostile(f.side, this.playerTeam));
@@ -272,6 +303,75 @@ export class AiAirTraffic {
         this.flyers.splice(i, 1);
       }
     }
+  }
+
+  /** Other live places besides the player (orders, strikes): aircraft near them aren't dropped. */
+  focus: Array<{ x: number; z: number }> = [];
+
+  /**
+   * Send aircraft to attack round a point: the friendlies, the mercenaries, or both. They fight
+   * what they find within 3 km of it and circle it while it's quiet; the order ends after
+   * `seconds`, or 20 s with nothing left there. Returns how many went.
+   */
+  order(x: number, z: number, time: number, who: 'all' | 'friends' | 'mercs' = 'all', seconds = 180): number {
+    let n = 0;
+    for (const f of this.flyers) {
+      if (f.derezAt !== null || f.leaving) continue;
+      const ok = (f.role === 'merc' && who !== 'friends') || (f.role === 'friend' && who !== 'mercs');
+      if (!ok) continue;
+      f.order = { x, z, until: time + seconds, quietSince: null };
+      f.target = null;
+      n++;
+    }
+    return n;
+  }
+
+  /** Call every order off: they come back to escort the player. */
+  recall(): number {
+    let n = 0;
+    for (const f of this.flyers) if (f.order) { f.order = null; f.target = null; n++; }
+    return n;
+  }
+
+  /** Active order points (one per distinct point). */
+  orders(): Array<{ x: number; z: number; flyers: number; until: number }> {
+    const out: Array<{ x: number; z: number; flyers: number; until: number }> = [];
+    for (const f of this.flyers) {
+      if (!f.order || f.derezAt !== null) continue;
+      const o = out.find((p) => p.x === f.order!.x && p.z === f.order!.z);
+      if (o) { o.flyers++; o.until = Math.max(o.until, f.order.until); } else out.push({ x: f.order.x, z: f.order.z, flyers: 1, until: f.order.until });
+    }
+    return out;
+  }
+
+  /** The design a strike's bomber flies: the biggest aeroplane in the pool. */
+  bomberDef(): CraftDef | null {
+    const planes = this.pool.filter((d) => flyerKind(d) === 'airplane');
+    if (!planes.length) return null;
+    const size = (d: CraftDef) => { const b = craftBounds(d); return b.max.clone().sub(b.min).length(); };
+    return planes.reduce((a, b) => (size(b) > size(a) ? b : a));
+  }
+
+  /**
+   * A bomber for a strike: an aircraft of the player's team spawned at `from` (high up) that
+   * flies straight for the target, drops when `run.release` says so, then turns for home.
+   */
+  spawnBomber(def: CraftDef, from: THREE.Vector3, time: number, run: StrikeRun): AiFlyer | null {
+    const f = this.spawn(from, time, 'strike', def);
+    if (!f) return null;
+    f.pos.copy(from);
+    f.altitude = f.cruiseAltitude = from.y;
+    f.heading = Math.atan2(wrap(run.x - from.x), -wrap(run.z - from.z));
+    f.rot.setFromEuler(this._e.set(0, -f.heading, 0, 'YXZ'));
+    f.vel.set(Math.sin(f.heading) * f.speed, 0, -Math.cos(f.heading) * f.speed);
+    f.body.setNextKinematicTranslation({ x: from.x, y: from.y, z: from.z });
+    f.body.setTranslation({ x: from.x, y: from.y, z: from.z }, true);
+    f.run = run;
+    // A heavy bomber: fast at height, and armoured (three times a fighter's hit points).
+    f.cruise = f.speed = Math.max(f.cruise, 220);
+    f.vel.set(Math.sin(f.heading) * f.speed, 0, -Math.cos(f.heading) * f.speed);
+    f.hp = f.maxHp = HOSTILE_HP * 3;
+    return f;
   }
 
   /** Hire a mercenary: it flies in from about 2 km out. False if three are already hired. */
@@ -332,7 +432,7 @@ export class AiAirTraffic {
     }
     if (!flyable.length) return null;
     const raw = flyable[Math.floor(random() * flyable.length)];
-    const side: Side | null = role === 'civil' ? null : role === 'friend' || role === 'merc' ? this.playerTeam : role === 'free' ? FREELANCER : this.enemyTeam();
+    const side: Side | null = role === 'civil' ? null : role === 'friend' || role === 'merc' || role === 'strike' ? this.playerTeam : role === 'free' ? FREELANCER : this.enemyTeam();
     const def = side === null ? style1982(raw) : sideLivery(raw, side, role === 'merc');
     const kind = flyerKind(def) as FlyerKind;
     const perf = performance(def, kind);
@@ -361,7 +461,7 @@ export class AiAirTraffic {
       combat: 'patrol', combatUntil: 0, breakHeading: 0, aimError: { h: 0, p: 0 }, missileAt: time + 4,
       vel: new THREE.Vector3(), rot: new THREE.Quaternion(), weapons: null, host: null,
       side, role, mercUntil: role === 'merc' ? time + MERC_CONTRACT : Infinity, leaving: false, target: null, targetAt: -Infinity,
-      handle: null as unknown as LockTarget, foe: null,
+      handle: null as unknown as LockTarget, foe: null, disabledUntil: -Infinity, order: null, run: null,
     };
     const air = this;
     f.handle = {
@@ -392,14 +492,18 @@ export class AiAirTraffic {
     // Drop the derezzed (after a moment) and the far away; keep the count topped up.
     for (let i = this.flyers.length - 1; i >= 0; i--) {
       const f = this.flyers[i];
-      const dist = Math.hypot(wrap(f.pos.x - player.x), wrap(f.pos.z - player.z));
-      const far = dist > 12000 || (f.leaving && dist > 5000);
+      // Distance to the nearest live place (the player, an order, a strike). Aircraft on an order
+      // or a run stay whatever the distance; one with rounds still flying stays till they land.
+      let dist = Math.hypot(wrap(f.pos.x - player.x), wrap(f.pos.z - player.z));
+      for (const p of this.focus) dist = Math.min(dist, Math.hypot(wrap(f.pos.x - p.x), wrap(f.pos.z - p.z)));
+      const busy = !!f.order || (!!f.run && !f.leaving) || (f.weapons?.projectiles.length ?? 0) > 0;
+      const far = !busy && (dist > 12000 || (f.leaving && dist > 5000));
       if ((f.derezAt !== null && time - f.derezAt > 2) || far) {
         if (f.derezAt === null) this.drop(f);
         this.flyers.splice(i, 1);
       }
     }
-    const wantedOf: Record<Exclude<FlyerRole, 'merc'>, number> = { civil: this.count, friend: this.friendlies, enemy: this.enemies, free: this.freelancers };
+    const wantedOf: Record<Exclude<FlyerRole, 'merc' | 'strike'>, number> = { civil: this.count, friend: this.friendlies, enemy: this.enemies, free: this.freelancers };
     for (const role of ['civil', 'friend', 'enemy', 'free'] as const) {
       const wanted = wantedOf[role];
       let alive = this.flyers.filter((f) => f.derezAt === null && f.role === role).length;
@@ -438,6 +542,7 @@ export class AiAirTraffic {
   }
 
   private readonly _tp = new THREE.Vector3();
+  private readonly _tp2 = new THREE.Vector3();
   private readonly _tv = new THREE.Vector3();
 
   /** Horizontal distance (m) between two points, the short way round. */
@@ -457,18 +562,21 @@ export class AiAirTraffic {
    * in the air, then on the ground (turrets). Null: nothing within reach.
    */
   private choose(f: AiFlyer, time: number, player: THREE.Vector3, target: AirTarget | undefined): Foe | null {
-    if (f.side === null || f.leaving) return null;
-    const guard = f.role === 'friend' || f.role === 'merc';
-    if (f.target && time - f.targetAt < 1 && this.valid(f.target, guard ? player : f.pos, LOSE)) return f.target;
+    if (f.side === null || f.leaving || f.run) return null;
+    const ordered = f.order;
+    const guard = !ordered && (f.role === 'friend' || f.role === 'merc');
+    const here = ordered ? this._tp2.set(ordered.x, 0, ordered.z) : guard ? player : f.pos;
+    if (f.target && time - f.targetAt < 1 && this.valid(f.target, here, ordered ? 3500 : LOSE)) return f.target;
     f.targetAt = time;
     const foes: Foe[] = [];
     for (const o of this.flyers) if (o !== f && o.foe && o.derezAt === null && !o.leaving && sidesHostile(f.side, o.side!)) foes.push(o.foe);
     for (const o of target?.foes ?? []) if (o.engage && sidesHostile(f.side, o.side) && o.lock.alive()) foes.push(o);
-    const from = guard ? player : f.pos;
+    const from = here;
     let best: Foe | null = null, score = Infinity;
     for (const o of foes) {
+      if (o.kind === 'missile') continue; // aircraft don't chase missiles
       const d = AiAirTraffic.gap(o.lock.position(this._tp), from);
-      const reach = f.target === o ? LOSE : DETECT;
+      const reach = ordered ? 3000 : f.target === o ? LOSE : DETECT;
       if (d > reach) continue;
       // Ground targets only when nothing is in the air; a guard puts the player's attackers first.
       let k = d + (o.ground ? 20000 : 0);
@@ -547,6 +655,14 @@ export class AiAirTraffic {
   }
 
   private fly(f: AiFlyer, dt: number, time: number, player: THREE.Vector3, target?: AirTarget): void {
+    if (time < f.disabledUntil) {
+      // EMP: no engines, no guns; it glides on, losing speed and height (never into the ground).
+      if (f.weapons) f.weapons.trigger.primary = f.weapons.trigger.secondary = false;
+      f.target = null;
+      const glide = Math.max(f.cruise * 0.6, f.speed - 4 * dt);
+      this.combatFly(f, dt, { want: f.heading, vs: -Math.max(6, glide * 0.12), speed: glide });
+      return;
+    }
     if (f.role === 'merc' && time > f.mercUntil && !f.leaving) {
       // The contract is up: it peels away and leaves.
       f.leaving = true;
@@ -558,9 +674,36 @@ export class AiAirTraffic {
       this.combatFly(f, dt, { want: f.breakHeading, vs: 0.08 * f.speed, speed: f.cruise * 1.2 });
       return;
     }
-    const fight = f.hostile ? this.fight(f, dt, time, this.choose(f, time, player, target)) : null;
+    if (f.run && !f.run.dropped) {
+      // A bomber on its run: straight for the target at its height, dropping when it's time.
+      if (f.weapons) f.weapons.trigger.primary = f.weapons.trigger.secondary = false;
+      const r = f.run;
+      if (r.release(f)) {
+        r.dropped = true;
+        f.leaving = true;
+        f.target = null;
+        f.breakHeading = f.heading + Math.PI * 0.75;
+      }
+      this.combatFly(f, dt, { want: Math.atan2(wrap(r.x - f.pos.x), -wrap(r.z - f.pos.z)), vs: (f.cruiseAltitude - f.pos.y) * 0.3, speed: f.cruise });
+      return;
+    }
+    const chosen = f.hostile ? this.choose(f, time, player, target) : null;
+    // An order ends when its time is up, or after 20 s with nothing left to fight there.
+    const o = f.order;
+    if (o) {
+      if (chosen) o.quietSince = null;
+      else o.quietSince ??= time;
+      if (time > o.until || (o.quietSince !== null && time - o.quietSince > 20)) { f.order = null; f.target = null; }
+    }
+    const fight = f.hostile ? this.fight(f, dt, time, chosen) : null;
     if (fight) {
       this.combatFly(f, dt, fight);
+      return;
+    }
+    if (f.order) {
+      // On station: circle the order's point, well above what's there.
+      const at = this._tp2.set(f.order.x, Math.max(terrainHeight(f.order.x, f.order.z), obstacleTop(f.order.x, f.order.z)) + 440, f.order.z);
+      this.combatFly(f, dt, this.escort(f, time, at));
       return;
     }
     if (f.role === 'friend' || f.role === 'merc') {

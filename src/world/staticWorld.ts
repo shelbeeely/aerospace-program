@@ -341,6 +341,29 @@ export class StaticWorld {
     return n;
   }
 
+  /**
+   * A nuclear blast: every structure within `radius` fractures, nearest first (up to the
+   * fractured-structure cap; the rest are left standing), and its blocks inside the radius go.
+   * Returns the blocks knocked out.
+   */
+  flattenAt(x: number, y: number, z: number, radius: number, time: number): number {
+    const near: Array<{ id: number; d: number }> = [];
+    for (const g of this.structures.groups) {
+      const x1 = g.x0 + g.size[0] * g.blockSize, z1 = g.z0 + g.size[2] * g.blockSize;
+      const dx = Math.max(g.x0 - x, 0, x - x1), dz = Math.max(g.z0 - z, 0, z - z1);
+      const d = Math.hypot(dx, dz);
+      if (d <= radius) near.push({ id: g.id, d });
+    }
+    near.sort((a, b) => a.d - b.d);
+    let n = 0;
+    for (const { id } of near) {
+      const g = this.structures.groups[id];
+      const b = this.fractured.get(id) ?? (this.fractured.size < TUNING.maxFracturedStructures ? this.fracture(id, { impulse: TUNING.structureFractureImpulse * 8, x, y, z }, time) : null);
+      if (b) n += this.town.blast(b, x, y, z, radius + g.blockSize * 0.5, time);
+    }
+    return n;
+  }
+
   /** Every structure whole again (call before Town.reset). */
   reset(): void {
     for (const [group, building] of this.fractured) {

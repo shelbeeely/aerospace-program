@@ -42,10 +42,12 @@ export type Action =
   | 'trail'
   | 'loadout'
   | 'map'
+  | 'globe'
   | 'radarRange'
   | 'recentre'
   | 'chase'
-  | 'mercs';
+  | 'mercs'
+  | 'strategic';
 
 /** What a device may know about the game when it reads. */
 export interface InputContext {

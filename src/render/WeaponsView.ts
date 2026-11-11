@@ -36,6 +36,9 @@ export class WeaponsView {
   private readonly _s = new THREE.Vector3();
   private readonly _d = new THREE.Vector3();
   private readonly _c = new THREE.Color();
+  private readonly _d2 = new THREE.Vector3();
+  private readonly _d3 = new THREE.Vector3();
+  private readonly _white = new THREE.Color('#e8f6ff');
   private readonly fwd = new THREE.Vector3(0, 0, 1);
   private readonly zero = new THREE.Matrix4().makeScale(0, 0, 0);
   private shown = { light: 0, solid: 0, ring: 0 };
@@ -129,6 +132,44 @@ export class WeaponsView {
           put(this.solid, ns++, pr.pos, dir, 0.7, 0.03, 0.26, 0.85, pr.color, 1, Math.PI / 2);
           this.trail(pr, time, live);
           break;
+        case 'nuke': {
+          // The nuke: a big bomb (the bomb's shape at 2.5×), nose down, a white band; once the
+          // chute is out, a canopy of light above it on four lines of rigging.
+          const S = 2.5;
+          put(this.solid, ns++, pr.pos, dir, 0.42 * S, 0.42 * S, 1.0 * S, 0.1 * S, pr.color, 1);
+          put(this.solid, ns++, pr.pos, dir, 0.3 * S, 0.3 * S, 0.35 * S, -0.55 * S, pr.color, 1);
+          put(this.light, nl++, pr.pos, dir, 0.44 * S, 0.44 * S, 0.08 * S, -0.25 * S, '#dff6ff', 1.8);
+          put(this.solid, ns++, pr.pos, dir, 0.7 * S, 0.03 * S, 0.26 * S, 0.85 * S, pr.color, 1);
+          put(this.solid, ns++, pr.pos, dir, 0.7 * S, 0.03 * S, 0.26 * S, 0.85 * S, pr.color, 1, Math.PI / 2);
+          if (pr.age > 1.5 && nr < 64) {
+            // The canopy rides behind the tail (up, when it falls nose down), opening over a second.
+            const open = Math.min(1, (pr.age - 1.5) / 1);
+            const back = this._p.copy(pr.pos).addScaledVector(dir, -14 * open - 3);
+            this._q.setFromUnitVectors(this._s.set(0, 1, 0), this._d2.copy(dir).negate());
+            this._m.compose(back, this._q, this._s.setScalar(7 * open + 0.5));
+            this.ring.setMatrixAt(nr, this._m);
+            this.ring.setColorAt(nr++, this._c.set('#dff6ff').multiplyScalar(1.2));
+            for (const [sx, sz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+              const lineDir = this._d3.set(sx * 3.5 * open, 0, sz * 3.5 * open).applyQuaternion(this._q).add(this._d2.clone().multiplyScalar(-14 * open)).normalize();
+              put(this.light, nl++, pr.pos, lineDir, 0.03, 0.03, 14 * open + 1, -(14 * open + 1) / 2, '#dff6ff', 0.6);
+            }
+          }
+          this.trail(pr, time, live);
+          break;
+        }
+        case 'emp': {
+          // A strategic warhead: a fat dark body, a lit band in its colour (white for a nuke,
+          // blue-white for an EMP), fins, a long flickering plume and a light trail.
+          const band = '#9fd8ff';
+          put(this.solid, ns++, pr.pos, dir, 0.6, 0.6, 3.2, 0, pr.color, 1);
+          put(this.light, nl++, pr.pos, dir, 0.62, 0.62, 0.15, -0.6, band, 1.8);
+          put(this.solid, ns++, pr.pos, dir, 1.4, 0.05, 0.6, 1.3, pr.color, 1);
+          put(this.solid, ns++, pr.pos, dir, 1.4, 0.05, 0.6, 1.3, pr.color, 1, Math.PI / 2);
+          const fl = 0.85 + 0.3 * Math.sin(pr.age * 70 + pr.id);
+          put(this.light, nl++, pr.pos, dir, 0.7, 0.7, 7 * fl, 5.2, '#fff4d8', 1.3);
+          this.trail(pr, time, live);
+          break;
+        }
         case 'missile': {
           put(this.solid, ns++, pr.pos, dir, 0.24, 0.24, 2.0, 0, pr.color, 1);
           put(this.light, nl++, pr.pos, dir, 0.16, 0.16, 0.3, -1.1, pr.color, 1.4); // lit seeker nose
@@ -202,9 +243,13 @@ export class WeaponsView {
     for (const weapons of this.systems()) for (const b of weapons.beams) {
       if (o >= 64) break;
       const age = time - b.time;
-      if (age < 0 || age > BEAM_LIFE) continue;
-      const k = 1.6 * (1 - age / BEAM_LIFE);
+      // A railgun's streak lingers, white-hot, fading to its shooter's colour.
+      const rail = b.kind === 'rail';
+      const life = rail ? 0.5 : BEAM_LIFE;
+      if (age < 0 || age > life) continue;
+      const k = (rail ? 2.4 : 1.6) * (1 - age / life);
       this._c.set(b.color);
+      if (rail) this._c.lerp(this._white, Math.max(0, 1 - age * 4));
       this.beamPos.set([b.a.x, b.a.y, b.a.z, b.b.x, b.b.y, b.b.z], o * 3);
       this.beamCol.set([this._c.r * k, this._c.g * k, this._c.b * k, this._c.r * k, this._c.g * k, this._c.b * k], o * 3);
       o += 2;

@@ -29,3 +29,23 @@ export const TOWER_TURRET: CraftDef = {
     { id: 'turret.light', kind: 'accent light', mass: 5, position: [0, 3.56, -1.38], shape: { type: 'box', size: [2.5, 0.05, 0.05] }, collider: false, color: '#ff2a12' },
   ],
 };
+
+/**
+ * The railgun turret: the same pedestal and traversing head, one long twin-rail barrel that
+ * elevates (a fitted railgun at its tip) and a lit breech on the head. No missiles: it charges
+ * for a moment, then puts a slug through whatever is on the line.
+ */
+export const RAIL_TURRET: CraftDef = {
+  name: 'Railgun Turret',
+  formatVersion: 1,
+  parts: [
+    { id: 'pedestal', kind: 'pedestal', mass: 4000, position: [0, 1.1, 0], shape: { type: 'cylinder', radius: 1.6, length: 2.2, axis: 'y' }, color: '#1a0a08' },
+    { id: 'pedestal.collar', kind: 'accent light', mass: 5, position: [0, 2.15, 0], shape: { type: 'cylinder', radius: 1.64, length: 0.06, axis: 'y' }, collider: false, color: '#ff2a12' },
+    { id: 'head', kind: 'turret', mass: 3200, position: [0, 2.95, 0.2], shape: { type: 'box', size: [2.2, 1.4, 3.2] }, color: '#2a0e08' },
+    {
+      id: 'barrel.rail', kind: 'barrel', mass: 400, position: [0, 3.05, -3.5], shape: { type: 'box', size: [0.5, 0.34, 4.4] }, color: '#4a1a10',
+      modules: [{ type: 'weapon', kind: 'rail', offset: [0, 0, -0.3], ammo: 2000 }],
+    },
+    { id: 'turret.breech', kind: 'accent light', mass: 5, position: [0, 3.66, 0.6], shape: { type: 'box', size: [0.7, 0.05, 1.2] }, collider: false, color: '#ff2a12' },
+  ],
+};

@@ -150,6 +150,39 @@ test('two players see each other, states and events relay, other rooms are isola
   for (const x of [a, c, d]) x.close();
 });
 
+test('networked damage: hits relay to other teams, a team-mate hit goes nowhere, kills and blasts relay', async () => {
+  const a = new Client(), b = new Client(), c = new Client();
+  const hello = async (cl: Client, name: string, team: 0 | 1 | 2) => {
+    await cl.opened();
+    cl.send({ t: 'hello', v: PROTOCOL_VERSION, room: 'FIGHT', name, color: '#ffffff', craft: CRAFT, team });
+    return cl.waitFor('welcome');
+  };
+  const wa = await hello(a, 'Red A', 1);
+  const wb = await hello(b, 'Cyan B', 0);
+  const wc = await hello(c, 'Red C', 1);
+  // A (red) hits B (cyan): relayed.
+  a.send({ t: 'event', e: { k: 'hit', target: wb.id, kind: 'gun', x: 1, y: 2, z: 3 } });
+  const hit = await b.waitFor('event');
+  expect(hit.e).toEqual({ k: 'hit', target: wb.id, kind: 'gun', x: 1, y: 2, z: 3 });
+  expect(hit.id).toBe(wa.id);
+  // A hits C (both red): dropped. (Everyone in the room sees every relayed hit; only its
+  // target applies it, so what matters is that no hit on C was relayed at all.)
+  a.send({ t: 'event', e: { k: 'hit', target: wc.id, kind: 'gun', x: 1, y: 2, z: 3 } });
+  b.send({ t: 'event', e: { k: 'kill', by: wa.id } });
+  const kill = await c.waitFor('event', (m) => m.e.k === 'kill');
+  expect(kill.e).toEqual({ k: 'kill', by: wa.id });
+  await sleep(100);
+  expect(c.inbox.some((m) => m.t === 'event' && m.e.k === 'hit' && m.e.target === wc.id)).toBe(false);
+  a.send({ t: 'event', e: { k: 'nuke', x: 10, y: 20, z: 30 } });
+  const nuke = await b.waitFor('event', (m) => m.e.k === 'nuke');
+  expect(nuke.e).toEqual({ k: 'nuke', x: 10, y: 20, z: 30 });
+  // A malformed hit (unknown weapon) is refused.
+  a.send({ t: 'event', e: { k: 'hit', target: wb.id, kind: 'death-ray', x: 1, y: 2, z: 3 } as never });
+  const err = await a.waitFor('error');
+  expect(err.code).toBe('bad-message');
+  a.close(); b.close(); c.close();
+});
+
 test('teams: given on hello, relayed on change, invalid ones read as Cyan', async () => {
   const a = new Client(), b = new Client();
   await a.opened();

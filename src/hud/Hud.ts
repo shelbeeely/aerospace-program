@@ -31,6 +31,9 @@ export class Hud {
     hostileRow: $('h-hostile-row'),
     lockRow: $('h-lock-row'),
     mercRow: $('h-merc-row'),
+    stratRow: $('h-strat-row'),
+    strat: $('h-strat'),
+    stratT: $('h-strat-t'),
     merc: $('h-merc'),
     mercT: $('h-merc-t'),
     lock: $('h-lock'),
@@ -158,6 +161,18 @@ export class Hud {
     this.set(hostileKills, s.underFire ? 'UNDER FIRE' : s.kills ? `${s.kills} down` : '');
   }
 
+  /** STRAT row: the strategic weapon carried, or in flight; and the EMP's hold on the engines. */
+  setStrategic(s: { carried: string | null; flight: string | null; emp: number }): void {
+    const { stratRow: row, strat, stratT } = this.el;
+    if (!row || !strat || !stratT) return;
+    const show = !!(s.carried || s.flight || s.emp > 0);
+    row.style.display = show ? '' : 'none';
+    document.body.classList.toggle('emp', s.emp > 0);
+    if (!show) return;
+    this.set(strat, s.emp > 0 ? 'EMP HIT' : s.carried ? s.carried.toUpperCase() : (s.flight ?? '').toUpperCase());
+    this.set(stratT, s.emp > 0 ? `engines out ${s.emp.toFixed(0)} s` : s.carried ? '` launches' : 'in flight');
+  }
+
   /** CREDITS row: credits held, and hired mercenaries with the soonest contract end. */
   setMercs(s: { credits: number; hired: number; soonest: number } | null): void {
     const { mercRow: row, merc, mercT } = this.el;
@@ -191,10 +206,12 @@ export class Hud {
     this.set(turretMode, s.auto ? 'AUTO' : '');
   }
 
-  /** The MISSILE warning: hostile missiles homing on the craft. */
-  setMissileWarning(n: number): void {
-    this.el.missile?.classList.toggle('hidden', n === 0);
-    if (n && this.el.missile) this.set(this.el.missile, n > 1 ? `MISSILE ×${n}` : 'MISSILE');
+  /** The MISSILE warning: hostile missiles homing on the craft; RAIL: a railgun turret charging at it. */
+  setMissileWarning(n: number, rail = 0): void {
+    this.el.missile?.classList.toggle('hidden', n === 0 && rail === 0);
+    if (!this.el.missile) return;
+    const parts = [rail ? 'RAIL' : '', n ? (n > 1 ? `MISSILE ×${n}` : 'MISSILE') : ''].filter(Boolean);
+    if (parts.length) this.set(this.el.missile, parts.join(' · '));
   }
 
   /** ORB row: apoapsis / periapsis (km) and period, once high or fast enough to care. */

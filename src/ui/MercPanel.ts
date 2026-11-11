@@ -2,6 +2,8 @@ import type { CraftDef } from '../craft/types.ts';
 import { MAX_MERCS } from '../sim/aiTraffic.ts';
 import { hireable, mercPrice } from '../sim/mercenaries.ts';
 import type { Simulation } from '../sim/Simulation.ts';
+import { STRATEGIC } from '../sim/strategic.ts';
+import type { StrategicKind } from '../sim/weapons.ts';
 
 /**
  * The Mercenaries panel (' key, or touch More → "Mercenaries"): your credits, the aircraft you
@@ -14,6 +16,7 @@ export class MercPanel {
   private readonly list: HTMLElement;
   private readonly active: HTMLElement;
   private readonly status: HTMLElement;
+  private readonly armory: HTMLElement;
   private timer = 0;
   private shown = '';
 
@@ -39,7 +42,10 @@ export class MercPanel {
     this.active = el('div', 'merc-active');
     this.list = el('div', 'merc-list');
     this.status = el('p', 'merc-status small');
-    this.root.append(close, title, this.credits, note, this.active, this.list, this.status);
+    const armoryTitle = el('h3', '', 'ARMORY');
+    const armoryNote = el('p', 'muted small', 'Strategic weapons, one carried at a time, launched with ` (homes on your lock). Nuke: arms after 3 s, a 400 m fireball and a 1.2 km shock ring. EMP: knocks out engines, turrets and light cycles within 800 m for a while; destroys nothing.');
+    this.armory = el('div', 'merc-list');
+    this.root.append(close, title, this.credits, note, this.active, this.list, armoryTitle, armoryNote, this.armory, this.status);
     document.body.append(this.root);
   }
 
@@ -66,7 +72,7 @@ export class MercPanel {
       ? `Hired: ${mercs.map((f) => `${f.name} ${clock(f.mercUntil - sim.time)}`).join(' · ')}`
       : 'No one hired.';
     const offers = this.designs().filter(hireable);
-    const key = `${sim.credits}|${mercs.length}|${offers.map((d) => d.name).join(',')}`;
+    const key = `${sim.credits}|${mercs.length}|${sim.strategic}|${offers.map((d) => d.name).join(',')}`;
     if (key === this.shown) return;
     this.shown = key;
     this.list.replaceChildren();
@@ -89,6 +95,25 @@ export class MercPanel {
       });
       row.append(name, cost, hire);
       this.list.append(row);
+    }
+    this.armory.replaceChildren();
+    for (const kind of ['nuke', 'emp'] as StrategicKind[]) {
+      const row = document.createElement('div');
+      row.className = 'merc-row';
+      const name = document.createElement('span');
+      name.textContent = STRATEGIC[kind].label + (sim.strategic === kind ? ' · carried' : '');
+      const cost = document.createElement('small');
+      cost.textContent = `${STRATEGIC[kind].price} cr`;
+      const buy = document.createElement('button');
+      buy.textContent = 'Buy';
+      buy.disabled = sim.credits < STRATEGIC[kind].price || !!sim.strategic;
+      buy.addEventListener('click', () => {
+        const why = sim.buyStrategic(kind);
+        this.status.textContent = why ?? `${STRATEGIC[kind].label} loaded: \` launches it.`;
+        this.refresh(true);
+      });
+      row.append(name, cost, buy);
+      this.armory.append(row);
     }
   }
 }

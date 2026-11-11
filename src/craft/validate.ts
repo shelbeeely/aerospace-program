@@ -97,7 +97,7 @@ export function validateCraft(input: unknown): string[] {
         }
         break;
       case 'weapon':
-        if (!['gun', 'cannon', 'bomb', 'missile', 'laser', 'disc', 'pulse'].includes(m.kind)) e.push(`${at}: weapon kind must be gun, cannon, bomb, missile, laser, disc or pulse`);
+        if (!['gun', 'cannon', 'bomb', 'missile', 'laser', 'disc', 'pulse', 'rail'].includes(m.kind)) e.push(`${at}: weapon kind must be gun, cannon, bomb, missile, laser, disc, pulse or rail`);
         if (m.ammo !== undefined && (!Number.isInteger(m.ammo) || m.ammo < 1 || m.ammo > 2000)) e.push(`${at}: weapon ammo must be an integer 1..2000`);
         break;
       case 'airbrake':

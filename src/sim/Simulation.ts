@@ -20,10 +20,11 @@ import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
-import { craftBounds, WEAPON_DAMAGE, WEAPONS, WeaponSystem, type Mount, type WeaponHost, type WeaponImpact, type WeaponKind } from './weapons.ts';
+import { craftBounds, WEAPON_DAMAGE, WEAPONS, WeaponSystem, type Mount, type StrategicKind, type WeaponHost, type WeaponImpact, type WeaponKind } from './weapons.ts';
 import { AiAirTraffic, type AiFlyer, type AirTarget, type Foe } from './aiTraffic.ts';
 import { hostile, sideLivery, sideName, TEAMS, type Side, type Team } from './teams.ts';
 import { CREDITS, mercPrice } from './mercenaries.ts';
+import { STRATEGIC, strategicPrice, type StrategicBlast } from './strategic.ts';
 import { GroundTurretSystem, TURRET_HEAD_Y, type GroundTurret } from './groundTurrets.ts';
 import { WeaponMount } from '../modules/WeaponMount.ts';
 import { BOOM_DAMAGE, BOOM_DEREZ, BOOM_SHATTER, boomBite, boomOverpressure, boomReach, type BoomEvent } from './sonicBoom.ts';
@@ -31,6 +32,8 @@ import { StaticWorld } from '../world/staticWorld.ts';
 import { vehicleKind } from './vehicleTests.ts';
 import { nearestRoadPoint, siteSpawnPoint, type SpawnPoint, type SpawnSite } from '../world/spawnSites.ts';
 import { orbitElements, type OrbitTelemetry, type Telemetry } from './telemetry.ts';
+import { StrikeSystem, type Strike, type StrikeKind } from './strikes.ts';
+import { wrapDelta } from './contacts.ts';
 
 function roundOrbit(o: OrbitTelemetry): OrbitTelemetry {
   const r = (x: number | null, d = 0) => (x === null ? null : Math.round(x * 10 ** d) / 10 ** d);
@@ -278,6 +281,162 @@ export class Simulation {
     this.loadCraft(this.sourceDef);
   }
 
+  /** The strategic weapon carried (bought with credits, one at a time), or null. */
+  strategic: StrategicKind | null = null;
+  /** Strategic detonations, newest last (the renderer, the audio and the network read them). */
+  readonly blasts: StrategicBlast[] = [];
+  /** An EMP has cut the craft's engines until then (s). */
+  empUntil = -Infinity;
+
+  /** Buy a nuke or an EMP. Returns why not, or null on success. */
+  buyStrategic(kind: StrategicKind): string | null {
+    const price = strategicPrice(kind);
+    if (this.strategic) return `Already carrying ${STRATEGIC[this.strategic].label === 'Nuke' ? 'a nuke' : 'an EMP'}: launch it first`;
+    if (this.credits < price) return `Not enough credits (${price} needed, ${this.credits} held)`;
+    this.credits -= price;
+    this.strategic = kind;
+    this.notice(`${STRATEGIC[kind].label} loaded (−${price} credits): \` launches it`);
+    return null;
+  }
+
+  /** Launch the strategic weapon carried. Returns why not, or null on success. */
+  launchStrategic(): string | null {
+    if (!this.strategic) return 'No strategic weapon: buy one with credits (\')';
+    if (this.exploded) return 'Wrecked';
+    this.weapons.launch(this.weaponHost, this.strategic);
+    this.notice(`${STRATEGIC[this.strategic].label} away${this.lock.target ? `: homing on ${this.lock.target.name}` : ''}`);
+    this.strategic = null;
+    return null;
+  }
+
+  /**
+   * A nuclear detonation at (x, y, z). `by`: the side whose weapon it was; `local`: the player's
+   * own (kills pay), not another player's arriving over the network.
+   */
+  detonateNuke(x: number, y: number, z: number, by: Side, local: boolean): void {
+    const { fireball: F, shock: S } = STRATEGIC.nuke;
+    // (Measured round the planet: things far from the craft may sit in another image of it.)
+    const near = (p: THREE.Vector3) => Math.hypot(wrapDelta(x, p.x), p.y - y, wrapDelta(z, p.z));
+    for (const f of [...this.airTraffic.flyers]) {
+      if (f.derezAt !== null || near(f.pos) > S) continue;
+      f.hp = 0;
+      this.derezFlyer(f, local);
+    }
+    for (const t of [...this.groundTurrets.turrets]) {
+      if (t.derezAt !== null || near(t.pos) > S) continue;
+      this.derezTurret(t, local && hostile(this.team, t.side), by);
+    }
+    this.traffic.derezWithin(x, z, S, this.time);
+    this.trails.cutAt(x, z, F);
+    this.staticWorld.flattenAt(x, y, z, F, this.time);
+    for (const b of this.town.buildings) this.town.blast(b, x, y, z, F, this.time);
+    this.crater(x, Math.min(y, (isSea(x) ? 0 : terrainHeight(x, z)) + 10), z, 120, '#dff6ff');
+    // Loose bodies (rubble, debris) are thrown outward.
+    this.world.forEachRigidBody((b) => {
+      if (!b.isDynamic() || b === this.craft.body) return;
+      const t = b.translation();
+      const dx = t.x - x, dy = t.y - y, dz = t.z - z;
+      const d = Math.hypot(dx, dy, dz);
+      if (d > S || d < 1e-3) return;
+      const j = b.mass() * 60 * (1 - d / S);
+      b.applyImpulse({ x: (dx / d) * j, y: Math.abs(dy / d) * j + j * 0.5, z: (dz / d) * j }, true);
+    });
+    this.chips.emit({ x, y, z, radius: 20, vx: 0, vy: 30, vz: 0, speed: 60, count: 2400, size: 0.6, color: '#dff6ff', persist: true });
+    // The craft: inside the fireball it derezzes; in the shock ring its parts take a beating.
+    if (!this.exploded) {
+      const d = near(this.position);
+      if (d < F) {
+        this.lastHitAt = this.time;
+        this.derezCause = 'shot';
+        this.explode();
+      } else if (d < S) {
+        const k = 1.6 * (1 - (d - F) / (S - F));
+        this.lastHitAt = this.time;
+        this.hitsTaken++;
+        if (k > 1) {
+          this.derezCause = 'shot';
+          this.explode();
+        } else for (const p of [...this.craft.parts]) this.hazardDamage(p.id, (this.damage.maxHp.get(p.id) ?? 0) * k, 'weapon');
+      }
+    }
+    this.blasts.push({ kind: 'nuke', x, y, z, time: this.time, remote: !local });
+    if (this.blasts.length > 16) this.blasts.splice(0, this.blasts.length - 16);
+    this.version++;
+  }
+
+  /** An EMP at (x, y, z): disables, destroys nothing. */
+  detonateEmp(x: number, y: number, z: number, local: boolean): void {
+    const E = STRATEGIC.emp;
+    const R = E.radius;
+    // (Measured round the planet: things far from the craft may sit in another image of it.)
+    const near = (p: THREE.Vector3) => Math.hypot(wrapDelta(x, p.x), p.y - y, wrapDelta(z, p.z));
+    for (const f of this.airTraffic.flyers) if (f.derezAt === null && near(f.pos) < R) this.airTraffic.disable(f, this.time + E.aircraft);
+    for (const t of this.groundTurrets.turrets) if (t.derezAt === null && near(t.pos) < R) this.groundTurrets.disable(t, this.time + E.turrets);
+    for (const r of this.traffic.riders) if (r.derezAt === null && Math.hypot(wrapDelta(x, r.x), wrapDelta(z, r.z)) < R) r.stalledUntil = this.time + E.riders;
+    // Homing missiles in it lose their lock.
+    for (const w of this.allWeapons()) for (const p of w.projectiles) if (p.target && near(p.pos) < R) p.target = null;
+    if (!this.exploded && near(this.position) < R) this.empUntil = this.time + E.craft;
+    this.blasts.push({ kind: 'emp', x, y, z, time: this.time, remote: !local });
+    if (this.blasts.length > 16) this.blasts.splice(0, this.blasts.length - 16);
+    this.version++;
+  }
+
+  /** Who hit the craft last over the network, and when (a kill within 12 s is theirs). */
+  lastRemoteHit: { id: string; time: number } | null = null;
+  private readonly remoteHitBuckets = new Map<string, { tokens: number; at: number }>();
+
+  /**
+   * Another player's round struck this craft (the shooter's game saw it hit and reported it).
+   * Applied only if the shooter is on another team, the point is near enough to where this
+   * craft is (40 m plus 0.3 s of its own movement: the shooter saw it a moment ago), and the
+   * shooter isn't sending more than 20 a second. Then the nearest part takes the weapon's
+   * share of its hit points, and a warhead going off against it derezzes it, as for a hostile's
+   * round. Returns what happened.
+   */
+  applyRemoteHit(from: { id: string; team: Side }, kind: WeaponKind, point: THREE.Vector3): 'applied' | 'team' | 'far' | 'rate' | 'dead' {
+    if (!hostile(from.team, this.team)) return 'team';
+    const reach = 40 + this.linvel.length() * 0.3;
+    if (point.distanceTo(this.position) > reach) return 'far';
+    const now = this.time;
+    const b = this.remoteHitBuckets.get(from.id) ?? { tokens: 20, at: now };
+    b.tokens = Math.min(20, b.tokens + (now - b.at) * 20);
+    b.at = now;
+    this.remoteHitBuckets.set(from.id, b);
+    if (b.tokens < 1) return 'rate';
+    b.tokens -= 1;
+    if (this.exploded) return 'dead';
+    this.lastRemoteHit = { id: from.id, time: now };
+    this.lastHitAt = now;
+    this.hitsTaken++;
+    const spec = WEAPONS[kind];
+    if (spec.blast >= 7 && point.distanceTo(this.position) < spec.blast + 4) {
+      this.derezCause = 'shot';
+      this.explode();
+      return 'applied';
+    }
+    // The part nearest the point takes it.
+    let best: string | null = null, bestD = Infinity;
+    const q = this.rotation;
+    for (const p of this.craft.parts) {
+      const w = _tmp2.set(...p.position).applyQuaternion(q).add(this.position);
+      const d = w.distanceTo(point);
+      if (d < bestD) { best = p.id; bestD = d; }
+    }
+    if (best) this.weaponDamage(best, kind);
+    return 'applied';
+  }
+
+  /** The player shot another player down (their game said so): the kill counts and pays. */
+  creditRemoteKill(name: string): void {
+    this.airTraffic.kills++;
+    this.earn(CREDITS.player, `${name} shot down`);
+  }
+
+  /** The craft's engines are out (an EMP). */
+  get empActive(): boolean {
+    return this.time < this.empUntil;
+  }
+
   /**
    * Hire a mercenary in this design: it costs credits and flies in from about 2 km out.
    * Returns why not, or null on success.
@@ -376,6 +535,8 @@ export class Simulation {
   readonly airTraffic: AiAirTraffic;
   /** Hostile turrets on tower roofs around the player (density 0 = off). */
   readonly groundTurrets: GroundTurretSystem;
+  /** Called-in strikes (the strike globe): missile barrages, EMP strikes, nuke bombers. */
+  readonly strikeSystem: StrikeSystem;
   readonly wrapShift = new THREE.Vector3();
   private readonly groundBody: RAPIER.RigidBody;
   private readonly groundMotion = new THREE.Vector3();
@@ -437,6 +598,19 @@ export class Simulation {
     this.traffic = new TrafficSystem(this.world, CITY.seed, this.chips);
     this.airTraffic = new AiAirTraffic(this.world, CITY.seed);
     this.groundTurrets = new GroundTurretSystem(this.world, CITY.seed);
+    this.strikeSystem = new StrikeSystem({
+      team: () => this.team,
+      time: () => this.time,
+      credits: () => this.credits,
+      spend: (n) => { this.credits -= n; },
+      notice: (t) => this.notice(t),
+      playerPos: () => this.position,
+      territory: this.groundTurrets.territory,
+      air: this.airTraffic,
+      turrets: this.groundTurrets,
+      impact: (h) => this.weaponImpact(h),
+      emp: (x, y, z) => this.detonateEmp(x, y, z, true),
+    });
     this.town = new Town(this.world);
     this.town.chips = this.chips;
     this.staticWorld = new StaticWorld(this.world, this.town);
@@ -706,6 +880,8 @@ export class Simulation {
     this.derezCause = null;
     this.lastHitAt = -Infinity;
     this.hitsTaken = 0;
+    this.empUntil = -Infinity;
+    this.lastRemoteHit = null;
     this.lock.clear();
     this.turretRecentre = false;
     this.stepImpact = 0;
@@ -756,6 +932,8 @@ export class Simulation {
     const t0 = performance.now();
     // A wreck flies no more: engines out, surfaces slack (brakes stay on so it settles).
     this.controls = this.exploded ? { ...neutralControls(), brake: 1 } : this.tailStrikeGuard(sanitizeControls(controls));
+    // An EMP: the engines are out until it passes (the surfaces still answer the stick).
+    if (this.time < this.empUntil) this.controls = { ...this.controls, throttle: 0 };
     (this.ctx as { controls: ControlInputs }).controls = this.controls;
 
     this.prevPosition.copy(this.position);
@@ -807,8 +985,12 @@ export class Simulation {
     foes.push(pf);
     for (const t of this.groundTurrets.turrets) if (t.derezAt === null) foes.push(t.foe);
     foes.push(...this.extraFoes);
+    // Orders and strikes far away keep their part of the world live.
+    const focus = this.focusPoints();
+    this.airTraffic.focus = focus;
+    this.groundTurrets.focus = focus;
     this.airTraffic.step(this.dt, this.time, this.position, this.airTarget);
-    const turretFoes = [pf, ...this.extraFoes];
+    const turretFoes = [pf, ...this.extraFoes, ...this.strikeSystem.foes()];
     for (const f of this.airTraffic.flyers) if (f.foe && f.derezAt === null && !f.leaving) turretFoes.push(f.foe);
     // The player sees its unarmed self watched: the turrets get the player even when it isn't armed.
     this.groundTurrets.step(this.dt, this.time, this.position, turretFoes);
@@ -824,6 +1006,7 @@ export class Simulation {
     this.weapons.step(this.weaponHost, this.dt, this.time);
     this.airTraffic.stepWeapons(this.dt, this.time);
     this.groundTurrets.stepWeapons(this.dt, this.time);
+    this.strikeSystem.step(this.dt);
     this.syncWeaponMounts();
     this.bulldoze();
     this.playerBoom();
@@ -1220,6 +1403,16 @@ export class Simulation {
    * blocks), and flashes and shatters into voxels in the shooter's circuit colour.
    */
   private weaponImpact(h: WeaponImpact, shooter?: AiFlyer | GroundTurret): void {
+    // A strike's bomber drops for the player: its bomb counts as the player's own.
+    if (shooter && 'role' in shooter && shooter.role === 'strike') shooter = undefined;
+    // Strategic warheads: armed, they play out their own way; a dud is just a missile's blast.
+    if ((h.kind === 'nuke' || h.kind === 'emp') && !h.dud) {
+      const by: Side = shooter ? shooter.side! : this.team;
+      if (h.kind === 'nuke') this.detonateNuke(h.point.x, h.point.y, h.point.z, by, !shooter);
+      else this.detonateEmp(h.point.x, h.point.y, h.point.z, !shooter);
+      return;
+    }
+    if (h.dud) h = { ...h, kind: 'missile' };
     const p = h.point;
     const col = h.collider;
     if (col) this.traffic.derezCollider(col.handle, this.time); // a rider, or a rider's jetwall
@@ -1234,7 +1427,7 @@ export class Simulation {
       if (this.airTraffic.damage(f, WEAPON_DAMAGE[h.kind], this.time)) this.derezFlyer(f, !shooter);
     };
     if (flyer) strike(flyer);
-    if (h.blast >= 3) for (const f of this.airTraffic.flyers) if (f !== flyer && f.derezAt === null && f.pos.distanceTo(p) < h.blast + f.radius) strike(f);
+    if (h.blast >= 3) for (const f of this.airTraffic.flyers) if (f !== flyer && f.derezAt === null && Math.hypot(wrapDelta(p.x, f.pos.x), f.pos.y - p.y, wrapDelta(p.z, f.pos.z)) < h.blast + f.radius) strike(f);
     // Tower turrets: the player's rounds and blasts wear them down (hostiles never hit them).
     const turret = col ? this.groundTurrets.byCollider(col.handle) : undefined;
     const hitTurret = (t: GroundTurret) => {
@@ -1244,7 +1437,7 @@ export class Simulation {
     if (turret) hitTurret(turret);
     if (h.blast >= 3) for (const t of this.groundTurrets.turrets) {
       if (t === turret || t.derezAt !== null) continue;
-      if (Math.hypot(t.pos.x - p.x, t.pos.y + TURRET_HEAD_Y * 0.6 - p.y, t.pos.z - p.z) < h.blast + 2.5) hitTurret(t);
+      if (Math.hypot(wrapDelta(p.x, t.pos.x), t.pos.y + TURRET_HEAD_Y * 0.6 - p.y, wrapDelta(p.z, t.pos.z)) < h.blast + 2.5) hitTurret(t);
     }
     // A hostile's round on the player's craft: the struck part loses hit points (and breaks off
     // at zero); a warhead that goes off against it, or beside it, derezzes it outright.
@@ -1315,7 +1508,37 @@ export class Simulation {
 
   /** Every weapon system with rounds in flight: the craft's own and the hostiles' (the renderer). */
   allWeapons(): WeaponSystem[] {
-    return [this.weapons, ...this.airTraffic.weaponSystems(), ...this.groundTurrets.weaponSystems()];
+    return [this.weapons, ...this.airTraffic.weaponSystems(), ...this.groundTurrets.weaponSystems(), this.strikeSystem.view];
+  }
+
+  /** Strikes in flight (the strike globe). */
+  get strikes(): Strike[] {
+    return this.strikeSystem.live();
+  }
+
+  /** Call in a strike on (x, z), paid with credits. Returns why not, or null. */
+  callStrike(kind: StrikeKind, x: number, z: number): string | null {
+    const r = this.strikeSystem.call(kind, x, z);
+    return typeof r === 'string' ? r : null;
+  }
+
+  /** Send the team's aircraft (friendlies, mercenaries, or both) to attack round (x, z). */
+  orderAircraft(x: number, z: number, who: 'all' | 'friends' | 'mercs' = 'all'): number {
+    const n = this.airTraffic.order(x, z, this.time, who);
+    this.notice(n ? `${n} aircraft sent to attack (${(Math.hypot(x - this.position.x, z - this.position.z) / 1000).toFixed(1)} km)` : 'No aircraft to send');
+    return n;
+  }
+
+  /** Call the ordered aircraft back to escort the craft. */
+  recallAircraft(): number {
+    const n = this.airTraffic.recall();
+    if (n) this.notice(`${n} aircraft recalled`);
+    return n;
+  }
+
+  /** Places other than the craft that are live: order points, strike targets, strikes in flight. */
+  focusPoints(): Array<{ x: number; z: number }> {
+    return [...this.airTraffic.orders().map((o) => ({ x: o.x, z: o.z })), ...this.strikeSystem.focus()];
   }
 
   /** A bulldozer shoving through structure or rubble: no damage to it (the rubble still feels it). */

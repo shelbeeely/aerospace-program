@@ -7,7 +7,7 @@ import { flyerKind } from './aiTraffic.ts';
  * aircraft hired for a five-minute contract (sim/aiTraffic.ts flies it), priced by how fast and
  * well armed the design is.
  */
-export const CREDITS = { aircraft: 100, turret: 150, capture: 300 } as const;
+export const CREDITS = { aircraft: 100, turret: 150, capture: 300, player: 200 } as const;
 
 /** What hiring this design costs (credits): 200 for a light plane up to 600 for a rocket. */
 export function mercPrice(def: CraftDef): number {

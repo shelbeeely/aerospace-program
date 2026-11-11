@@ -31,6 +31,8 @@ export interface Contact {
   foe?: boolean;
   /** A hired mercenary. */
   merc?: boolean;
+  /** A railgun turret. */
+  rail?: boolean;
 }
 
 /** Shortest signed distance from a to b along one wrapped axis (m). */
@@ -38,6 +40,30 @@ export function wrapDelta(a: number, b: number): number {
   const C = PLANET.circumference;
   const d = b - a;
   return d - C * Math.round(d / C);
+}
+
+/**
+ * The 3D strike globe's frame: the planet's map (blocks east from GRID.x0, south from GRID.z0)
+ * wrapped on a unit sphere the way three.js's SphereGeometry lays its texture: longitude from the
+ * map's x, latitude from its z (the map's top row at the north pole). Returns a point on the
+ * unit sphere.
+ */
+export function worldToGlobe(x: number, z: number, x0: number, z0: number): { x: number; y: number; z: number } {
+  const C = PLANET.circumference;
+  const u = (((x - x0) / C) % 1 + 1) % 1;
+  const v = (((z - z0) / C) % 1 + 1) % 1;
+  const phi = u * Math.PI * 2, theta = v * Math.PI;
+  return { x: -Math.cos(phi) * Math.sin(theta), y: Math.cos(theta), z: Math.sin(phi) * Math.sin(theta) };
+}
+
+/** The inverse: the planet x, z (in the image from x0, z0) under a point on the sphere. */
+export function globeToWorld(px: number, py: number, pz: number, x0: number, z0: number): { x: number; z: number } {
+  const C = PLANET.circumference;
+  const r = Math.hypot(px, py, pz) || 1;
+  const theta = Math.acos(Math.max(-1, Math.min(1, py / r)));
+  let phi = Math.atan2(pz, -px);
+  if (phi < 0) phi += Math.PI * 2;
+  return { x: x0 + (phi / (Math.PI * 2)) * C, z: z0 + (theta / Math.PI) * C };
 }
 
 /** The simulation's vehicles: AI aircraft (peaceful and hostile) and the light-cycle riders. */
@@ -52,7 +78,7 @@ export function simContacts(sim: Simulation): Contact[] {
   }
   for (const t of sim.groundTurrets.turrets) {
     if (t.derezAt !== null) continue;
-    out.push({ id: `turret:${t.site.id}`, kind: 'turret', x: t.pos.x, z: t.pos.z, y: t.pos.y, heading: t.pose.yaw, color: t.color, name: 'Tower turret', attacking: t.state === 'firing', foe: hostile(sim.team, t.side) });
+    out.push({ id: `turret:${t.site.id}`, kind: 'turret', x: t.pos.x, z: t.pos.z, y: t.pos.y, heading: t.pose.yaw, color: t.color, name: t.site.kind === 'rail' ? 'Railgun turret' : 'Tower turret', attacking: t.state === 'firing' || t.state === 'charging', foe: hostile(sim.team, t.side), rail: t.site.kind === 'rail' });
   }
   for (const r of sim.traffic.riders) {
     if (r.derezAt !== null) continue;
@@ -81,4 +107,31 @@ export function radarPoint(px: number, pz: number, heading: number, cx: number, 
 export function mapPoint(px: number, pz: number, cx: number, cz: number): { u: number; v: number } {
   const C = PLANET.circumference;
   return { u: 0.5 + wrapDelta(px, cx) / C, v: 0.5 + wrapDelta(pz, cz) / C };
+}
+
+/**
+ * The globe view of the planet map: the map's east-west becomes longitude and north-south
+ * latitude (`u`, `v` as from mapPoint's frame: 0..1 across the whole planet), seen in an
+ * orthographic projection looking at (`lon0`, `lat0`). x is to the right (east), y up (north), z
+ * toward the viewer: a point with z < 0 is on the far side.
+ */
+export function globeAngles(u: number, v: number): { lon: number; lat: number } {
+  return { lon: u * Math.PI * 2, lat: (0.5 - v) * Math.PI };
+}
+
+export function globeProject(lon: number, lat: number, lon0: number, lat0: number): { x: number; y: number; z: number } {
+  const dl = lon - lon0;
+  const cl = Math.cos(lat);
+  const x = cl * Math.sin(dl), y0 = Math.sin(lat), z0 = cl * Math.cos(dl);
+  return { x, y: y0 * Math.cos(lat0) - z0 * Math.sin(lat0), z: y0 * Math.sin(lat0) + z0 * Math.cos(lat0) };
+}
+
+/** The inverse: which longitude and latitude a point (x, y) on the disc shows (null: off the globe). */
+export function globeUnproject(x: number, y: number, lon0: number, lat0: number): { lon: number; lat: number } | null {
+  const r2 = x * x + y * y;
+  if (r2 > 1) return null;
+  const z = Math.sqrt(1 - r2);
+  const y0 = y * Math.cos(lat0) + z * Math.sin(lat0);
+  const z0 = -y * Math.sin(lat0) + z * Math.cos(lat0);
+  return { lon: lon0 + Math.atan2(x, z0), lat: Math.asin(Math.max(-1, Math.min(1, y0))) };
 }

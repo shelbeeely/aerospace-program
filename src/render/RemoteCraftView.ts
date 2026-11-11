@@ -21,6 +21,8 @@ export class RemoteCraftView {
   private readonly discs: THREE.MeshBasicMaterial[] = [];
   private readonly beaconMat: THREE.LineBasicMaterial;
   private grammar: GrammarModel | null = null;
+  /** Its lights were last set dark (an EMP). */
+  dark = false;
   /** Craft bounding radius (m), for the beacon height and proximity checks. */
   readonly radius: number;
 
@@ -112,10 +114,10 @@ export class RemoteCraftView {
    * The lights' state (AGENTS.md §5): `activity` 0 = idle (dim) to 1 = active (full), and
    * `integrity` below 1 = damaged (they flicker, the more the worse it is).
    */
-  setLightState(s: { activity: number; integrity: number; time: number }): void {
+  setLightState(s: { activity: number; integrity: number; time: number; inactive?: boolean }): void {
     if (!this.grammar) return;
     driveGrammarLights(this.grammar, {
-      activity: s.activity, time: s.time, integrity: () => s.integrity,
+      activity: s.activity, time: s.time, integrity: () => s.integrity, inactive: s.inactive,
       engine: () => ({ spool: 0.5 + 0.3 * s.activity, afterburner: 0 }),
     });
   }

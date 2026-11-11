@@ -47,6 +47,10 @@ import { CraterView } from './render/CraterView.ts';
 import { BoomView } from './render/BoomView.ts';
 import { AiTrafficView } from './render/AiTrafficView.ts';
 import { GroundTurretsView } from './render/GroundTurretsView.ts';
+import { isSea } from './sim/layout.ts';
+import { STRATEGIC } from './sim/strategic.ts';
+import { predictDrop } from './sim/weapons.ts';
+import { StrategicView } from './render/StrategicView.ts';
 import type { TurretDensity } from './sim/groundTurrets.ts';
 import { hostile, isTeam, TEAMS, type Team } from './sim/teams.ts';
 import { MercPanel } from './ui/MercPanel.ts';
@@ -54,6 +58,8 @@ import { flyerKind, type Foe } from './sim/aiTraffic.ts';
 import { HostileMarkers, LockMarker, type HostileMark } from './hud/HostileMarkers.ts';
 import type { LockTarget } from './sim/lock.ts';
 import { RadarMap } from './hud/RadarMap.ts';
+import { GlobeView } from './render/GlobeView.ts';
+import { StrikePanel } from './ui/StrikePanel.ts';
 import { simContacts, wrapDelta, type Contact } from './sim/contacts.ts';
 import { terrainHeight } from './sim/terrain.ts';
 import { craftBounds } from './sim/weapons.ts';
@@ -207,6 +213,8 @@ async function start() {
   const boomView = new BoomView(scene);
   const aiTrafficView = new AiTrafficView(scene, sim.airTraffic);
   const turretsView = new GroundTurretsView(scene, sim.groundTurrets);
+  const strategicView = new StrategicView(scene);
+  let blastSeen = -Infinity;
   let boomHeardAt = -Infinity;
   let wasSupersonic = false;
   let explosionHeardAt = -Infinity;
@@ -401,6 +409,8 @@ async function start() {
   const hostileMarkers = new HostileMarkers(document.getElementById('hostile-marks'));
   const radarMap = new RadarMap();
   const lockMarker = new LockMarker(document.getElementById('hostile-marks'));
+  const dropMarker = new LockMarker(document.getElementById('hostile-marks'), 'lock-mark drop-mark');
+  const _dropFrom = new THREE.Vector3();
   const _lockPos = new THREE.Vector3();
   const playerTargets = new Map<string, LockTarget>();
   const playerFoes = new Map<string, Foe>();
@@ -468,7 +478,35 @@ async function start() {
   const CREDIT_STORAGE = 'credits';
   sim.credits = Math.max(0, Math.floor(Number(stored(CREDIT_STORAGE)) || 0));
   let savedCredits = sim.credits;
+  { const shown = document.getElementById('w-credits-v'); if (shown) shown.textContent = sim.credits.toLocaleString(); }
+  const STRATEGIC_STORAGE = 'strategic';
+  const carried = stored(STRATEGIC_STORAGE);
+  sim.strategic = carried === 'nuke' || carried === 'emp' ? carried : null;
+  let savedStrategic = sim.strategic;
   const mercPanel = new MercPanel(sim, () => sim.airTraffic.pool.filter((d) => flyerKind(d) !== 'ground'), (t) => toast(t));
+  // The 3D strike globe (the map's Globe button, Shift+Tab): pick a spot, send aircraft, call strikes.
+  const globe = new GlobeView();
+  const strikePanel = new StrikePanel(sim, globe, (t) => toast(t));
+  const toggleGlobe = (on = !globe.visible) => {
+    if (on) radarMap.toggleMap(false);
+    globe.toggle(on, sim.position);
+  };
+  radarMap.onGlobe = () => toggleGlobe(true);
+  radarMap.setGlobe(false);
+  // Testing the credit system (F3 → Credits, or game.giveCredits(n) in the console).
+  const setCredits = (n: number, why: string) => {
+    sim.credits = Math.max(0, Math.floor(n));
+    toast(`${why}: ${sim.credits.toLocaleString()} credits (debug)`);
+    mercPanel.refresh(true);
+  };
+  const giveCredits = (n: number) => setCredits(sim.credits + n, `${n >= 0 ? '+' : ''}${n.toLocaleString()}`);
+  for (const b of document.querySelectorAll<HTMLButtonElement>('[data-credits]')) {
+    b.addEventListener('click', () => (b.dataset.credits === 'reset' ? setCredits(0, 'Reset') : giveCredits(Number(b.dataset.credits))));
+  }
+  document.getElementById('w-credits-apply')?.addEventListener('click', () => {
+    const v = Number((document.getElementById('w-credits-set') as HTMLInputElement | null)?.value);
+    if (Number.isFinite(v)) setCredits(v, 'Set');
+  });
   let noticeAt = -Infinity;
   aiCount?.addEventListener('input', updateAirPool);
   aiMine?.addEventListener('change', updateAirPool);
@@ -974,6 +1012,11 @@ async function start() {
       /** The digital world: architecture, terrain and route views, the inspector (K). */
       arch: { world: archView, terrain: terrainView, routes: routeView, inspector, worldView },
       triggerDisaster,
+      /** Credits (testing the mercenaries and the armory): read, or give some. */
+      get credits() { return sim.credits; },
+      giveCredits,
+      globe,
+      toggleGlobe,
       client,
       library,
       studio,
@@ -1059,7 +1102,8 @@ async function start() {
         const m = sim.trails.cycleMode(sim.craft, sim.isAirplane(), sim.time);
         toast(m === 'wall' ? 'Jetwall: solid light' : m === 'ribbon' ? 'Light ribbon: fades behind you' : 'Trail off');
       }
-      else if (a === 'map') radarMap.toggleMap();
+      else if (a === 'map') { if (globe.visible) toggleGlobe(false); radarMap.toggleMap(); }
+      else if (a === 'globe') toggleGlobe();
       else if (a === 'radarRange') toast(`Radar ${radarMap.cycleRange() / 1000} km`);
       else if (a === 'recentre') {
         if (sim.craft.turretRig) { sim.recentreTurret(); toast('Turret: back to the nose'); }
@@ -1087,6 +1131,7 @@ async function start() {
       else if (a === 'camera') rig.toggle(renderPos);
       else if (a === 'apPanel') apPanel.toggle();
       else if (a === 'mercs') mercPanel.toggle();
+      else if (a === 'strategic') toast(sim.launchStrategic() ?? 'Launched');
       else if (a === 'help') {
         controlsPanel.render(); // reflect the current profile / devices
         hud.toggleHelp();
@@ -1175,7 +1220,21 @@ async function start() {
     explosionView.update(sim.time, sim.explosions);
     weaponsView.update(sim.time);
     aiTrafficView.update(dt);
+    aiTrafficView.simTime = turretsView.simTime = sim.time;
     turretsView.update(dt);
+    strategicView.update(sim.time, sim.blasts);
+    // A nuke: the boom, a rumble and a white flash that fades (stronger the nearer it is).
+    for (const b of sim.blasts) {
+      if (b.time <= blastSeen) continue;
+      blastSeen = b.time;
+      const d = Math.hypot(b.x - sim.position.x, b.y - sim.position.y, b.z - sim.position.z);
+      audio.explosion(d * (b.kind === 'nuke' ? 0.15 : 0.6));
+      player.rumble(1, b.kind === 'nuke' ? 2000 : 600);
+      if (b.kind === 'nuke') {
+        const flash = document.getElementById('nuke-flash');
+        flash?.animate([{ opacity: Math.max(0.15, 1 - d / 8000) }, { opacity: 0 }], { duration: 2500, easing: 'ease-out' });
+      }
+    }
     craterView.update(sim.time, sim.craters);
     {
       // Sonic booms: the Mach cone and vapour, ground shock rings, and the double crack when the
@@ -1210,7 +1269,7 @@ async function start() {
         if (!hostile(sim.team, t.side)) continue;
         const pos = new THREE.Vector3(t.pos.x, t.pos.y + 3, t.pos.z);
         const range = pos.distanceTo(sim.position);
-        if (range < 6000) marks.push({ pos, range, attacking: t.state === 'firing', color: t.color });
+        if (range < 6000) marks.push({ pos, range, attacking: t.state === 'firing' || t.state === 'charging', color: t.color, tag: t.site.kind === 'rail' ? 'RAIL' : undefined });
       }
       marks.sort((a, b) => a.range - b.range);
       const near = marks[0];
@@ -1239,8 +1298,26 @@ async function start() {
         _nose.set(0, 0, -1).applyQuaternion(p.pose.rotation);
         contacts.push({ id: `player:${p.id}`, kind: 'player', foe: p.team !== sim.team, x: p.pose.position.x, z: p.pose.position.z, y: p.pose.position.y, heading: Math.atan2(_nose.x, -_nose.z), color: p.color, name: p.name });
       }
+      // Carrying a nuke in the air: where it would burst if dropped now.
+      let drop: { x: number; z: number; radius: number; armed: boolean } | null = null;
+      if (sim.strategic === 'nuke' && !sim.exploded && sim.position.y - terrainHeight(sim.position.x, sim.position.z) > 20) {
+        _dropFrom.set(0, -1.6, 0).applyQuaternion(sim.rotation).add(sim.position);
+        const v = telemetry.velocity;
+        const pr = predictDrop('nuke', _dropFrom, new THREE.Vector3(v[0], v[1], v[2]), (x, z) => (isSea(x) ? 0 : terrainHeight(x, z)));
+        drop = { x: pr.point.x, z: pr.point.z, radius: STRATEGIC.nuke.fireball, armed: pr.armed };
+        dropMarker.update(camera, { pos: pr.point, range: pr.point.distanceTo(sim.position), name: '', locked: pr.armed, text: pr.armed ? 'DROP' : 'DUD: TOO LOW' }, window.innerWidth, window.innerHeight);
+      } else dropMarker.update(camera, null, window.innerWidth, window.innerHeight);
       _nose.set(0, 0, -1).applyQuaternion(sim.rotation);
-      radarMap.update(now / 1000, { x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites(), lockedId: sim.lock.target?.id ?? null, territory: sim.groundTurrets.territory, teamColors: TEAMS.map((t) => t.light) });
+      const radarState = { drop, x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites(), lockedId: sim.lock.target?.id ?? null, territory: sim.groundTurrets.territory, teamColors: TEAMS.map((t) => t.light) };
+      radarMap.update(now / 1000, radarState);
+      if (globe.visible) {
+        globe.render({
+          me: { x: sim.position.x, z: sim.position.z, heading: radarState.heading }, contacts, sites: radarState.sites,
+          strikes: sim.strikes.map((s) => { const at = sim.strikeSystem.position(s); return { kind: s.kind, x: s.x, z: s.z, fromX: s.fromX, fromZ: s.fromZ, at: at ? { x: at.x, z: at.z } : null, eta: s.eta - sim.time }; }),
+          orders: sim.airTraffic.orders(), surface: radarMap.baseMap(), wash: radarMap.washMap(radarState), washVersion: sim.groundTurrets.territory.version,
+        });
+        strikePanel.update(dt);
+      }
       // The lock: the marker in the view and the LOCK row; the turret row; incoming missiles.
       const tracked = sim.lock.tracked;
       if (tracked) {
@@ -1255,7 +1332,7 @@ async function start() {
       }
       const t = sim.craft.turret;
       hud.setTurret(sim.craft.turretRig ? { yaw: t.yaw * 180 / Math.PI, pitch: t.pitch * 180 / Math.PI, auto: sim.turretAuto } : null);
-      hud.setMissileWarning(sim.incomingMissiles());
+      hud.setMissileWarning(sim.incomingMissiles(), sim.groundTurrets.charging(sim.selfTarget));
     } else {
       lockMarker.update(camera, null, window.innerWidth, window.innerHeight);
       hud.setMissileWarning(0);
@@ -1343,11 +1420,23 @@ async function start() {
     for (const n of sim.notices) if (n.time > noticeAt) { noticeAt = n.time; toast(n.text); }
     if (sim.credits !== savedCredits) {
       savedCredits = sim.credits;
+      const shown = document.getElementById('w-credits-v');
+      if (shown) shown.textContent = sim.credits.toLocaleString();
       try {
         localStorage.setItem(CREDIT_STORAGE, String(sim.credits));
       } catch { /* not remembered */ }
     }
     const mercs = sim.airTraffic.mercs();
+    {
+      const inFlight = sim.weapons.projectiles.find((p) => p.kind === 'nuke' || p.kind === 'emp');
+      hud.setStrategic({ carried: sim.strategic, flight: inFlight ? inFlight.kind : null, emp: Math.max(0, sim.empUntil - sim.time) });
+    }
+    if (sim.strategic !== savedStrategic) {
+      savedStrategic = sim.strategic;
+      try {
+        localStorage.setItem(STRATEGIC_STORAGE, sim.strategic ?? '');
+      } catch { /* not remembered */ }
+    }
     hud.setMercs(sim.credits > 0 || mercs.length ? { credits: sim.credits, hired: mercs.length, soonest: Math.min(...mercs.map((f) => f.mercUntil - sim.time)) } : null);
     fpsFrames++;
     fpsTime += dt;

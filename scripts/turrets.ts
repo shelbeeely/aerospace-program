@@ -17,7 +17,7 @@ import { districtPlan } from '../src/arch/DistrictGenerator.ts';
 import { JET } from '../src/craft/jet.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
 import { simContacts } from '../src/sim/contacts.ts';
-import { lineOfSight, turretSites, TURRET_DEF, TURRET_HEAD_Y, type TurretSite } from '../src/sim/groundTurrets.ts';
+import { lineOfSight, turretDef, turretSites, TURRET_DEF, TURRET_HEAD_Y, type TurretSite } from '../src/sim/groundTurrets.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 import { terrainHeight } from '../src/sim/terrain.ts';
 import { landingSites } from '../src/world/landingSites.ts';
@@ -212,6 +212,60 @@ console.log('--- lock, radar, determinism');
   check(simContacts(sim).some((c) => c.kind === 'turret' && c.id === `turret:${site.id}`), 'and radar contacts');
   const a = fight(15).trace, b = fight(15).trace;
   check(a.length > 0 && a === b, 'the same seed gives the same fight');
+}
+
+// ---------------------------------------------------------------- 9. railgun turrets
+console.log('--- railgun turrets');
+{
+  const all: TurretSite[] = [];
+  for (let ci = 0; ci < 10; ci++) for (let cj = 0; cj < 10; cj++) all.push(...turretSites(ci, cj, 2));
+  const rails = all.filter((s) => s.kind === 'rail');
+  const tall = all.filter((s) => s.y >= 120), tallRails = tall.filter((s) => s.kind === 'rail');
+  check(rails.length > all.length * 0.15 && rails.length < all.length * 0.5, 'about a quarter of the turrets are railgun turrets', `${rails.length} of ${all.length}`);
+  check(tall.length === 0 || tallRails.length / tall.length > rails.length / all.length, 'more of them on the tallest towers', `${tallRails.length} of ${tall.length} tall`);
+  check(validateCraft(turretDef(1, 'rail')).length === 0, 'the railgun turret is a valid craft definition');
+  const rs = rails.find((s) => s.y < 200 && (baseOwner(s.ci, s.cj) ?? null) !== null)!;
+  const rhead = new THREE.Vector3(rs.x, rs.y + TURRET_HEAD_Y, rs.z);
+  // A spot 3 km out (beyond a gun turret's 2.5 km), high up with a clear line.
+  let far = new THREE.Vector3();
+  for (let k = 0; k < 24; k++) {
+    const a = (k / 24) * Math.PI * 2;
+    const p = new THREE.Vector3(rs.x + Math.sin(a) * 3000, rhead.y + 700, rs.z - Math.cos(a) * 3000);
+    if (lineOfSight(rhead, p)) { far = p; break; }
+  }
+  const scene = (def: typeof JET) => {
+    const sim = new Simulation(def);
+    sim.traffic.enabled = false;
+    sim.groundTurrets.density = 2;
+    sim.setTeam((((baseOwner(rs.ci, rs.cj) ?? 0) + 1) % 3) as Team);
+    return sim;
+  };
+  const railAt = (sim: Simulation) => sim.groundTurrets.turrets.find((t) => t.site.id === rs.id && t.derezAt === null);
+  const sim = scene(JET);
+  let charged = 0, shots: number[] = [];
+  for (let i = 0; i < 120 * 30 && !sim.exploded; i++) {
+    hold(sim, far, rhead);
+    sim.step(idle);
+    const t = railAt(sim);
+    if (!t) continue;
+    if (t.state === 'charging') charged++;
+    const last = t.weapons.mounts[0]?.lastFired;
+    if (last !== undefined && last !== shots.at(-1)) shots.push(last);
+  }
+  const gaps = shots.slice(1).map((s, i) => s - shots[i]);
+  check(shots.length > 0, 'a railgun turret fires at an armed enemy 3 km away', `${shots.length} shots`);
+  check(charged > 0 && gaps.every((g) => g >= 2.49), 'it charges before each shot, no faster than one every 2.5 s', gaps.length ? `gaps ${Math.min(...gaps).toFixed(2)} s and up` : '');
+  check(sim.hitsTaken > 0, 'and hits', `${sim.hitsTaken} hits${sim.exploded ? ', shot down' : ''}`);
+  const calm = scene(TEST_PLANE);
+  let fired = 0;
+  for (let i = 0; i < 120 * 10; i++) { hold(calm, far, rhead); calm.step(idle); fired = railAt(calm)?.weapons.fired ?? fired; }
+  check(fired === 0 && railAt(calm)?.target?.kind === 'player', 'it watches an unarmed craft but holds fire');
+  const emp = scene(JET);
+  for (let i = 0; i < 120; i++) { hold(emp, far, rhead); emp.step(idle); }
+  emp.detonateEmp(rhead.x, rhead.y, rhead.z, true);
+  const before = railAt(emp)!.weapons.fired;
+  for (let i = 0; i < 120 * 8; i++) { hold(emp, far, rhead); emp.step(idle); }
+  check(railAt(emp)!.weapons.fired === before, 'an EMP silences it');
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');

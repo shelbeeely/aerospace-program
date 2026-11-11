@@ -84,6 +84,8 @@ export interface Rider {
   /** Jetwall corners, oldest first; the wall runs on to the rider's tail. */
   trail: TrafficCorner[];
   derezAt: number | null;
+  /** An EMP stalled it until then (s): it sits where it is, lights dark. */
+  stalledUntil?: number;
   rng: () => number;
   body?: RAPIER.RigidBody;
   walls: RAPIER.Collider[];
@@ -280,6 +282,7 @@ export class TrafficSystem {
     const walls = this.buckets.size > 0;
     for (const r of this.riders) {
       if (r.derezAt !== null) continue;
+      if (r.stalledUntil !== undefined && time < r.stalledUntil) continue; // EMP: stalled
       const fx = r.x + HX[r.heading] * TRAFFIC.nose, fz = r.z + HZ[r.heading] * TRAFFIC.nose;
       if (walls && this.avoid && (r.id + this.steps) % 6 === 0) this.lookAhead(r);
       this.ride(r, r.speed * dt);

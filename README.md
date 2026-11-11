@@ -24,6 +24,8 @@ npm run radar          # radar and planet map: contacts, heading-up scope, wrap-
 npm run lock           # target lock, homing missiles, turret traverse/elevation and auto-aim, chase mode
 npm run turrets        # tower turrets: placement, streaming, armed-only fire, line of sight, kills, fracture
 npm run teams          # teams: liveries, territory, the AI war, friendly fire, capture, freelancers, mercenaries
+npm run wmd            # railgun, nuke and EMP: buying, arming, the fireball and shock ring, the EMP's effects
+npm run netdamage      # networked damage: hit tests, the shooter's scanner, the victim's checks, kills
 npm run enemies        # enemy aircraft: red-team colours, patrol vs hunt, gunnery, hit points, kills, determinism
 npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
@@ -198,6 +200,7 @@ stick expo, haptics, and touch controls auto/on/off.
 | O (hold) | drop bombs / fire missiles |
 | I | weapons loadout: fitted (when the craft has weapon parts), unarmed, guns, cannon, guns + bombs, guns + missiles, tank, laser + discs, pulse + missiles, full |
 | Tab | planet map: every vehicle in the world (or click the radar) |
+| ` | launch the nuke or EMP carried (bought in the ' panel's Armory) |
 | ← → ↑ ↓ | turret traverse and elevation (tank, or any craft with a turret part); gamepad: LB + right stick |
 | / | turret back to the nose |
 | Enter | chase the locked vehicle (flight computer *Chase lock*; Enter again, or the stick, ends it) |
@@ -295,7 +298,8 @@ with a third of the region cells, so territory comes in large contiguous patches
   They never capture.
 - **Mercenaries** are wingmen you hire with credits (`'`, or *Mercenaries* in the touch menu).
   You earn 100 credits per aircraft shot down, 150 per turret and 300 per district captured
-  (kept between sessions; the CREDITS row). A contract lasts five minutes and costs 200-650 by
+  (kept between sessions; the CREDITS row). To test without earning them: F3 → *Credits
+  (testing)* (+1,000, +10,000, set an amount, reset), or `game.giveCredits(n)` in the console. A contract lasts five minutes and costs 200-650 by
   design (`src/sim/mercenaries.ts`), up to three at once. A mercenary flies for you whatever
   your team, in bright blue with an M on the radar; it escorts, goes for anything attacking you,
   then your enemies, and leaves when its time is up.
@@ -303,6 +307,34 @@ with a third of the region cells, so territory comes in large contiguous patches
   other players show as friend or foe by team, team-mates are never locked, and your AI and
   turrets treat enemy-team players as foes. Territory, the AI and captures are still simulated
   by each client.
+
+## Weapons of mass destruction
+
+- **Railgun** (loadout *Railgun + missiles*, or fitted as a `rail` weapon module): an instant
+  slug out to 4 km that punches through three things in a line (aircraft, turrets, riders,
+  structure pieces), six hit points each; 0.4 shots a second, 20 rounds, a hard kick. Its streak
+  lingers white-hot for half a second.
+- **Nuke and EMP** (`src/sim/strategic.ts`) are bought with credits in the Armory (the `'`
+  panel): nuke 1500, EMP 800, one carried at a time (remembered). **`** launches it from under
+  the nose; it flies as a heavy homing missile (it follows your lock).
+  - **Nuke:** arms 3 s after launch (an earlier impact is a dud). Its 400 m fireball fractures
+    and flattens the structures in it (nearest first, up to the fractured-structure cap) and
+    derezzes a craft inside; the shock ring out to 1.2 km derezzes aircraft, turrets and light
+    cycles and wrecks a craft caught in it. Drawn as geometry and light: a flash, a fireball of
+    lattice lines, a column of rings spreading into a disc, a ring racing out along the Grid.
+  - **EMP:** within 800 m it destroys nothing but switches things off: aircraft lose engines and
+    lights for 8 s and glide, turrets go dark for 20 s, light cycles stall, homing missiles lose
+    their lock, and your own engines cut for 8 s if you're caught (the HUD flickers).
+
+## Networked damage
+
+In a multiplayer room your rounds can hurt the other players (`src/net/hits.ts`). Your game
+tests your rounds, beams, railgun slugs and blasts against the other players of other teams as
+they are drawn on your screen, and reports each hit; the server drops any between team-mates;
+the victim's game applies it only if it comes from another team, lands near where that craft
+really is, and isn't part of a flood (20 a second per shooter), then damages the struck part as
+a hostile round would. When a craft goes down within 12 s of someone's hit, everyone sees it in
+the kill feed and the shooter earns 200 credits. Nukes and EMPs play out in every game.
 
 ## Enemy aircraft
 
@@ -347,6 +379,13 @@ twin guns and a missile barrel that elevate from −10° to +85° (they shoot at
 - **Shooting them:** ten gun rounds (fewer with cannon or missiles) derez one; a tower brought
   down takes its turret with it. Kills count on the HOSTILE row. A destroyed turret stays down
   until the world is reset (Backspace).
+- **Railgun turrets:** about one site in four (one in two on towers 120 m and up) carries a
+  railgun turret instead (`RAIL_TURRET`): one long twin-rail barrel, 14 hit points, a 3.5 km
+  reach. The slug is instant, so it aims straight at you; once on, it **charges for 0.8 s** (its
+  lights pulse up and the HUD flashes `RAIL`) and fires if it's still on, one shot every 2.5 s,
+  punching through up to three things. Break its line during the charge to dodge it. It follows
+  the same rules as the gun turrets (team, armed-only, EMP, capture), and shows as a square with
+  a diamond on the radar and `RAIL` on its bracket.
 - **Finding them:** red brackets in view, small red squares on the radar and planet map (solid
   while firing), and they can be locked: missiles home on them and the tank's turret lays on them.
 
@@ -358,7 +397,9 @@ steps it through 2, 5 and 12 km; a hostile or another player beyond the range si
 `Tab` (or a click on the scope, or *Map* in the touch menu) opens the planet map: the whole
 planet unrolled north-up and centred on your craft, with the city (paler where the skyline is
 taller), the Outlands, the sea, every runway by name, the radar's reach, and every vehicle in
-the world, counted in its header.
+the world, counted in its header. **Globe** (in its header, remembered) shows the same map on a
+sphere: drag to turn it, the wheel zooms, a double-click recentres it on you. (East-west becomes
+longitude and north-south latitude, so the map stretches toward the poles.)
 
 Aircraft are arrowheads on their heading, outlined in their circuit colour; hostiles are solid
 red, brighter while they attack; light cycles are dots in their team colour; other players are

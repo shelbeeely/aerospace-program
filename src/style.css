@@ -61,6 +61,7 @@ body.mode-hangar #radar, body.mode-hangar #planet-map { display: none; }
 #planet-map .map-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 #planet-map .map-head b { letter-spacing: 0.2em; font-size: 12px; color: #dff6ff; }
 #planet-map .map-head span { flex: 1; color: #9fb2c2; font-size: 11px; }
+#planet-map-canvas { touch-action: none; }
 #planet-map .map-head button { background: #0e1d2e; color: #cfeaff; border: 1px solid rgba(0, 212, 255, 0.35); border-radius: 4px; padding: 3px 10px; font: inherit; cursor: pointer; }
 #planet-map .map-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; width: min(78vh, 92vw, 760px); color: #9fb2c2; font-size: 11px; }
 #planet-map .map-legend i { display: inline-block; width: 9px; height: 9px; margin-right: 5px; vertical-align: -1px; box-sizing: border-box; }
@@ -82,6 +83,10 @@ body.mode-hangar #radar, body.mode-hangar #planet-map { display: none; }
   font-size: 10px; letter-spacing: 0.08em; white-space: nowrap; text-shadow: 0 0 3px #000; opacity: 0.85;
 }
 .lock-mark.locked small { opacity: 1; font-weight: bold; }
+.lock-mark.drop-mark { color: #dff6ff; }
+.lock-mark.drop-mark::before { transform: none; border-radius: 50%; inset: 0; }
+.lock-mark.drop-mark:not(.locked)::before { border-style: dashed; }
+
 #missile-warn {
   position: absolute; top: 30%; left: 50%; transform: translateX(-50%); pointer-events: none;
   font-size: 24px; font-weight: bold; letter-spacing: 0.3em; color: #ff2a12;
@@ -91,6 +96,16 @@ body.mode-hangar #missile-warn { display: none; }
 #hud #h-lock-row b { color: #7fe8ff; font-size: 14px; min-width: 0; flex: 1; }
 #hud #h-lock-row.locked b { color: #00d4ff; }
 #hud #h-turret-row b { font-size: 14px; min-width: 0; flex: 1; }
+
+/* A nuke's flash over the whole view, and an EMP's flicker on the HUD. */
+#nuke-flash { position: absolute; inset: 0; background: #f4fbff; opacity: 0; pointer-events: none; z-index: 40; }
+body.emp #hud { animation: emp-flicker 0.18s steps(2) infinite; }
+@keyframes emp-flicker { 50% { opacity: 0.35; } }
+#hud #h-strat-row b { color: #dff6ff; font-size: 14px; min-width: 0; flex: 1; }
+
+#debug .credit-tools { margin: 4px 0 8px; }
+#debug .credit-tools .buttons { display: flex; gap: 4px; margin: 6px 0; flex-wrap: wrap; }
+#debug .credit-tools input[type=number] { width: 90px; background: rgba(0,0,0,0.35); color: #eaf2f8; border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; padding: 2px 4px; font: inherit; }
 
 /* Mercenaries panel. */
 #merc-panel { right: 16px; top: 16px; width: 300px; max-height: calc(100dvh - 32px); overflow-y: auto; z-index: 18; border-color: rgba(61, 124, 255, 0.4); }
@@ -672,3 +687,38 @@ body.armed .tfire { display: block; }
 .bench-actions button { padding: 2px 6px; font-size: 11px; }
 .bench-actions button.on { border-color: #00d4ff; color: #00d4ff; }
 .bench-summary { margin-top: 8px; }
+
+/* The strike globe: the planet as a 3D globe full screen, the strike panel beside it. */
+#strike-globe {
+  position: fixed; inset: 0; z-index: 40; display: flex; gap: 0;
+  background: radial-gradient(ellipse at 40% 45%, #0a1830 0%, #050b18 55%, #02050c 100%);
+}
+#strike-globe.hidden { display: none; }
+#strike-globe .globe-stage { position: relative; flex: 1; min-width: 0; }
+#strike-globe-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+#strike-globe .globe-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#strike-globe .globe-hint { position: absolute; left: 16px; bottom: 12px; color: #6f8aa8; font-size: 11px; letter-spacing: 0.04em; pointer-events: none; }
+#strike-globe .globe-side {
+  width: 300px; padding: 14px; overflow-y: auto; color: #cfeaff; font-size: 12px;
+  background: rgba(4, 10, 22, 0.92); border-left: 1px solid rgba(0, 212, 255, 0.25);
+}
+#strike-globe .globe-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+#strike-globe .globe-head b { letter-spacing: 0.2em; color: #dff6ff; }
+#strike-globe .globe-side .panel-close { position: static; }
+#strike-globe .globe-target { margin: 10px 0; line-height: 1.6; }
+#strike-globe .team-chip { display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px; border: 1px solid #6f8aa8; }
+#strike-globe .globe-buttons { display: flex; flex-direction: column; gap: 6px; }
+#strike-globe .globe-buttons button {
+  text-align: left; background: #0e1d2e; color: #cfeaff; border: 1px solid rgba(0, 212, 255, 0.35);
+  border-radius: 4px; padding: 6px 9px; font: inherit; cursor: pointer;
+}
+#strike-globe .globe-buttons button:disabled { opacity: 0.4; cursor: default; }
+#strike-globe .globe-buttons button:not(:disabled):hover { border-color: #ffb347; color: #fff; }
+#strike-globe h3 { font-size: 11px; letter-spacing: 0.18em; color: #9fb2c2; margin: 14px 0 6px; }
+#strike-globe .globe-live div { padding: 2px 0; color: #ffb347; }
+#strike-globe .globe-live div.muted { color: #6f8aa8; }
+@media (max-width: 720px) {
+  #strike-globe { flex-direction: column; }
+  #strike-globe .globe-side { width: auto; max-height: 42vh; border-left: none; border-top: 1px solid rgba(0, 212, 255, 0.25); }
+  #strike-globe .globe-hint { display: none; }
+}
