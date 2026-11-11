@@ -76,14 +76,43 @@ export function applyTurret(rig: TurretRig, pose: TurretPose, elevates: boolean,
   dir?.applyQuaternion(_qy);
 }
 
+/** A turret's rates (rad/s) and elevation limits (rad). */
+export interface TurretLimits {
+  yawRate: number;
+  pitchRate: number;
+  pitchMin: number;
+  pitchMax: number;
+}
+
 /** Turn a pose toward wanted angles at the turret's rates (and within its elevation limits). */
-export function slewTurret(pose: TurretPose, yaw: number, pitch: number, dt: number): void {
+export function slewTurret(pose: TurretPose, yaw: number, pitch: number, dt: number, lim: TurretLimits = TURRET): void {
   let dy = yaw - pose.yaw;
   dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-  pose.yaw += Math.max(-TURRET.yawRate * dt, Math.min(TURRET.yawRate * dt, dy));
+  pose.yaw += Math.max(-lim.yawRate * dt, Math.min(lim.yawRate * dt, dy));
   pose.yaw = Math.atan2(Math.sin(pose.yaw), Math.cos(pose.yaw));
-  const p = Math.max(TURRET.pitchMin, Math.min(TURRET.pitchMax, pitch));
-  pose.pitch += Math.max(-TURRET.pitchRate * dt, Math.min(TURRET.pitchRate * dt, p - pose.pitch));
+  const p = Math.max(lim.pitchMin, Math.min(lim.pitchMax, pitch));
+  pose.pitch += Math.max(-lim.pitchRate * dt, Math.min(lim.pitchRate * dt, p - pose.pitch));
+}
+
+/**
+ * Where to point a gun at a moving target: `rel` is the target from the muzzle, `relVel` its
+ * velocity relative to the shooter (rounds inherit the shooter's), `speed` the muzzle speed and
+ * `g` the drop (m/s²). Writes the aim direction (not normalised) into `out`, allowing for the
+ * time of flight and the drop.
+ */
+export function leadAim(rel: THREE.Vector3, relVel: THREE.Vector3, speed: number, g: number, out: THREE.Vector3): THREE.Vector3 {
+  let tof = rel.length() / speed;
+  for (let k = 0; k < 3; k++) {
+    out.copy(rel).addScaledVector(relVel, tof);
+    out.y += 0.5 * g * tof * tof;
+    tof = out.length() / speed;
+  }
+  return out;
+}
+
+/** Traverse and elevation (rad) that point along a direction given in the turret's base frame. */
+export function anglesOf(dir: THREE.Vector3): { yaw: number; pitch: number } {
+  return { yaw: Math.atan2(dir.x, -dir.z), pitch: Math.atan2(dir.y, Math.hypot(dir.x, dir.z)) };
 }
 
 /** Drive a pose from stick-style inputs (-1..1). */

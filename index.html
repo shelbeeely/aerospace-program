@@ -21,7 +21,7 @@
       <div class="map-head"><b>PLANET MAP</b><span id="planet-map-info"></span><button type="button" id="planet-map-close" title="Close (Tab)">Close</button></div>
       <canvas id="planet-map-canvas"></canvas>
       <div class="map-legend">
-        <span><i class="lg-own"></i>you</span><span><i class="lg-air"></i>aircraft</span><span><i class="lg-hostile"></i>hostile</span>
+        <span><i class="lg-own"></i>you</span><span><i class="lg-air"></i>aircraft</span><span><i class="lg-hostile"></i>hostile</span><span><i class="lg-turret"></i>turret</span>
         <span><i class="lg-rider"></i>light cycle</span><span><i class="lg-player"></i>player</span><span><i class="lg-runway"></i>runway</span>
         <span><i class="lg-ring"></i>radar range</span>
       </div>
@@ -142,7 +142,8 @@
       <label>Aircraft around you <b id="w-ai-count-v">8</b> <input id="w-ai-count" type="range" min="0" max="24" step="1" value="8" /></label>
       <label><input id="w-ai-mine" type="checkbox" checked /> Include my designs (single player)</label>
       <label>Hostile aircraft <b id="w-hostile-count-v">2</b> <input id="w-hostile-count" type="range" min="0" max="8" step="1" value="2" /></label>
-      <p class="muted small">Hostiles hunt you only while your craft carries weapons (I cycles the loadout).</p>
+      <label>Tower turrets <b id="w-turrets-v">Sparse</b> <input id="w-turrets" type="range" min="0" max="2" step="1" value="1" /></label>
+      <p class="muted small">Hostile aircraft and tower turrets fire on you only while your craft carries weapons (I cycles the loadout).</p>
       <p class="muted small">Triggers affect flight physics. Reset clears events.</p>
       <div class="legend">
         <span style="color:#33ff55">■ lift</span>

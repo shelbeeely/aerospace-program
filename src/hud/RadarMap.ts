@@ -109,6 +109,12 @@ export class RadarMap {
     if (c.kind === 'rider') {
       g.fillStyle = c.color;
       g.fillRect(-k, -k, 2 * k, 2 * k);
+    } else if (c.kind === 'turret') {
+      // A tower turret: a small red square, solid while it is firing.
+      g.globalAlpha = c.attacking ? 1 : 0.75;
+      g.strokeStyle = g.fillStyle = RED;
+      if (c.attacking) g.fillRect(-3 * k, -3 * k, 6 * k, 6 * k);
+      else g.strokeRect(-3 * k, -3 * k, 6 * k, 6 * k);
     } else if (c.kind === 'player') {
       g.strokeStyle = PALE;
       g.beginPath();
@@ -195,10 +201,10 @@ export class RadarMap {
       g.strokeRect(o + p.x * R - w, o - p.y * R - w, 2 * w, 2 * w);
     }
     // Vehicles: riders first, aircraft over them, hostiles on top.
-    const order = { rider: 0, aircraft: 1, player: 2, hostile: 3 } as const;
+    const order = { rider: 0, aircraft: 1, player: 2, turret: 3, hostile: 4 } as const;
     for (const ct of [...s.contacts].sort((a, b) => order[a.kind] - order[b.kind])) {
       const p = radarPoint(s.x, s.z, s.heading, ct.x, ct.z, this.range);
-      if (!p.inside && ct.kind !== 'hostile' && ct.kind !== 'player') continue;
+      if (!p.inside && ct.kind !== 'hostile' && ct.kind !== 'turret' && ct.kind !== 'player') continue;
       const edge = p.inside ? 1 : (R - 5 * k) / R;
       this.mark(g, ct, o + p.x * R * edge, o - p.y * R * edge, ct.heading - s.heading, p.inside ? k : k * 0.75);
       if (ct.id === s.lockedId) this.ring(g, o + p.x * R * edge, o - p.y * R * edge, k);
@@ -275,8 +281,8 @@ export class RadarMap {
     g.beginPath();
     g.arc(size / 2, size / 2, this.range * m, 0, Math.PI * 2);
     g.stroke();
-    const order = { rider: 0, aircraft: 1, player: 2, hostile: 3 } as const;
-    const count = { rider: 0, aircraft: 0, player: 0, hostile: 0 };
+    const order = { rider: 0, aircraft: 1, player: 2, turret: 3, hostile: 4 } as const;
+    const count = { rider: 0, aircraft: 0, player: 0, turret: 0, hostile: 0 };
     for (const ct of [...s.contacts].sort((a, b) => order[a.kind] - order[b.kind])) {
       count[ct.kind]++;
       const [x, y] = at(ct.x, ct.z);
@@ -302,7 +308,7 @@ export class RadarMap {
     g.fillStyle = DIM;
     g.fillText('N', size / 2, 10 * k);
     if (this.info) {
-      const text = `${count.aircraft} aircraft · ${count.hostile} hostile · ${count.rider} light cycles${count.player ? ` · ${count.player} players` : ''}`;
+      const text = `${count.aircraft} aircraft · ${count.hostile} hostile${count.turret ? ` · ${count.turret} turrets` : ''} · ${count.rider} light cycles${count.player ? ` · ${count.player} players` : ''}`;
       if (this.info.textContent !== text) this.info.textContent = text;
     }
   }

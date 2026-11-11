@@ -15,13 +15,14 @@ import { TrailSystem } from './trails.ts';
 import { TrailEmitter } from '../modules/TrailEmitter.ts';
 import { HX, HZ, TrafficSystem, type Rider } from './traffic.ts';
 import { LockSystem, relativePosition, type LockTarget } from './lock.ts';
-import { applyTurret, driveTurret, slewTurret } from '../craft/turret.ts';
+import { anglesOf, applyTurret, driveTurret, leadAim, slewTurret } from '../craft/turret.ts';
 import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
 import { craftBounds, WEAPON_DAMAGE, WEAPONS, WeaponSystem, type Mount, type WeaponHost, type WeaponImpact, type WeaponKind } from './weapons.ts';
 import { AiAirTraffic, type AiFlyer, type AirTarget } from './aiTraffic.ts';
+import { GroundTurretSystem, TURRET_HEAD_Y, type GroundTurret } from './groundTurrets.ts';
 import { WeaponMount } from '../modules/WeaponMount.ts';
 import { BOOM_DAMAGE, BOOM_DEREZ, BOOM_SHATTER, boomBite, boomOverpressure, boomReach, type BoomEvent } from './sonicBoom.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
@@ -183,6 +184,37 @@ export class Simulation {
     this.version++;
   }
 
+  /** A tower turret derezzes: a red flash and voxels on the roof (a player's kill counts). */
+  derezTurret(t: GroundTurret, byPlayer = false): void {
+    if (t.derezAt !== null) return;
+    this.turretBlast(t);
+    this.groundTurrets.derez(t, this.time);
+    if (byPlayer) this.airTraffic.kills++;
+  }
+
+  private turretBlast(t: GroundTurret): void {
+    const x = t.pos.x, y = t.pos.y + TURRET_HEAD_Y * 0.6, z = t.pos.z;
+    this.explosions.push({ x, y, z, time: this.time, radius: 9, color: t.color, speed: 0 });
+    if (this.explosions.length > 32) this.explosions.splice(0, this.explosions.length - 32);
+    this.chips.emit({ x, y, z, radius: 2, vx: 0, vy: 5, vz: 0, speed: 10, count: 600, size: 0.26, color: t.color, persist: true });
+    this.version++;
+  }
+
+  private archGroups: { version: number; size: number; byArch: Map<string, number[]> } = { version: -1, size: -1, byArch: new Map() };
+
+  /** Has a structure (by its architecture id) fractured? (A turret on it falls with it.) */
+  private structureFractured(archId: string): boolean {
+    const sw = this.staticWorld;
+    if (!sw.fractured.size) return false;
+    const groups = sw.structures.groups;
+    if (this.archGroups.size !== groups.length) {
+      const byArch = new Map<string, number[]>();
+      for (const g of groups) if (g.arch) byArch.set(g.arch, [...(byArch.get(g.arch) ?? []), g.id]);
+      this.archGroups = { version: sw.contentVersion, size: groups.length, byArch };
+    }
+    return (this.archGroups.byArch.get(archId) ?? []).some((id) => sw.fractured.has(id));
+  }
+
   /** The player's craft: a boom check four times a second while it flies faster than sound. */
   private playerBoom(): void {
     if (this.exploded || this.time - this.boomAt < 0.25) return;
@@ -281,6 +313,8 @@ export class Simulation {
   readonly traffic: TrafficSystem;
   /** AI aircraft flying around the player (built-ins and, in single player, the player's designs). */
   readonly airTraffic: AiAirTraffic;
+  /** Hostile turrets on tower roofs around the player (density 0 = off). */
+  readonly groundTurrets: GroundTurretSystem;
   readonly wrapShift = new THREE.Vector3();
   private readonly groundBody: RAPIER.RigidBody;
   private readonly groundMotion = new THREE.Vector3();
@@ -341,6 +375,7 @@ export class Simulation {
     this.trails.chips = this.chips;
     this.traffic = new TrafficSystem(this.world, CITY.seed, this.chips);
     this.airTraffic = new AiAirTraffic(this.world, CITY.seed);
+    this.groundTurrets = new GroundTurretSystem(this.world, CITY.seed);
     this.town = new Town(this.world);
     this.town.chips = this.chips;
     this.staticWorld = new StaticWorld(this.world, this.town);
@@ -352,6 +387,14 @@ export class Simulation {
     this.weapons.onImpact = (h) => this.weaponImpact(h);
     this.airTraffic.onHostileImpact = (h, f) => this.weaponImpact(h, f);
     this.airTraffic.groundAt = (x, z) => (isSea(x) ? -COAST.depth : terrainHeight(x, z));
+    this.groundTurrets.onImpact = (h, t) => this.weaponImpact(h, t);
+    this.groundTurrets.groundAt = this.airTraffic.groundAt;
+    this.groundTurrets.fractured = (id) => this.structureFractured(id);
+    // A tower brought down under fire takes its turret with it (the player's kill if they did it).
+    this.groundTurrets.onTowerFell = (t) => {
+      this.turretBlast(t);
+      if (this.time - t.hitAt < 5) this.airTraffic.kills++;
+    };
     this.onContactForce((e) => {
       // Fresh debris spawns overlapping the airframe; separating them isn't an impact.
       if (this.isFreshDebris(e.collider1) || this.isFreshDebris(e.collider2)) return;
@@ -545,6 +588,7 @@ export class Simulation {
     this.trails.clear();
     this.traffic.clear();
     this.airTraffic.clear();
+    this.groundTurrets.clear();
     this.staticWorld.reset();
     this.town.reset();
     this.chips.reset();
@@ -678,6 +722,7 @@ export class Simulation {
     this.airTarget.lock = this.selfTarget;
     this.airTarget.armed = this.weapons.mounts.length > 0;
     this.airTraffic.step(this.dt, this.time, this.position, this.airTarget);
+    this.groundTurrets.step(this.dt, this.time, this.position, this.airTarget);
 
     this.world.step(this.events);
     this.readBodyState();
@@ -689,6 +734,7 @@ export class Simulation {
     this.weapons.lock = this.lock.target;
     this.weapons.step(this.weaponHost, this.dt, this.time);
     this.airTraffic.stepWeapons(this.dt, this.time);
+    this.groundTurrets.stepWeapons(this.dt, this.time);
     this.syncWeaponMounts();
     this.bulldoze();
     this.playerBoom();
@@ -986,6 +1032,21 @@ export class Simulation {
       }
       out.push(h);
     }
+    const turrets = this.groundTurrets;
+    for (const t of turrets.turrets) {
+      if (t.derezAt !== null) continue;
+      let h = this.lockHandles.get(t);
+      if (!h) {
+        h = {
+          id: `turret:${t.site.id}`, kind: 'turret', name: 'Tower turret', radius: 2.5,
+          alive: () => t.derezAt === null && turrets.turrets.includes(t),
+          position: (o) => o.set(t.pos.x, t.pos.y + TURRET_HEAD_Y, t.pos.z),
+          velocity: (o) => o.set(0, 0, 0),
+        };
+        this.lockHandles.set(t, h);
+      }
+      out.push(h);
+    }
     out.push(...this.extraLockTargets);
     return out;
   }
@@ -1054,20 +1115,14 @@ export class Simulation {
     target.velocity(_solV).sub(this.linvel);
     const speed = spec.beam ? 1e6 : Math.max(50, spec.speed);
     const g = TUNING.gravity * spec.gravity;
-    let tof = rel.length() / speed;
-    const aim = _solAim;
-    for (let k = 0; k < 3; k++) {
-      aim.copy(rel).addScaledVector(_solV, tof);
-      aim.y += 0.5 * g * tof * tof;
-      tof = aim.length() / speed;
-    }
+    const aim = leadAim(rel, _solV, speed, g, _solAim);
     aim.applyQuaternion(_solQ.copy(this.rotation).invert());
-    return { yaw: Math.atan2(aim.x, -aim.z), pitch: Math.atan2(aim.y, Math.hypot(aim.x, aim.z)) };
+    return anglesOf(aim);
   }
 
   /** Hostile missiles in flight homing on this craft. */
   incomingMissiles(): number {
-    return this.airTraffic.incoming(this.selfTarget);
+    return this.airTraffic.incoming(this.selfTarget) + this.groundTurrets.incoming(this.selfTarget);
   }
 
   /** Fitted weapons: mirror each mount's rounds and last shot onto its module (the craft view shows them). */
@@ -1098,7 +1153,7 @@ export class Simulation {
    * bodies (debris, rubble, other craft pieces), craters structures (fracturing them into Rapier
    * blocks), and flashes and shatters into voxels in the shooter's circuit colour.
    */
-  private weaponImpact(h: WeaponImpact, shooter?: AiFlyer): void {
+  private weaponImpact(h: WeaponImpact, shooter?: AiFlyer | GroundTurret): void {
     const p = h.point;
     const col = h.collider;
     if (col) this.traffic.derezCollider(col.handle, this.time); // a rider, or a rider's jetwall
@@ -1111,6 +1166,17 @@ export class Simulation {
     };
     if (flyer) strike(flyer);
     if (h.blast >= 3) for (const f of this.airTraffic.flyers) if (f !== flyer && f.derezAt === null && f.pos.distanceTo(p) < h.blast + f.radius) strike(f);
+    // Tower turrets: the player's rounds and blasts wear them down (hostiles never hit them).
+    const turret = col ? this.groundTurrets.byCollider(col.handle) : undefined;
+    const hitTurret = (t: GroundTurret) => {
+      if (shooter) return;
+      if (this.groundTurrets.damage(t, WEAPON_DAMAGE[h.kind], this.time)) this.derezTurret(t, true);
+    };
+    if (turret) hitTurret(turret);
+    if (h.blast >= 3) for (const t of this.groundTurrets.turrets) {
+      if (t === turret || t.derezAt !== null) continue;
+      if (Math.hypot(t.pos.x - p.x, t.pos.y + TURRET_HEAD_Y * 0.6 - p.y, t.pos.z - p.z) < h.blast + 2.5) hitTurret(t);
+    }
     // A hostile's round on the player's craft: the struck part loses hit points (and breaks off
     // at zero); a warhead that goes off against it, or beside it, derezzes it outright.
     if (shooter && !this.exploded) {
@@ -1129,8 +1195,8 @@ export class Simulation {
     // Light walls break: a round that strikes one cuts a gap; a blast clears its radius.
     const wallHit = !!col && this.trails.isWall(col.handle);
     if (wallHit || h.blast >= 3) this.trails.cutAt(p.x, p.z, wallHit ? Math.max(2, h.blast * 0.8) : h.blast * 0.8);
-    // (An AI aircraft is kinematic: a round doesn't shove it.)
-    const body = flyer ? undefined : col?.parent();
+    // (AI aircraft and turrets are kinematic: a round doesn't shove them.)
+    const body = flyer || turret ? undefined : col?.parent();
     if (body && body.isDynamic()) {
       const k = h.mass * (h.kind === 'gun' ? 1.5 : 4);
       body.applyImpulseAtPoint({ x: h.vel.x * k, y: h.vel.y * k + h.blast * h.mass, z: h.vel.z * k }, { x: p.x, y: p.y, z: p.z }, true);
@@ -1148,7 +1214,8 @@ export class Simulation {
         b.applyImpulse({ x: (dx / d) * j, y: (Math.abs(dy) / d) * j + j * 0.3, z: (dz / d) * j }, true);
       });
     }
-    this.staticWorld.blastAt(p.x, p.y, p.z, h.blast, this.time);
+    // A round that strikes a turret spends itself on it; only a warhead also bites the roof under it.
+    if (!turret || h.blast >= 3) this.staticWorld.blastAt(p.x, p.y, p.z, h.blast, this.time);
     if (h.blast >= 3) this.crater(p.x, p.y, p.z, h.blast, h.color);
     if (h.blast >= 3) for (const b of this.town.buildings) this.town.blast(b, p.x, p.y, p.z, h.blast * 0.6, this.time);
     if (h.kind === 'gun') {
@@ -1179,7 +1246,7 @@ export class Simulation {
 
   /** Every weapon system with rounds in flight: the craft's own and the hostiles' (the renderer). */
   allWeapons(): WeaponSystem[] {
-    return [this.weapons, ...this.airTraffic.weaponSystems()];
+    return [this.weapons, ...this.airTraffic.weaponSystems(), ...this.groundTurrets.weaponSystems()];
   }
 
   /** A bulldozer shoving through structure or rubble: no damage to it (the rubble still feels it). */

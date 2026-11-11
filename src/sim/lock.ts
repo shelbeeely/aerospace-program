@@ -16,7 +16,7 @@ function wrapDelta(a: number, b: number): number {
  * home on it, a turret aims at it, and the flight computer can chase it.
  */
 
-export type LockKind = 'aircraft' | 'hostile' | 'rider' | 'player' | 'self';
+export type LockKind = 'aircraft' | 'hostile' | 'turret' | 'rider' | 'player' | 'self';
 
 export interface LockTarget {
   id: string;

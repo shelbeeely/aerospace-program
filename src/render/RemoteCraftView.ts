@@ -6,6 +6,7 @@ import { edgeColor, fillColor, geometryFor } from './CraftView.ts';
 import { style1982 } from '../craft/style1982.ts';
 import { glow, neonFillMaterial, neonize, neonTint } from './neon.ts';
 import { buildGrammar, driveGrammarLights, type GrammarModel } from './VehicleGrammarView.ts';
+import { turretOf, turretQuaternions, type TurretPose } from '../craft/turret.ts';
 
 /**
  * Another player's craft, drawn from their CraftDef alone (no physics body): one neon primitive
@@ -23,6 +24,11 @@ export class RemoteCraftView {
   /** Craft bounding radius (m), for the beacon height and proximity checks. */
   readonly radius: number;
 
+  /** Everything drawn per part (for turret rigging). */
+  private readonly partObjects = new Map<string, THREE.Object3D[]>();
+  private turretYaw: THREE.Group | null = null;
+  private turretPitch: THREE.Group | null = null;
+
   constructor(def: CraftDef, color: string, opts: { beacon?: boolean } = {}) {
     const ok = validateCraft(def).length === 0;
     // The same 1982 palette and body/light edges as the player's craft.
@@ -39,6 +45,7 @@ export class RemoteCraftView {
         const q = partQuaternion(part);
         mesh.quaternion.copy(q);
         this.root.add(mesh);
+        this.partObjects.set(part.id, [mesh]);
         const s = part.shape;
         const half = s.type === 'box' ? Math.hypot(...s.size) / 2 : s.type === 'sphere' ? s.radius : Math.max(s.radius, s.length / 2);
         radius = Math.max(radius, Math.hypot(...part.position) + half);
@@ -51,7 +58,9 @@ export class RemoteCraftView {
       }
       // The vehicle grammar's detail, lights steady (no engine state for a remote craft).
       this.grammar = buildGrammar(def, this.root);
+      for (const [id, objs] of this.grammar.byPart) this.partObjects.set(id, [...(this.partObjects.get(id) ?? []), ...objs]);
       this.setLightState({ activity: 1, integrity: 1, time: 0 });
+      this.rigTurret(def);
     } else {
       const geo = new THREE.BoxGeometry(2, 1, 4);
       const fill = neonFillMaterial(neonTint(color).multiplyScalar(0.035));
@@ -109,6 +118,37 @@ export class RemoteCraftView {
       activity: s.activity, time: s.time, integrity: () => s.integrity,
       engine: () => ({ spool: 0.5 + 0.3 * s.activity, afterburner: 0 }),
     });
+  }
+
+  /**
+   * A craft with a turret part: its parts (and their grammar detail) move into a group that
+   * traverses about the turret's pivot, and the barrels into one inside it that elevates about
+   * the trunnion (as CraftView does for the player's craft).
+   */
+  private rigTurret(def: CraftDef): void {
+    const rig = turretOf(def);
+    if (!rig) return;
+    const yaw = (this.turretYaw = new THREE.Group());
+    yaw.position.copy(rig.pivot);
+    const pitch = (this.turretPitch = new THREE.Group());
+    pitch.position.copy(rig.trunnion).sub(rig.pivot);
+    yaw.add(pitch);
+    this.root.add(yaw);
+    for (const [id, objs] of this.partObjects) {
+      if (!rig.riders.has(id)) continue;
+      const elevates = rig.barrels.has(id);
+      for (const o of objs) {
+        if (o.parent !== this.root) continue;
+        o.removeFromParent();
+        o.position.sub(elevates ? rig.trunnion : rig.pivot);
+        (elevates ? pitch : yaw).add(o);
+      }
+    }
+  }
+
+  /** Point the turret (no-op for a craft without one). */
+  setTurret(pose: TurretPose): void {
+    if (this.turretYaw && this.turretPitch) turretQuaternions(pose, this.turretYaw.quaternion, this.turretPitch.quaternion);
   }
 
   private readonly _inv = new THREE.Quaternion();

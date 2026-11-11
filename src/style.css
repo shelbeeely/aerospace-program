@@ -67,6 +67,7 @@ body.mode-hangar #radar, body.mode-hangar #planet-map { display: none; }
 .lg-own { border: 1.5px solid #dff6ff; border-bottom: none; }
 .lg-air { border: 1px solid #00d4ff; clip-path: polygon(50% 0, 100% 100%, 0 100%); background: #00d4ff; opacity: 0.8; }
 .lg-hostile { background: #ff2a12; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.lg-turret { border: 1.5px solid #ff2a12; transform: scale(0.8); }
 .lg-rider { background: #ffb347; transform: scale(0.45); }
 .lg-player { border: 1px solid #dff6ff; transform: rotate(45deg) scale(0.8); }
 .lg-runway { border-top: 2px solid #dff6ff; height: 5px !important; }

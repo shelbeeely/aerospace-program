@@ -22,6 +22,7 @@ npm run engines        # fast flight: compressibility, ramjet/scramjet/solid/tur
 npm run air            # AI air traffic: count, clearance, destinations and circling, shot down and replaced
 npm run radar          # radar and planet map: contacts, heading-up scope, wrap-aware geometry
 npm run lock           # target lock, homing missiles, turret traverse/elevation and auto-aim, chase mode
+npm run turrets        # tower turrets: placement, streaming, armed-only fire, line of sight, kills, fracture
 npm run enemies        # enemy aircraft: red-team colours, patrol vs hunt, gunnery, hit points, kills, determinism
 npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
@@ -284,6 +285,26 @@ and missiles and six hit points.
 
 Hostiles are deterministic for the seed and use their own random stream, so the peaceful
 traffic flies the same with or without them.
+
+## Tower turrets
+
+Hostile turrets stand on the flat roofs of tall towers (`src/sim/groundTurrets.ts`; F3 →
+*Tower turrets*: Off / Sparse / Dense, default Sparse, remembered). Which towers carry one is a
+pure function of the world seed and the district — the same towers always do, never beside a
+rooftop helipad — and the ones within 5 km of you are live. Each is a red-team emplacement
+(`src/craft/towerTurret.ts`): a pedestal with a lit collar, a head that traverses at 90°/s,
+twin guns and a missile barrel that elevate from −10° to +85° (they shoot at aircraft overhead).
+
+- **They watch everyone, but fire only on an armed craft.** Within 2.5 km and with a clear line
+  of sight (sampled against the terrain and the towers), a turret's head follows you and its
+  lights come up; while your craft carries weapons it fires its guns inside 1.8 km when the
+  barrels are on your lead point, and a homing missile every 10 s from 600 m out (the `MISSILE`
+  warning). Their rounds hurt like the hostile aircraft's.
+- **Shooting them:** ten gun rounds (fewer with cannon or missiles) derez one; a tower brought
+  down takes its turret with it. Kills count on the HOSTILE row. A destroyed turret stays down
+  until the world is reset (Backspace).
+- **Finding them:** red brackets in view, small red squares on the radar and planet map (solid
+  while firing), and they can be locked: missiles home on them and the tank's turret lays on them.
 
 ## Radar and planet map
 

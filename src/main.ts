@@ -46,6 +46,8 @@ import { WeaponsView } from './render/WeaponsView.ts';
 import { CraterView } from './render/CraterView.ts';
 import { BoomView } from './render/BoomView.ts';
 import { AiTrafficView } from './render/AiTrafficView.ts';
+import { GroundTurretsView } from './render/GroundTurretsView.ts';
+import type { TurretDensity } from './sim/groundTurrets.ts';
 import { HostileMarkers, LockMarker, type HostileMark } from './hud/HostileMarkers.ts';
 import type { LockTarget } from './sim/lock.ts';
 import { RadarMap } from './hud/RadarMap.ts';
@@ -201,6 +203,7 @@ async function start() {
   const craterView = new CraterView(scene);
   const boomView = new BoomView(scene);
   const aiTrafficView = new AiTrafficView(scene, sim.airTraffic);
+  const turretsView = new GroundTurretsView(scene, sim.groundTurrets);
   let boomHeardAt = -Infinity;
   let wasSupersonic = false;
   let explosionHeardAt = -Infinity;
@@ -407,7 +410,20 @@ async function start() {
     if (aiCountLabel) aiCountLabel.textContent = String(sim.airTraffic.count);
     sim.airTraffic.hostiles = Number(hostileCount?.value ?? 2);
     if (hostileLabel) hostileLabel.textContent = String(sim.airTraffic.hostiles);
+    sim.groundTurrets.density = Math.max(0, Math.min(2, Number(turretInput?.value ?? 1))) as TurretDensity;
+    if (turretLabel) turretLabel.textContent = ['Off', 'Sparse', 'Dense'][sim.groundTurrets.density];
   };
+  // Tower turrets: off / sparse / dense (remembered).
+  const turretInput = document.getElementById('w-turrets') as HTMLInputElement | null;
+  const turretLabel = document.getElementById('w-turrets-v');
+  const TURRET_STORAGE = 'turretDensity';
+  if (turretInput && stored(TURRET_STORAGE) !== null) turretInput.value = String(Math.max(0, Math.min(2, Number(stored(TURRET_STORAGE)) || 0)));
+  turretInput?.addEventListener('input', () => {
+    try {
+      localStorage.setItem(TURRET_STORAGE, turretInput.value);
+    } catch { /* private mode: not remembered */ }
+    updateAirPool();
+  });
   // Hostile aircraft: red-team fighters that hunt an armed craft (the count is remembered).
   const HOSTILE_STORAGE = 'hostileCount';
   if (hostileCount && stored(HOSTILE_STORAGE) !== null) hostileCount.value = String(Math.max(0, Math.min(8, Number(stored(HOSTILE_STORAGE)) || 0)));
@@ -1084,6 +1100,7 @@ async function start() {
     explosionView.update(sim.time, sim.explosions);
     weaponsView.update(sim.time);
     aiTrafficView.update(dt);
+    turretsView.update(dt);
     craterView.update(sim.time, sim.craters);
     {
       // Sonic booms: the Mach cone and vapour, ground shock rings, and the double crack when the
@@ -1113,6 +1130,11 @@ async function start() {
       for (const f of sim.airTraffic.hostileFlyers()) {
         const range = f.pos.distanceTo(sim.position);
         if (range < 6000) marks.push({ pos: f.pos, range, attacking: f.combat !== 'patrol' });
+      }
+      for (const t of sim.groundTurrets.live()) {
+        const pos = new THREE.Vector3(t.pos.x, t.pos.y + 3, t.pos.z);
+        const range = pos.distanceTo(sim.position);
+        if (range < 6000) marks.push({ pos, range, attacking: t.state === 'firing' });
       }
       marks.sort((a, b) => a.range - b.range);
       const near = marks[0];

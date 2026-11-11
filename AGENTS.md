@@ -310,7 +310,8 @@ universe, not a conventional open world decorated with neon.
 - Check: `npm run craft`.
 - **Hostile aircraft wear red-team colours** through `redTeam()` (`src/craft/style1982.ts`):
   warm near-black bodies and red light, still under the light budget, with the light states of
-  §5 (dim on patrol, full in the attack, flickering when hit). Check: `npm run enemies`.
+  §5 (dim on patrol, full in the attack, flickering when hit). Check: `npm run enemies`. Tower
+  turrets (`src/craft/towerTurret.ts`) wear it too (check: `npm run turrets`).
 - **The imported kit towers remain part of the world.**
 
 ## 15. Reference notes from the book

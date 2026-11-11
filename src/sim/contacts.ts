@@ -9,7 +9,7 @@ import type { Simulation } from './Simulation.ts';
  * way round.
  */
 
-export type ContactKind = 'aircraft' | 'hostile' | 'rider' | 'player';
+export type ContactKind = 'aircraft' | 'hostile' | 'turret' | 'rider' | 'player';
 
 export interface Contact {
   /** Matches the vehicle's lock target id (air:…, rider:…, player:…). */
@@ -41,6 +41,10 @@ export function simContacts(sim: Simulation): Contact[] {
   for (const f of sim.airTraffic.flyers) {
     if (f.derezAt !== null) continue;
     out.push({ id: `air:${f.id}`, kind: f.hostile ? 'hostile' : 'aircraft', x: f.pos.x, z: f.pos.z, y: f.pos.y, heading: f.heading, color: f.color, name: f.name, attacking: f.hostile && f.combat !== 'patrol' });
+  }
+  for (const t of sim.groundTurrets.turrets) {
+    if (t.derezAt !== null) continue;
+    out.push({ id: `turret:${t.site.id}`, kind: 'turret', x: t.pos.x, z: t.pos.z, y: t.pos.y, heading: t.pose.yaw, color: t.color, name: 'Tower turret', attacking: t.state === 'firing' });
   }
   for (const r of sim.traffic.riders) {
     if (r.derezAt !== null) continue;
