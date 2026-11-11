@@ -15,6 +15,8 @@ export interface RadarState {
   heading: number;
   contacts: Contact[];
   sites: readonly LandingSite[];
+  /** The locked vehicle's id (ringed on both), if any. */
+  lockedId?: string | null;
 }
 
 const CYAN = '#00d4ff', RED = '#ff2a12', PALE = '#dff6ff', DIM = 'rgba(111, 138, 168, 0.55)';
@@ -131,6 +133,15 @@ export class RadarMap {
     g.restore();
   }
 
+  /** The locked vehicle: a cyan ring around its mark. */
+  private ring(g: CanvasRenderingContext2D, x: number, y: number, k: number): void {
+    g.strokeStyle = CYAN;
+    g.lineWidth = 1.5 * k;
+    g.beginPath();
+    g.arc(x, y, 8 * k, 0, Math.PI * 2);
+    g.stroke();
+  }
+
   /** The player's own mark: a pale chevron. */
   private own(g: CanvasRenderingContext2D, x: number, y: number, angle: number, k: number): void {
     g.save();
@@ -190,6 +201,7 @@ export class RadarMap {
       if (!p.inside && ct.kind !== 'hostile' && ct.kind !== 'player') continue;
       const edge = p.inside ? 1 : (R - 5 * k) / R;
       this.mark(g, ct, o + p.x * R * edge, o - p.y * R * edge, ct.heading - s.heading, p.inside ? k : k * 0.75);
+      if (ct.id === s.lockedId) this.ring(g, o + p.x * R * edge, o - p.y * R * edge, k);
     }
     g.restore();
     this.own(g, o, o, 0, k);
@@ -269,6 +281,7 @@ export class RadarMap {
       count[ct.kind]++;
       const [x, y] = at(ct.x, ct.z);
       this.mark(g, ct, x, y, ct.heading, k);
+      if (ct.id === s.lockedId) this.ring(g, x, y, k);
       if (ct.kind === 'player') {
         g.fillStyle = PALE;
         g.fillText(ct.name, x + 7 * k, y);

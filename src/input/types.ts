@@ -18,6 +18,9 @@ export interface RawInput {
   /** Weapons triggers held this frame: primary (guns, cannon) and secondary (bombs, missiles). */
   fire: boolean;
   fireAlt: boolean;
+  /** Turret traverse (+ right) and elevation (+ up), -1..1. */
+  aimYaw: number;
+  aimPitch: number;
 }
 
 export type Action =
@@ -39,7 +42,9 @@ export type Action =
   | 'trail'
   | 'loadout'
   | 'map'
-  | 'radarRange';
+  | 'radarRange'
+  | 'recentre'
+  | 'chase';
 
 /** What a device may know about the game when it reads. */
 export interface InputContext {

@@ -115,6 +115,14 @@ export class GamepadDevice implements InputDevice {
       raw.roll += rx;
       raw.pitch += ry * inv; // stick back (down, +) = nose up
       raw.throttleRate += (value(B.RT) - value(B.LT)) * 0.5;
+    } else if (ctx.profile === 'ground' && pressed(B.LB)) {
+      // Ground vehicles: LB held turns the right stick into the turret's aim.
+      raw.roll += lx;
+      raw.pitch += ly * inv;
+      raw.aimYaw += rx;
+      raw.aimPitch -= ry;
+      raw.throttleRate += value(B.RT) - value(B.LT);
+      this.lastCollective = null;
     } else {
       raw.roll += lx;
       raw.pitch += ly * inv; // stick back (down, +) = nose up

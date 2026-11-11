@@ -16,6 +16,7 @@ import { Wheel } from '../modules/Wheel.ts';
 import { ElectricalSystem } from './ElectricalSystem.ts';
 import { computeMassProperties, partQuaternion, type MassProperties } from './massProperties.ts';
 import type { CraftDef, PartDef } from './types.ts';
+import { turretOf, type TurretPose, type TurretRig } from './turret.ts';
 
 const v3 = (t: [number, number, number] | undefined, out = new THREE.Vector3()) =>
   t ? out.set(t[0], t[1], t[2]) : out.set(0, 0, 0);
@@ -27,6 +28,9 @@ const v3 = (t: [number, number, number] | undefined, out = new THREE.Vector3()) 
  */
 export class Craft {
   readonly def: CraftDef;
+  /** Its turret (a part of kind `turret`), or null; and where the turret points now. */
+  readonly turretRig: TurretRig | null;
+  readonly turret: TurretPose = { yaw: 0, pitch: 0 };
   readonly body: RAPIER.RigidBody;
   modules: ForceModule[] = [];
   massProps: MassProperties;
@@ -58,6 +62,7 @@ export class Craft {
     // Every craft wears the 1982 palette, whoever designed it (AGENTS.md §4-5).
     def = style1982(def);
     this.def = def;
+    this.turretRig = turretOf(def);
     this.parts = [...def.parts];
     for (const p of this.parts) this.voxels.set(p.id, new PartVoxels(p.shape));
 
@@ -497,6 +502,7 @@ export class Craft {
 
   /** Teleport and zero all motion and module state. */
   reset(position: THREE.Vector3, rotation: THREE.Quaternion): void {
+    this.turret.yaw = this.turret.pitch = 0;
     this.body.setTranslation(position, true);
     this.body.setRotation(rotation, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);

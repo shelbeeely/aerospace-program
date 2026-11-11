@@ -21,6 +21,7 @@ npm run craft          # vehicle rules: connected parts, the 1982 palette, the v
 npm run engines        # fast flight: compressibility, ramjet/scramjet/solid/turbojet, thrust vectoring, airbrake, chute, cone/capsule parts, weight floors
 npm run air            # AI air traffic: count, clearance, destinations and circling, shot down and replaced
 npm run radar          # radar and planet map: contacts, heading-up scope, wrap-aware geometry
+npm run lock           # target lock, homing missiles, turret traverse/elevation and auto-aim, chase mode
 npm run enemies        # enemy aircraft: red-team colours, patrol vs hunt, gunnery, hit points, kills, determinism
 npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
@@ -186,6 +187,9 @@ stick expo, haptics, and touch controls auto/on/off.
 | O (hold) | drop bombs / fire missiles |
 | I | weapons loadout: fitted (when the craft has weapon parts), unarmed, guns, cannon, guns + bombs, guns + missiles, tank, laser + discs, pulse + missiles, full |
 | Tab | planet map: every vehicle in the world (or click the radar) |
+| ← → ↑ ↓ | turret traverse and elevation (tank, or any craft with a turret part); gamepad: LB + right stick |
+| / | turret back to the nose |
+| Enter | chase the locked vehicle (flight computer *Chase lock*; Enter again, or the stick, ends it) |
 | \\ | radar range: 2 / 5 / 12 km |
 
 > Browsers don't let pages block Ctrl+W, so tapping Ctrl for throttle-down next to W can
@@ -323,6 +327,37 @@ them.
   tells the model (`src/craft/moduleMass.ts`).
 
 A ramjet dart (solid booster to Mach 2, then a ramjet) passes Mach 3.2 in `npm run engines`.
+
+## Target lock, homing missiles and turrets
+
+**Lock** (`src/sim/lock.ts`): while your craft carries weapons, the vehicle nearest your aim
+line — the nose, or the barrel on a turreted craft — within 3 km and 20° is tracked (a thin cyan
+diamond, `TRACK`), and after 1.2 s on the line it is **locked** (a solid diamond, `LOCK`, the
+HUD's LOCK row, a ring on the radar and planet map). Aircraft, hostiles, light cycles and other
+players can all be locked. The lock holds until the vehicle leaves 30° or 3.5 km, or derezzes.
+
+**Homing missiles:** a missile fired while locked steers onto the target's lead point at up to
+45°/s and goes off within 6 m of it (a proximity fuse); if the target leaves its 60° seeker cone
+it flies on straight. Without a lock missiles fly straight, as before. **Hostile aircraft fire
+homing missiles at you too**, turning at 25°/s so a hard break can shake them; while one is
+tracking you the screen flashes `MISSILE`.
+
+**Turrets** (`src/craft/turret.ts`): a craft with a part of kind `turret` (the Program Tank, or
+any design that has one) turns it. The turret, its barrels (parts of kind cannon or barrel) and
+anything whose id starts with `turret.` traverse at 40°/s, all the way round; the barrels and the
+turret's weapons elevate from −8° to +30° at 20°/s. The arrow keys aim it (gamepad: LB and the
+right stick), `/` brings it back to the nose, and the cannon and coaxial gun fire where the barrel
+points. Left alone for a moment with a lock held, the turret lays the gun on the target by
+itself, allowing for the shell's flight time, its drop and the target's motion (`AUTO` on the
+TURRET row). The swing is visual and ballistic: the colliders stay where they are.
+
+**Chase lock** (flight computer, `Enter` or the J panel): the aircraft chases the locked vehicle
+on its own. An aeroplane flies lead pursuit, banking up to 75° and pulling the g that holds its
+height in the bank, faster than the target while far and bleeding off speed on the way in, then
+holds station a couple of hundred metres behind it, never below the terrain and structures
+ahead. A rotorcraft holds 250 m behind and 30 m above it, nose on. It never fires: that stays
+on V and O, with the locked missiles doing the aiming. The chase ends (back to Hold) when the
+target derezzes or stays out of reach for 5 s, or when you move the stick.
 
 ## Weapons and derez
 

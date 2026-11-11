@@ -12,6 +12,8 @@ import type { Simulation } from './Simulation.ts';
 export type ContactKind = 'aircraft' | 'hostile' | 'rider' | 'player';
 
 export interface Contact {
+  /** Matches the vehicle's lock target id (air:…, rider:…, player:…). */
+  id: string;
   kind: ContactKind;
   x: number;
   z: number;
@@ -38,11 +40,11 @@ export function simContacts(sim: Simulation): Contact[] {
   const out: Contact[] = [];
   for (const f of sim.airTraffic.flyers) {
     if (f.derezAt !== null) continue;
-    out.push({ kind: f.hostile ? 'hostile' : 'aircraft', x: f.pos.x, z: f.pos.z, y: f.pos.y, heading: f.heading, color: f.color, name: f.name, attacking: f.hostile && f.combat !== 'patrol' });
+    out.push({ id: `air:${f.id}`, kind: f.hostile ? 'hostile' : 'aircraft', x: f.pos.x, z: f.pos.z, y: f.pos.y, heading: f.heading, color: f.color, name: f.name, attacking: f.hostile && f.combat !== 'patrol' });
   }
   for (const r of sim.traffic.riders) {
     if (r.derezAt !== null) continue;
-    out.push({ kind: 'rider', x: r.x, z: r.z, y: 0, heading: Math.atan2(HX[r.heading], -HZ[r.heading]), color: TRAFFIC.colors[r.team], name: 'Light cycle' });
+    out.push({ id: `rider:${r.id}`, kind: 'rider', x: r.x, z: r.z, y: 0, heading: Math.atan2(HX[r.heading], -HZ[r.heading]), color: TRAFFIC.colors[r.team], name: 'Light cycle' });
   }
   return out;
 }

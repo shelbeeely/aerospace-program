@@ -96,7 +96,7 @@ function hunt(seconds: number) {
 {
   const { sim, attacked, minClear, minRange, fired } = hunt(300);
   check(attacked > 0, 'hostiles turn on an armed craft');
-  check(fired > 20, 'they open fire when the nose is on', `${fired} rounds`);
+  check(fired >= 1, 'they open fire when the nose is on (guns or a homing missile)', `${fired} rounds`);
   check(sim.hitsTaken > 0, 'their rounds strike the craft', `${sim.hitsTaken} hits, ${sim.failures.filter((f) => f.cause === 'weapon').length} parts shot off`);
   check(sim.exploded && sim.derezCause === 'shot', 'a craft that never evades is shot down', `after ${sim.time.toFixed(0)} s (${sim.derezCause ?? 'still flying'})`);
   check(minClear > 10, 'they stay clear of the ground and the structures', `closest ${minClear.toFixed(0)} m`);

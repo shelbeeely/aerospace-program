@@ -13,12 +13,14 @@ import { CITY, COAST, isSea, LAYOUT, PLANET } from './layout.ts';
 import { terrainHeight } from './terrain.ts';
 import { TrailSystem } from './trails.ts';
 import { TrailEmitter } from '../modules/TrailEmitter.ts';
-import { TrafficSystem } from './traffic.ts';
+import { HX, HZ, TrafficSystem, type Rider } from './traffic.ts';
+import { LockSystem, relativePosition, type LockTarget } from './lock.ts';
+import { applyTurret, driveTurret, slewTurret } from '../craft/turret.ts';
 import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
-import { craftBounds, WEAPON_DAMAGE, WeaponSystem, type WeaponHost, type WeaponImpact, type WeaponKind } from './weapons.ts';
+import { craftBounds, WEAPON_DAMAGE, WEAPONS, WeaponSystem, type Mount, type WeaponHost, type WeaponImpact, type WeaponKind } from './weapons.ts';
 import { AiAirTraffic, type AiFlyer, type AirTarget } from './aiTraffic.ts';
 import { WeaponMount } from '../modules/WeaponMount.ts';
 import { BOOM_DAMAGE, BOOM_DEREZ, BOOM_SHATTER, boomBite, boomOverpressure, boomReach, type BoomEvent } from './sonicBoom.ts';
@@ -47,6 +49,12 @@ export function initPhysics(): Promise<void> {
 const RAD = 180 / Math.PI;
 const _tmp = new THREE.Vector3();
 const _tmp2 = new THREE.Vector3();
+const _aim = new THREE.Vector3();
+const _sol = new THREE.Vector3();
+const _solRel = new THREE.Vector3();
+const _solV = new THREE.Vector3();
+const _solAim = new THREE.Vector3();
+const _solQ = new THREE.Quaternion();
 const _wind = new THREE.Vector3();
 
 /** A part that broke off and is now its own rigid body. */
@@ -191,6 +199,27 @@ export class Simulation {
   readonly weapons = new WeaponSystem();
   /** What the hostile aircraft hunt: this craft. */
   private readonly airTarget: AirTarget = { vel: new THREE.Vector3(), alive: true, armed: false };
+  /** Target lock: the vehicle on the aim line (the nose, or the turret's barrel). */
+  readonly lock = new LockSystem();
+  /** Other lock targets the simulation doesn't own (other players, from the network). */
+  extraLockTargets: LockTarget[] = [];
+  /** Turret traverse and elevation inputs this step (-1..1). */
+  readonly turretInput = { yaw: 0, pitch: 0 };
+  private turretManualAt = -Infinity;
+  private turretRecentre = false;
+  private lockTick = 0;
+  private readonly lockHandles = new WeakMap<object, LockTarget>();
+  private liveRiders = new Set<Rider>();
+  /** This craft as a lock target (what the hostiles' missiles home on). */
+  readonly selfTarget: LockTarget = (() => {
+    const self = this;
+    return {
+      id: 'self', kind: 'self', name: 'You', radius: 4,
+      alive: () => !self.exploded,
+      position: (out: THREE.Vector3) => out.copy(self.position),
+      velocity: (out: THREE.Vector3) => out.copy(self.linvel),
+    } satisfies LockTarget;
+  })();
   private dozeAt = -Infinity;
   /** Blocks of structure cleared by bulldozing so far (tests, stats). */
   bulldozed = 0;
@@ -560,6 +589,8 @@ export class Simulation {
     this.derezCause = null;
     this.lastHitAt = -Infinity;
     this.hitsTaken = 0;
+    this.lock.clear();
+    this.turretRecentre = false;
     this.stepImpact = 0;
     this.contactWindow = 0;
     this.failures.length = 0;
@@ -644,6 +675,7 @@ export class Simulation {
     // Hostile aircraft hunt the craft only while it lives and carries weapons.
     this.airTarget.vel.copy(this.linvel);
     this.airTarget.alive = !this.exploded;
+    this.airTarget.lock = this.selfTarget;
     this.airTarget.armed = this.weapons.mounts.length > 0;
     this.airTraffic.step(this.dt, this.time, this.position, this.airTarget);
 
@@ -652,6 +684,9 @@ export class Simulation {
     this.wrapAround();
     this.trails.step(this.time, this.craft, this.rotation, this.position, this.linvel.length(), this.craft.wheels.some((w) => w.grounded));
     if (this.exploded) this.weapons.trigger.primary = this.weapons.trigger.secondary = false;
+    this.stepTurret(this.dt);
+    if (++this.lockTick % 4 === 0) this.stepLock(this.dt * 4);
+    this.weapons.lock = this.lock.target;
     this.weapons.step(this.weaponHost, this.dt, this.time);
     this.airTraffic.stepWeapons(this.dt, this.time);
     this.syncWeaponMounts();
@@ -902,8 +937,138 @@ export class Simulation {
       get linvel() { return self.linvel; },
       get color() { return self.circuitColor(); },
       groundAt: (x: number, z: number) => (isSea(x) ? -COAST.depth : terrainHeight(x, z)),
+      mountPose: (m: Mount, offset: THREE.Vector3, dir: THREE.Vector3) => {
+        const rig = self.craft.turretRig;
+        if (rig && self.onTurret(m)) applyTurret(rig, self.craft.turret, true, offset, dir);
+      },
     };
   })();
+
+  /** Does this mount sit on the turret (its weapons traverse and elevate with it)? */
+  private onTurret(m: Mount): boolean {
+    const rig = this.craft.turretRig;
+    if (!rig) return false;
+    if (m.partId) return rig.riders.has(m.partId);
+    // A loadout's mounts: everything but the missile rails and the bomb bay is on the turret.
+    return m.kind !== 'missile' && m.kind !== 'bomb';
+  }
+
+  /** Every vehicle the lock can pick: AI aircraft, light-cycle riders and other players. */
+  lockTargets(): LockTarget[] {
+    const out: LockTarget[] = [];
+    const air = this.airTraffic;
+    for (const f of air.flyers) {
+      if (f.derezAt !== null) continue;
+      let h = this.lockHandles.get(f);
+      if (!h) {
+        h = {
+          id: `air:${f.id}`, kind: f.hostile ? 'hostile' : 'aircraft', name: f.name, radius: f.radius,
+          alive: () => f.derezAt === null && air.flyers.includes(f),
+          position: (o) => o.copy(f.pos),
+          velocity: (o) => o.copy(f.vel),
+        };
+        this.lockHandles.set(f, h);
+      }
+      out.push(h);
+    }
+    this.liveRiders = new Set(this.traffic.riders);
+    for (const r of this.traffic.riders) {
+      if (r.derezAt !== null) continue;
+      let h = this.lockHandles.get(r);
+      if (!h) {
+        h = {
+          id: `rider:${r.id}`, kind: 'rider', name: 'Light cycle', radius: 1.5,
+          alive: () => r.derezAt === null && this.liveRiders.has(r),
+          position: (o) => o.set(r.x, terrainHeight(r.x, r.z) + 1, r.z),
+          velocity: (o) => o.set(HX[r.heading] * r.speed, 0, HZ[r.heading] * r.speed),
+        };
+        this.lockHandles.set(r, h);
+      }
+      out.push(h);
+    }
+    out.push(...this.extraLockTargets);
+    return out;
+  }
+
+  /** The aim line (unit, world frame): along the turret's barrel on a turreted craft, else the nose. */
+  aimDirection(out = new THREE.Vector3()): THREE.Vector3 {
+    out.set(0, 0, -1);
+    const rig = this.craft.turretRig;
+    if (rig) applyTurret(rig, this.craft.turret, true, _tmp.set(0, 0, 0), out);
+    return out.applyQuaternion(this.rotation).normalize();
+  }
+
+  /** The lock runs while the craft carries weapons. */
+  private stepLock(dt: number): void {
+    if (this.exploded || this.weapons.mounts.length === 0) {
+      this.lock.clear();
+      return;
+    }
+    this.lock.step(dt, this.position, this.aimDirection(_aim), this.lockTargets());
+  }
+
+  /** The turret is laying itself on the lock (no hand on the aim for a moment). */
+  get turretAuto(): boolean {
+    return !!this.craft.turretRig && !!this.lock.target && !this.turretRecentre && this.time - this.turretManualAt >= 1.5;
+  }
+
+  /** Point the turret back along the nose. */
+  recentreTurret(): void {
+    this.turretRecentre = true;
+  }
+
+  /**
+   * The turret: the aim inputs traverse and elevate it; left alone for a moment with a lock
+   * held, it lays the gun on the target itself (lead and shell drop included).
+   */
+  private stepTurret(dt: number): void {
+    const rig = this.craft.turretRig;
+    if (!rig || this.exploded) return;
+    const pose = this.craft.turret;
+    const { yaw, pitch } = this.turretInput;
+    if (Math.abs(yaw) > 0.05 || Math.abs(pitch) > 0.05) {
+      driveTurret(pose, yaw, pitch, dt);
+      this.turretManualAt = this.time;
+      this.turretRecentre = false;
+      return;
+    }
+    if (this.turretRecentre) {
+      slewTurret(pose, 0, 0, dt);
+      if (Math.abs(pose.yaw) < 1e-3 && Math.abs(pose.pitch) < 1e-3) this.turretRecentre = false;
+      return;
+    }
+    const target = this.lock.target;
+    if (!target || this.time - this.turretManualAt < 1.5) return;
+    const sol = this.firingSolution(target);
+    if (sol) slewTurret(pose, sol.yaw, sol.pitch, dt);
+  }
+
+  /** Turret angles that put the turret's main gun on a target (null: no turret gun). */
+  firingSolution(target: LockTarget): { yaw: number; pitch: number } | null {
+    const rig = this.craft.turretRig;
+    const m = this.weapons.mounts.filter((x) => this.onTurret(x)).sort((a, b) => WEAPONS[b.kind].mass - WEAPONS[a.kind].mass)[0];
+    if (!rig || !m) return null;
+    const spec = WEAPONS[m.kind];
+    const origin = _sol.copy(rig.trunnion).applyQuaternion(this.rotation).add(this.position);
+    const rel = relativePosition(origin, target, _solRel);
+    target.velocity(_solV).sub(this.linvel);
+    const speed = spec.beam ? 1e6 : Math.max(50, spec.speed);
+    const g = TUNING.gravity * spec.gravity;
+    let tof = rel.length() / speed;
+    const aim = _solAim;
+    for (let k = 0; k < 3; k++) {
+      aim.copy(rel).addScaledVector(_solV, tof);
+      aim.y += 0.5 * g * tof * tof;
+      tof = aim.length() / speed;
+    }
+    aim.applyQuaternion(_solQ.copy(this.rotation).invert());
+    return { yaw: Math.atan2(aim.x, -aim.z), pitch: Math.atan2(aim.y, Math.hypot(aim.x, aim.z)) };
+  }
+
+  /** Hostile missiles in flight homing on this craft. */
+  incomingMissiles(): number {
+    return this.airTraffic.incoming(this.selfTarget);
+  }
 
   /** Fitted weapons: mirror each mount's rounds and last shot onto its module (the craft view shows them). */
   private syncWeaponMounts(): void {

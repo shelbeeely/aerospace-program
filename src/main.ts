@@ -46,9 +46,10 @@ import { WeaponsView } from './render/WeaponsView.ts';
 import { CraterView } from './render/CraterView.ts';
 import { BoomView } from './render/BoomView.ts';
 import { AiTrafficView } from './render/AiTrafficView.ts';
-import { HostileMarkers, type HostileMark } from './hud/HostileMarkers.ts';
+import { HostileMarkers, LockMarker, type HostileMark } from './hud/HostileMarkers.ts';
+import type { LockTarget } from './sim/lock.ts';
 import { RadarMap } from './hud/RadarMap.ts';
-import { simContacts, type Contact } from './sim/contacts.ts';
+import { simContacts, wrapDelta, type Contact } from './sim/contacts.ts';
 import { terrainHeight } from './sim/terrain.ts';
 import { craftBounds } from './sim/weapons.ts';
 import { LOADOUT_ORDER, LOADOUTS, WEAPONS, type Loadout, type WeaponKind } from './sim/weapons.ts';
@@ -269,7 +270,8 @@ async function start() {
     engage: (opts) => {
       const kind = autopilotKind();
       if (!kind) return;
-      autopilot.engage(telemetry, kind, autopilotPerf(), opts);
+      autopilot.engage(telemetry, kind, autopilotPerf(), opts.mode === 'chase' ? { ...opts, target: sim.lock.target } : opts);
+      if (autopilot.state.notice) toast(autopilot.state.notice);
     },
     disengage: () => autopilot.disengage(),
   });
@@ -394,6 +396,9 @@ async function start() {
   const hostileLabel = document.getElementById('w-hostile-count-v');
   const hostileMarkers = new HostileMarkers(document.getElementById('hostile-marks'));
   const radarMap = new RadarMap();
+  const lockMarker = new LockMarker(document.getElementById('hostile-marks'));
+  const _lockPos = new THREE.Vector3();
+  const playerTargets = new Map<string, LockTarget>();
   const _nose = new THREE.Vector3();
   const updateAirPool = () => {
     const own = aiMine?.checked !== false && !net.connected ? library.list().map((e) => e.craft) : [];
@@ -975,6 +980,19 @@ async function start() {
       }
       else if (a === 'map') radarMap.toggleMap();
       else if (a === 'radarRange') toast(`Radar ${radarMap.cycleRange() / 1000} km`);
+      else if (a === 'recentre') {
+        if (sim.craft.turretRig) { sim.recentreTurret(); toast('Turret: back to the nose'); }
+      } else if (a === 'chase') {
+        const kind = autopilotKind();
+        if (autopilot.state.engaged && autopilot.state.mode === 'chase') {
+          autopilot.disengage();
+          toast('Chase off');
+        } else if (kind !== 'airplane' && kind !== 'rotorcraft') toast('Chase: aircraft only');
+        else {
+          autopilot.engage(telemetry, kind, autopilotPerf(), { mode: 'chase', target: sim.lock.target });
+          toast(autopilot.state.mode === 'chase' ? `Chasing ${sim.lock.target?.name} — the stick takes over` : autopilot.state.notice);
+        }
+      }
       else if (a === 'loadout') {
         const l = sim.weapons.cycle();
         toast(l === 'none' ? 'Weapons: unarmed' : `Weapons: ${LOADOUTS[l].label} · V fires guns/cannon, O bombs/missiles`);
@@ -1013,6 +1031,28 @@ async function start() {
     const trig = player.firing();
     sim.weapons.trigger.primary = trig.primary;
     sim.weapons.trigger.secondary = trig.secondary;
+    const aim = player.aim();
+    sim.turretInput.yaw = aim.yaw;
+    sim.turretInput.pitch = aim.pitch;
+    // Other players can be locked too (missiles home on them; the radar rings them).
+    sim.extraLockTargets = [];
+    for (const p of net.players.values()) {
+      let h = playerTargets.get(p.id);
+      if (!h) {
+        const id = p.id;
+        h = {
+          id: `player:${id}`, kind: 'player', name: p.name, radius: 4,
+          alive: () => !!net.players.get(id)?.pose.visible,
+          position: (o) => o.copy(net.players.get(id)?.pose.position ?? o),
+          velocity: (o) => {
+            const q = net.players.get(id);
+            return q ? o.set(0, 0, -q.pose.speed).applyQuaternion(q.pose.rotation) : o.set(0, 0, 0);
+          },
+        };
+        playerTargets.set(p.id, h);
+      }
+      if (p.pose.visible) sim.extraLockTargets.push(h);
+    }
     accumulator += dt;
     stepsThisFrame = 0;
     let stepMs = 0;
@@ -1090,10 +1130,28 @@ async function start() {
       for (const p of net.players.values()) {
         if (!p.pose.visible) continue;
         _nose.set(0, 0, -1).applyQuaternion(p.pose.rotation);
-        contacts.push({ kind: 'player', x: p.pose.position.x, z: p.pose.position.z, y: p.pose.position.y, heading: Math.atan2(_nose.x, -_nose.z), color: p.color, name: p.name });
+        contacts.push({ id: `player:${p.id}`, kind: 'player', x: p.pose.position.x, z: p.pose.position.z, y: p.pose.position.y, heading: Math.atan2(_nose.x, -_nose.z), color: p.color, name: p.name });
       }
       _nose.set(0, 0, -1).applyQuaternion(sim.rotation);
-      radarMap.update(now / 1000, { x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites() });
+      radarMap.update(now / 1000, { x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites(), lockedId: sim.lock.target?.id ?? null });
+      // The lock: the marker in the view and the LOCK row; the turret row; incoming missiles.
+      const tracked = sim.lock.tracked;
+      if (tracked) {
+        tracked.position(_lockPos);
+        const range = Math.hypot(wrapDelta(sim.position.x, _lockPos.x), _lockPos.y - sim.position.y, wrapDelta(sim.position.z, _lockPos.z));
+        _lockPos.set(sim.position.x + wrapDelta(sim.position.x, _lockPos.x), _lockPos.y, sim.position.z + wrapDelta(sim.position.z, _lockPos.z));
+        lockMarker.update(camera, { pos: _lockPos, range, name: tracked.name, locked: sim.lock.locked }, window.innerWidth, window.innerHeight);
+        hud.setLock({ name: tracked.name, range, locked: sim.lock.locked });
+      } else {
+        lockMarker.update(camera, null, window.innerWidth, window.innerHeight);
+        hud.setLock(null);
+      }
+      const t = sim.craft.turret;
+      hud.setTurret(sim.craft.turretRig ? { yaw: t.yaw * 180 / Math.PI, pitch: t.pitch * 180 / Math.PI, auto: sim.turretAuto } : null);
+      hud.setMissileWarning(sim.incomingMissiles());
+    } else {
+      lockMarker.update(camera, null, window.innerWidth, window.innerHeight);
+      hud.setMissileWarning(0);
     }
     if (!sim.explosions.length) explosionHeardAt = -Infinity;
     for (const e of sim.explosions) {

@@ -33,6 +33,7 @@ const FIELDS: Record<AutopilotMode, Field[]> = {
   orbit: ['destination', 'orbit', 'altitude', 'speed'],
   level: [],
   ascent: ['altitude'],
+  chase: [],
 };
 const HINTS: Record<AutopilotMode, string> = {
   ascent: 'Flies to a circular orbit at the selected altitude: take-off, gravity turn at full thrust, coast to the apoapsis, circularise. Needs a rocket (or enough of anything) to get there.',
@@ -42,6 +43,7 @@ const HINTS: Record<AutopilotMode, string> = {
   goto: 'Direct to a destination, climbing over buildings and terrain; airplanes then orbit it.',
   orbit: 'Right-hand circle around the destination (or starting from here).',
   level: 'Wings level, vertical speed 0. You keep the throttle.',
+  chase: 'Chases the locked vehicle (fly the nose onto it until LOCK shows; Enter engages it from anywhere): pursuit over the terrain and buildings, then holds station behind it. You do the shooting; the stick takes over.',
 };
 
 const fmtTime = (s: number) => (Number.isFinite(s) && s < 36000 ? `${Math.floor(s / 60)}:${Math.round(s % 60).toString().padStart(2, '0')}` : '--');

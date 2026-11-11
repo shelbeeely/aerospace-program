@@ -1,5 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
+import { relativePosition, type LockTarget } from './lock.ts';
 import type { CraftDef, PartDef, WeaponModuleDef } from '../craft/types.ts';
 import { TUNING } from '../tuning.ts';
 
@@ -36,6 +37,14 @@ export interface WeaponSpec {
   maxSpeed?: number;
   /** Fraction of gravity felt (missiles fly almost straight while burning). */
   gravity: number;
+  /**
+   * Homing (missiles fired with a lock): the most it turns (rad/s), the seeker's half-angle
+   * (rad: a target outside it is lost and the missile flies on straight), and the proximity
+   * fuse (m beyond the target's radius).
+   */
+  turn?: number;
+  seeker?: number;
+  fuse?: number;
   /** Trigger group: primary (guns, cannon) or secondary (bombs, missiles). */
   group: 'primary' | 'secondary';
   /** Bounces off structures before it detonates (identity discs, pulse bolts). */
@@ -48,7 +57,7 @@ export const WEAPONS: Record<WeaponKind, WeaponSpec> = {
   gun: { label: 'Gun', speed: 620, rate: 12, ammo: 600, mass: 0.05, blast: 1.6, life: 3, gravity: 1, group: 'primary' },
   cannon: { label: 'Cannon', speed: 330, rate: 0.6, ammo: 40, mass: 12, blast: 7, life: 10, gravity: 1, group: 'primary' },
   bomb: { label: 'Bombs', speed: 0, rate: 1.5, ammo: 8, mass: 250, blast: 18, life: 90, gravity: 1, group: 'secondary' },
-  missile: { label: 'Missiles', speed: 30, rate: 1.2, ammo: 6, mass: 60, blast: 10, life: 14, thrust: 120, maxSpeed: 280, gravity: 0.15, group: 'secondary' },
+  missile: { label: 'Missiles', speed: 30, rate: 1.2, ammo: 6, mass: 60, blast: 10, life: 14, thrust: 120, maxSpeed: 280, gravity: 0.15, group: 'secondary', turn: 45 * Math.PI / 180, seeker: 60 * Math.PI / 180, fuse: 6 },
   // TRON: a beam of light (instant, out to 1.5 km), the identity disc (ricochets off structures
   // up to three times, cutting through what it strikes), and the tank's pulse bolt (bounces once).
   laser: { label: 'Laser', speed: 0, rate: 5, ammo: 240, mass: 0.02, blast: 1.2, life: 0, gravity: 0, group: 'primary', beam: 1500 },
@@ -99,6 +108,8 @@ export interface Projectile {
   heading: THREE.Vector3;
   age: number;
   color: string;
+  /** A missile fired with a lock: what it homes on (null: unguided, or the seeker lost it). */
+  target: LockTarget | null;
 }
 
 export interface WeaponImpact {
@@ -125,6 +136,11 @@ export interface WeaponHost {
   color: string;
   /** Ground height under a point (m): the floor for rounds that miss every collider. */
   groundAt(x: number, z: number): number;
+  /**
+   * Where a mount points now, if it moves (a turret's weapons traverse and elevate): moves its
+   * craft-frame muzzle offset and direction in place.
+   */
+  mountPose?(mount: Mount, offset: THREE.Vector3, dir: THREE.Vector3): void;
 }
 
 type Extent = { min: THREE.Vector3; max: THREE.Vector3 };
@@ -240,6 +256,10 @@ const _a = new THREE.Vector3();
 const _b = new THREE.Vector3();
 const _g = new THREE.Vector3();
 const _c = new THREE.Vector3();
+const _h = new THREE.Vector3();
+const _tv = new THREE.Vector3();
+const _hq = new THREE.Quaternion();
+const _hi = new THREE.Quaternion();
 /** Projectile ids are unique across every weapon system (the renderer keys trails by them). */
 let nextProjectileId = 1;
 
@@ -256,6 +276,10 @@ export class WeaponSystem {
   hits = 0;
   /** Called for every hit, after the projectile is gone. */
   onImpact: ((hit: WeaponImpact) => void) | null = null;
+  /** The locked target: a missile fired now homes on it (null: missiles fly straight). */
+  lock: LockTarget | null = null;
+  /** Scales the missiles' turn rate (hostiles' missiles turn slower, so a hard turn can shake them). */
+  turnScale = 1;
   private readonly cooldown = new Map<Mount, number>();
   /** Alternates between paired mounts (left/right guns and missiles). */
   private flip = new Map<WeaponKind, number>();
@@ -337,8 +361,11 @@ export class WeaponSystem {
     m.ammo--;
     m.lastFired = time;
     for (const mm of this.mounts) if (mm.kind === kind) this.cooldown.set(mm, time);
-    const dir = _a.copy(m.dir).applyQuaternion(host.rotation).normalize();
-    const pos = m.offset.clone().applyQuaternion(host.rotation).add(host.position);
+    const local = m.offset.clone();
+    const dir = _a.copy(m.dir);
+    host.mountPose?.(m, local, dir);
+    dir.applyQuaternion(host.rotation).normalize();
+    const pos = local.applyQuaternion(host.rotation).add(host.position);
     this.fired++;
     if (spec.beam) {
       // A beam of light: instant, straight, out to its range.
@@ -361,7 +388,8 @@ export class WeaponSystem {
     if (kind !== 'bomb') vel.addScaledVector(dir, spec.speed);
     // Bombs leave the bay level with the craft and pitch nose-down as they fall (front-heavy).
     const heading = kind === 'bomb' ? new THREE.Vector3(0, 0, -1).applyQuaternion(host.rotation) : dir.clone();
-    this.projectiles.push({ id: nextProjectileId++, kind, pos, vel, heading, age: 0, color: host.color, bounces: spec.ricochet ?? 0 });
+    const target = kind === 'missile' && this.lock?.alive() ? this.lock : null;
+    this.projectiles.push({ id: nextProjectileId++, kind, pos, vel, heading, age: 0, color: host.color, bounces: spec.ricochet ?? 0, target });
     // Recoil (bombs just drop).
     if (kind !== 'bomb') {
       const j = spec.mass * spec.speed;
@@ -376,6 +404,16 @@ export class WeaponSystem {
       const p = list[i];
       const spec = WEAPONS[p.kind];
       p.age += dt;
+      if (p.target && this.home(p, spec, dt)) {
+        // Proximity fuse: it goes off beside its target.
+        const hit = this.impact(p, p.pos.clone(), new THREE.Vector3(0, 1, 0), null, time);
+        list.splice(i, 1);
+        this.hits++;
+        this.impacts.push(hit);
+        if (this.impacts.length > 64) this.impacts.splice(0, this.impacts.length - 64);
+        this.onImpact?.(hit);
+        continue;
+      }
       // Ballistics: gravity (missiles barely feel it while burning), thrust, light drag on bombs.
       _g.set(0, -TUNING.gravity * spec.gravity, 0);
       if (p.kind === 'missile' && spec.thrust && spec.maxSpeed) {
@@ -435,6 +473,37 @@ export class WeaponSystem {
         this.onImpact?.(hit);
       } else p.pos.copy(_b);
     }
+  }
+
+  /**
+   * Steer a homing missile onto its target's lead point (where it will be when the missile gets
+   * there), at most `turn` rad/s; its velocity turns with it. A target outside the seeker cone,
+   * or gone, is lost: the missile flies on straight. True when it is within fuse range.
+   */
+  private home(p: Projectile, spec: WeaponSpec, dt: number): boolean {
+    const t = p.target!;
+    if (!t.alive()) {
+      p.target = null;
+      return false;
+    }
+    const rel = relativePosition(p.pos, t, _h);
+    const range = rel.length();
+    if (range < (spec.fuse ?? 6) + t.radius) return true;
+    t.velocity(_tv);
+    const closing = -_c.copy(_tv).sub(p.vel).dot(rel) / Math.max(1, range);
+    const tgo = Math.min(6, range / Math.max(60, closing));
+    const aim = _c.copy(rel).addScaledVector(_tv, tgo).normalize();
+    const angle = Math.acos(Math.max(-1, Math.min(1, aim.dot(p.heading))));
+    if (angle > (spec.seeker ?? Math.PI)) {
+      p.target = null;
+      return false;
+    }
+    const step = Math.min(1, ((spec.turn ?? 0) * this.turnScale * dt) / Math.max(1e-6, angle));
+    _hq.setFromUnitVectors(p.heading, aim);
+    _hq.slerp(_hi, 1 - step);
+    p.heading.applyQuaternion(_hq).normalize();
+    p.vel.applyQuaternion(_hq);
+    return false;
   }
 
   private impact(p: Projectile, point: THREE.Vector3, normal: THREE.Vector3, collider: RAPIER.Collider | null, time: number): WeaponImpact {

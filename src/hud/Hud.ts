@@ -29,6 +29,13 @@ export class Hud {
     armRow: $('h-arm-row'),
     arm: $('h-arm'),
     hostileRow: $('h-hostile-row'),
+    lockRow: $('h-lock-row'),
+    lock: $('h-lock'),
+    lockRange: $('h-lock-r'),
+    turretRow: $('h-turret-row'),
+    turret: $('h-turret'),
+    turretMode: $('h-turret-m'),
+    missile: $('missile-warn'),
     hostile: $('h-hostile'),
     hostileKills: $('h-hostile-k'),
     batt: $('h-batt'),
@@ -146,6 +153,34 @@ export class Hud {
     const range = s.range >= 1000 ? `${(s.range / 1000).toFixed(1)}km` : `${Math.round(s.range / 10) * 10}m`;
     this.set(hostile, `${s.count} · ${range} ${String(Math.round(s.bearing) % 360).padStart(3, '0')}°`);
     this.set(hostileKills, s.underFire ? 'UNDER FIRE' : s.kills ? `${s.kills} down` : '');
+  }
+
+  /** LOCK row: the vehicle tracked or locked, and its range (hidden with none). */
+  setLock(s: { name: string; range: number; locked: boolean } | null): void {
+    const { lockRow: row, lock, lockRange } = this.el;
+    if (!row || !lock || !lockRange) return;
+    row.style.display = s ? '' : 'none';
+    if (!s) return;
+    row.classList.toggle('locked', s.locked);
+    this.set(lock, `${s.locked ? '◆' : '◇'} ${s.name}`);
+    this.set(lockRange, s.range >= 1000 ? `${(s.range / 1000).toFixed(1)} km` : `${Math.round(s.range / 10) * 10} m`);
+  }
+
+  /** TURRET row: traverse (° right of the nose) and elevation, and whether it is laying itself on the lock. */
+  setTurret(s: { yaw: number; pitch: number; auto: boolean } | null): void {
+    const { turretRow: row, turret, turretMode } = this.el;
+    if (!row || !turret || !turretMode) return;
+    row.style.display = s ? '' : 'none';
+    if (!s) return;
+    const yaw = Math.round(s.yaw);
+    this.set(turret, `${yaw === 0 ? '0' : yaw > 0 ? `R${yaw}` : `L${-yaw}`}° ${s.pitch >= 0 ? '+' : ''}${Math.round(s.pitch)}°`);
+    this.set(turretMode, s.auto ? 'AUTO' : '');
+  }
+
+  /** The MISSILE warning: hostile missiles homing on the craft. */
+  setMissileWarning(n: number): void {
+    this.el.missile?.classList.toggle('hidden', n === 0);
+    if (n && this.el.missile) this.set(this.el.missile, n > 1 ? `MISSILE ×${n}` : 'MISSILE');
   }
 
   /** ORB row: apoapsis / periapsis (km) and period, once high or fast enough to care. */

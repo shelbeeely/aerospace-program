@@ -6,6 +6,7 @@ import { obstacleTop } from '../world/structures.ts';
 import { terrainHeight } from './terrain.ts';
 import { craftBounds, WeaponSystem, type WeaponHost, type WeaponImpact } from './weapons.ts';
 import { PLANET } from './layout.ts';
+import type { LockTarget } from './lock.ts';
 
 /**
  * AI air traffic: other programs flying around the player, so the world feels inhabited. Each
@@ -30,6 +31,8 @@ export interface AirTarget {
   alive: boolean;
   /** Carries weapons (hostiles ignore an unarmed craft). */
   armed: boolean;
+  /** The craft as a lock target: hostiles' missiles home on it. */
+  lock?: LockTarget;
 }
 
 export type CombatState = 'patrol' | 'attack' | 'extend' | 'evade';
@@ -169,7 +172,7 @@ export class AiAirTraffic {
 
   /** Destroy a flyer (a weapon hit, a collision): it stops flying and its body goes. */
   derez(f: AiFlyer, time: number): void {
-    if (f.derezAt !== null) return;
+    if (f.derezAt !== null || !this.flyers.includes(f)) return;
     f.derezAt = time;
     this.derezzed++;
     // Its rounds in flight go with it, as a derezzed vehicle's trails do.
@@ -206,14 +209,23 @@ export class AiAirTraffic {
     return out;
   }
 
+  /** Hostile missiles in flight still homing on `target` (the MISSILE warning). */
+  incoming(target: LockTarget): number {
+    let n = 0;
+    for (const f of this.flyers) if (f.weapons) for (const p of f.weapons.projectiles) if (p.target === target) n++;
+    return n;
+  }
+
   /** Fly the hostiles' rounds and fire what their triggers hold (after the physics step). */
   stepWeapons(dt: number, time: number): void {
     for (const f of this.flyers) if (f.weapons && f.host && f.derezAt === null) f.weapons.step(f.host, dt, time);
   }
 
   private drop(f: AiFlyer): void {
+    // Already gone (dropped far away, then hit by something that still held it): nothing to do.
+    if (this.world.getRigidBody(f.body.handle) !== f.body) return;
     for (let i = 0; i < f.body.numColliders(); i++) this.body.delete(f.body.collider(i).handle);
-    if (this.world.getRigidBody(f.body.handle)) this.world.removeRigidBody(f.body);
+    this.world.removeRigidBody(f.body);
   }
 
   /** A destination 1.5-6 km from the player, in a random direction. */
@@ -266,6 +278,7 @@ export class AiAirTraffic {
       // Guns either side of the nose and missiles under the wings, where its geometry puts them.
       const w = new WeaponSystem();
       w.arm(def, kind === 'airplane' ? 'missiles' : 'guns');
+      w.turnScale = 25 / 45; // their missiles turn slower than the player's: a hard turn can shake one
       w.onImpact = (h) => this.onHostileImpact?.(h, f);
       f.weapons = w;
       const self = this;
@@ -333,6 +346,7 @@ export class AiAirTraffic {
     const dx = wrap(player.x - f.pos.x), dz = wrap(player.z - f.pos.z), dy = player.y - f.pos.y;
     const range = Math.hypot(dx, dy, dz);
     const hunting = !!target && target.alive && target.armed && range < (f.combat === 'patrol' ? DETECT : LOSE);
+    w.lock = null;
     if (!hunting || !target) {
       if (f.combat !== 'patrol') {
         // Nothing to fight: back to the patrol.
@@ -377,6 +391,7 @@ export class AiAirTraffic {
     if (on && range < GUN_RANGE) w.trigger.primary = true;
     if (Math.abs(dh) < 0.02 && Math.abs(pitchWant - f.pitch) < 0.02 && range > 400 && range < 1500 && time - f.missileAt > 6) {
       w.trigger.secondary = true;
+      w.lock = target.lock ?? null;
       f.missileAt = time;
     }
     return { want, vs: f.speed * Math.tan(Math.max(-0.4, Math.min(0.4, pitchWant))), speed: fast };

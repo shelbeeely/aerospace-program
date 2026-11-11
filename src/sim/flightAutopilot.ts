@@ -1,6 +1,8 @@
 import { obstacleTop } from '../world/structures.ts';
 import { Autopilot, HoverPilot, type PlaneCommand } from './autopilot.ts';
 import type { ControlInputs, ControlSource } from './controls.ts';
+import { relativePosition, type LockTarget } from './lock.ts';
+import * as THREE from 'three';
 import { wrapCoord, type LandingSite } from './layout.ts';
 import {
   approachFrame,
@@ -36,21 +38,22 @@ import { terrainHeight } from './terrain.ts';
 import { GroundDriver } from './groundPilot.ts';
 
 export type AutopilotKind = 'airplane' | 'rotorcraft' | 'ground';
-export type AutopilotMode = 'hold' | 'takeoff' | 'land' | 'goto' | 'orbit' | 'level' | 'ascent';
+export type AutopilotMode = 'hold' | 'takeoff' | 'land' | 'goto' | 'orbit' | 'level' | 'ascent' | 'chase';
 export type AutopilotPhase =
   | 'hold' | 'takeoff' | 'climb' | 'cruise' | 'orbit' | 'level'
   | 'join' | 'final' | 'flare' | 'rollout'
   | 'transit' | 'approach' | 'descend'
   | 'landed'
   | 'drive' | 'arrived' | 'parked'
-  | 'boost' | 'coast' | 'circularize' | 'orbiting';
+  | 'boost' | 'coast' | 'circularize' | 'orbiting'
+  | 'pursuit' | 'station';
 
 /** Airplane modes in panel order, and the rotorcraft subset. */
-export const AIRPLANE_MODES: readonly AutopilotMode[] = ['hold', 'takeoff', 'land', 'goto', 'orbit', 'level', 'ascent'];
-export const ROTORCRAFT_MODES: readonly AutopilotMode[] = ['hold', 'takeoff', 'goto', 'land'];
+export const AIRPLANE_MODES: readonly AutopilotMode[] = ['hold', 'takeoff', 'land', 'goto', 'orbit', 'chase', 'level', 'ascent'];
+export const ROTORCRAFT_MODES: readonly AutopilotMode[] = ['hold', 'takeoff', 'goto', 'chase', 'land'];
 /** Ground vehicles: stop and hold, or drive to a destination on the road network. */
 export const GROUND_MODES: readonly AutopilotMode[] = ['hold', 'goto'];
-export const MODE_LABELS: Record<AutopilotMode, string> = { hold: 'Hold', takeoff: 'Takeoff', land: 'Land', goto: 'Go to', orbit: 'Orbit', level: 'Level', ascent: 'To orbit' };
+export const MODE_LABELS: Record<AutopilotMode, string> = { hold: 'Hold', takeoff: 'Takeoff', land: 'Land', goto: 'Go to', orbit: 'Orbit', level: 'Level', ascent: 'To orbit', chase: 'Chase lock' };
 
 /** Approach guidance while landing (and distance/ETA while going somewhere). */
 export interface AutopilotGuidance {
@@ -100,6 +103,8 @@ export interface AutopilotOptions {
   vs?: number | null;
   destination?: string | null;
   orbitRadius?: number;
+  /** Chase: the vehicle to chase (the current lock). */
+  target?: LockTarget | null;
 }
 
 /** Performance numbers the computer needs (from analyzeDesign). */
@@ -163,6 +168,14 @@ export class FlightAutopilot implements ControlSource {
   fractured: { has(group: number): boolean } | null = null;
   /** Ground vehicles: the road driver (route, lane following, speed). */
   readonly driver = new GroundDriver();
+  /** Chase: the vehicle being chased, and how long it has been out of reach (s). */
+  chaseTarget: LockTarget | null = null;
+  private chaseLost = 0;
+  private chaseElevator = 0;
+  private chaseTrim = 1;
+  private readonly _rel = new THREE.Vector3();
+  private readonly _tv = new THREE.Vector3();
+  private readonly _own = new THREE.Vector3();
   /** Called when the autopilot disengages itself (to sync the human throttle lever). */
   onDisengage: ((throttle: number) => void) | null = null;
 
@@ -193,6 +206,19 @@ export class FlightAutopilot implements ControlSource {
     } else if (!wasEngaged && !this.perfKnown && kind === 'airplane' && !t.onGround) this.stallSpeed = clamp(t.airspeed / 1.7, 15, 80);
     s.mode = opts.mode ?? 'hold';
     if (kind === 'rotorcraft' && (s.mode === 'orbit' || s.mode === 'level')) s.mode = 'hold';
+    let chaseNotice = '';
+    if (s.mode === 'chase') {
+      if (kind === 'ground' || !opts.target || !opts.target.alive()) {
+        s.mode = 'hold';
+        chaseNotice = 'Chase: nothing locked (fly the nose onto a vehicle until it locks)';
+      } else {
+        this.chaseTarget = opts.target;
+        this.chaseLost = 0;
+        this.chaseElevator = clamp(t.controls.pitch, -0.3, 0.3);
+        this.chaseTrim = clamp(t.gForce * Math.cos(t.roll * (Math.PI / 180)), 0.5, 1.2);
+      }
+    }
+    if (s.mode !== 'chase') this.chaseTarget = null;
     s.heading = wrap360(opts.heading ?? t.heading);
     const grounded = t.onGround || t.altitude < 5;
     if (kind === 'ground') {
@@ -239,7 +265,7 @@ export class FlightAutopilot implements ControlSource {
     if (opts.orbitRadius !== undefined) s.orbitRadius = clamp(opts.orbitRadius, 150, 5000);
     s.commanded = s.altitude;
     s.guidance = null;
-    s.notice = '';
+    s.notice = chaseNotice;
     this.dest = null;
     this.approach = null;
     this.touchdownAt = -1;
@@ -272,6 +298,9 @@ export class FlightAutopilot implements ControlSource {
         break;
       case 'ascent':
         s.phase = grounded ? 'takeoff' : 'boost';
+        break;
+      case 'chase':
+        s.phase = grounded && air ? 'takeoff' : 'pursuit';
         break;
       case 'orbit': {
         // Around the destination if one is set, else a circle starting where we are.
@@ -447,6 +476,10 @@ export class FlightAutopilot implements ControlSource {
         return this.flyOrbit(dt, t, human);
       case 'ascent':
         return this.flyAscent(dt, t);
+      case 'chase':
+        if (s.phase !== 'takeoff') return this.flyChase(dt, t, human);
+        if (t.altitude > 60) s.phase = 'pursuit';
+        return this.flyHold(dt, t, human);
       case 'goto':
         if (s.phase !== 'takeoff') return this.flyGoto(dt, t, human);
       // fallthrough: take off first
@@ -566,6 +599,103 @@ export class FlightAutopilot implements ControlSource {
     s.guidance = { distance: dist, glideslopeDev: null, localizerDev: null, targetSpeed: s.speed, eta: dist / Math.max(1, t.groundSpeed), siteName: d.name };
     s.status = `Go to · ${d.name} · ${km(dist)} · ${r0(s.commanded)} m`;
     return this.plane.fly(dt, t, { vs, track: brg, speed: s.speed, pitchMin: -12, pitchMax: 18, flaps: 0 });
+  }
+
+  /** Where the chased vehicle is from the craft (into _rel) and how fast it goes (into _tv); null once it is gone or lost. */
+  private chaseFix(dt: number, t: Telemetry): number | null {
+    const tg = this.chaseTarget;
+    if (!tg || !tg.alive()) return this.endChase(t, 'target gone');
+    this._own.set(t.position[0], t.position[1], t.position[2]);
+    relativePosition(this._own, tg, this._rel);
+    tg.velocity(this._tv);
+    const range = this._rel.length();
+    this.chaseLost = range > 6000 ? this.chaseLost + dt : 0;
+    if (this.chaseLost > 5) return this.endChase(t, 'target out of reach');
+    return range;
+  }
+
+  /** The chase is over: back to Hold where the craft is, with a word why. */
+  private endChase(t: Telemetry, why: string): null {
+    const kind = this.state.kind;
+    const name = this.chaseTarget?.name ?? 'target';
+    this.engage(t, kind, undefined, { mode: 'hold', heading: t.heading });
+    this.state.notice = `Chase ended: ${name} ${why}`;
+    return null;
+  }
+
+  /**
+   * Chase the locked vehicle. An aeroplane flies lead pursuit (toward where the target will be
+   * when it gets there), banking up to 60°, climbing or diving to its height but never below the
+   * terrain and structures ahead, faster than the target while it is far and matching its speed
+   * close in, holding station a couple of hundred metres behind instead of overshooting. A
+   * rotorcraft holds 250 m behind and 30 m above it, nose on. It never fires.
+   */
+  private flyChase(dt: number, t: Telemetry, human: ControlInputs | null): ControlInputs {
+    const s = this.state;
+    const range = this.chaseFix(dt, t);
+    if (range === null) return s.kind === 'airplane' ? this.flyHold(dt, t, human ?? t.controls) : this.flyRotorcraft(dt, t);
+    const rel = this._rel, tv = this._tv;
+    const tg = this.chaseTarget!;
+    const tSpeed = Math.hypot(tv.x, tv.z);
+    const terrain = terrainHeight(t.position[0], t.position[2]);
+    const targetY = t.position[1] + rel.y;
+    if (s.kind !== 'airplane') {
+      // Rotorcraft: 250 m behind it (along its track), 30 m above, nose on it.
+      const back = tSpeed > 2 ? 250 / tSpeed : 0;
+      const x = t.position[0] + rel.x - tv.x * back, z = t.position[2] + rel.z - tv.z * back;
+      const brg = wrap360(Math.atan2(rel.x, -rel.z) / (Math.PI / 180));
+      s.phase = range < 400 ? 'station' : 'pursuit';
+      s.guidance = { distance: range, glideslopeDev: null, localizerDev: null, targetSpeed: s.speed, eta: range / Math.max(1, t.groundSpeed), siteName: tg.name };
+      s.status = `Chase · ${tg.name} · ${km(range)}`;
+      return this.hoverTo(dt, t, x, z, targetY + 30, 45, 25, brg);
+    }
+    // How fast the two are closing, and the lead point.
+    const ownV = this._own.set(t.velocity[0], t.velocity[1], t.velocity[2]);
+    const closure = -((tv.x - ownV.x) * rel.x + (tv.y - ownV.y) * rel.y + (tv.z - ownV.z) * rel.z) / Math.max(1, range);
+    const close = range < 350;
+    // Lead: where the target will be by the time the craft gets there (no more than 10 s on).
+    const tgo = close ? 0 : Math.min(10, range / Math.max(80, closure, t.groundSpeed));
+    let ax = rel.x + tv.x * tgo, az = rel.z + tv.z * tgo;
+    if (close && tSpeed > 5) {
+      // Station: fly at a point 200 m behind it on its track (it stays ahead).
+      ax = rel.x + (tv.x / tSpeed) * 50;
+      az = rel.z + (tv.z / tSpeed) * 50;
+    }
+    const track = wrap360(Math.atan2(ax, -az) / (Math.PI / 180));
+    const vmin = 1.3 * this.stallSpeed;
+    // Faster than the target while far, bleeding off on the way in so it arrives at its speed
+    // a couple of hundred metres behind: the speed it can still lose over the distance left.
+    const spare = Math.sqrt(Math.max(0, range - 220) * 2 * 3);
+    const want = tSpeed + clamp(Math.min(spare, 15 + range * 0.03), -40, 70) - (range < 220 ? (220 - range) * 0.2 : 0);
+    const speed = clamp(want, vmin, 280);
+    // Height: the target's, but clear of everything ahead (and of the ground by 60 m).
+    const top = this.clearance(t, track, Math.max(800, t.groundSpeed * 20), 60);
+    s.commanded = Math.max(targetY, terrain + 60, top + 60);
+    const vs = this.vsToward(t, s.commanded, this.climbLimit(t, s.commanded > t.altitude + terrain + 1) * 1.5, 25);
+    s.heading = track;
+    s.speed = speed;
+    s.phase = close ? 'station' : 'pursuit';
+    s.guidance = { distance: range, glideslopeDev: null, localizerDev: null, targetSpeed: speed, eta: closure > 1 ? range / closure : 0, siteName: tg.name };
+    s.status = `Chase · ${tg.name} · ${km(range)} · ${closure >= 0 ? '+' : ''}${r0(closure)} m/s`;
+    // Bank straight into the turn (a track hold banks too gently for a dogfight): up to 60°,
+    // proportional to how far the track is off.
+    const gs = Math.max(10, t.groundSpeed);
+    const own = gs > 5 ? Math.atan2(t.velocity[0], -t.velocity[2]) * (180 / Math.PI) : t.heading;
+    const off = wrap180(track - own);
+    const roll = clamp(off * 2, -75, 75);
+    const out = this.plane.fly(dt, t, { vs, roll, speed, pitchMin: -25, pitchMax: 25, flaps: 0 });
+    // Elevator by load factor (an attitude hold won't pull a hard turn): the g whose vertical
+    // part holds the wanted vertical speed in this bank, so the steeper the bank the harder it
+    // pulls and the faster it turns. The trim learns what level flight takes (lift from speed
+    // round the planet makes it less than 1 g); kept off the stall and under 5 g.
+    const bank = clamp(Math.abs(t.roll), 0, 80) * (Math.PI / 180);
+    const vsErr = clamp(vs - t.verticalSpeed, -20, 20);
+    this.chaseTrim = clamp(this.chaseTrim + vsErr * 0.01 * dt, 0.3, 1.5);
+    let n = (this.chaseTrim + vsErr * 0.04) / Math.max(0.2, Math.cos(bank));
+    n = clamp(n, -0.5, t.stall > 0.25 ? 1 : 5);
+    const err = n - t.gForce;
+    this.chaseElevator = clamp(this.chaseElevator + err * 0.12 * dt, -0.6, 0.8);
+    return { ...out, pitch: clamp(this.chaseElevator + err * 0.06, -1, 1) };
   }
 
   /** Right-hand circle around orbitCenter at orbitRadius. */
@@ -730,6 +860,7 @@ export class FlightAutopilot implements ControlSource {
   private flyRotorcraft(dt: number, t: Telemetry): ControlInputs {
     const s = this.state;
     if (s.mode === 'land') return this.flyPadLanding(dt, t);
+    if (s.mode === 'chase') return this.flyChase(dt, t, null);
     if (s.mode === 'goto' && this.dest) {
       const d = this.dest;
       const dist = distance(t.position[0], t.position[2], d.x, d.z);

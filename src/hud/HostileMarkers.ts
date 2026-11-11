@@ -9,6 +9,68 @@ export interface HostileMark {
 
 const MAX = 8;
 
+/** Where a world point lands on the screen, slid to the edge (`edge` true) when it is out of view. */
+function screenPoint(camera: THREE.Camera, pos: THREE.Vector3, width: number, height: number, margin: number): { x: number; y: number; edge: boolean } {
+  const v = pos.clone().project(camera);
+  const behind = v.z > 1;
+  let x = (behind ? -v.x : v.x) * 0.5 + 0.5, y = (behind ? v.y : -v.y) * 0.5 + 0.5;
+  let edge = behind || x < 0 || x > 1 || y < 0 || y > 1;
+  if (edge) {
+    const dx = x - 0.5, dy = y - 0.5;
+    const k = 0.5 / Math.max(Math.abs(dx), Math.abs(dy), 1e-6);
+    x = 0.5 + dx * k;
+    y = 0.5 + dy * k;
+  }
+  const px = Math.min(width - margin, Math.max(margin, x * width));
+  const py = Math.min(height - margin, Math.max(margin, y * height));
+  edge ||= px !== x * width || py !== y * height;
+  return { x: px, y: py, edge };
+}
+
+/**
+ * The lock: a thin cyan diamond on the vehicle being acquired, which closes to a solid diamond
+ * marked LOCK once it is locked (with the target's name and range).
+ */
+export class LockMarker {
+  private readonly el: HTMLElement | null;
+  private readonly label: HTMLElement | null;
+  private shown = false;
+  private text = '';
+
+  constructor(root: HTMLElement | null) {
+    if (!root) {
+      this.el = this.label = null;
+      return;
+    }
+    this.el = document.createElement('div');
+    this.el.className = 'lock-mark';
+    this.el.style.display = 'none';
+    this.label = document.createElement('small');
+    this.el.appendChild(this.label);
+    root.appendChild(this.el);
+  }
+
+  update(camera: THREE.Camera, target: { pos: THREE.Vector3; range: number; name: string; locked: boolean } | null, width: number, height: number): void {
+    if (!this.el || !this.label) return;
+    if (!target) {
+      if (this.shown) this.el.style.display = 'none';
+      this.shown = false;
+      return;
+    }
+    const p = screenPoint(camera, target.pos, width, height, 30);
+    const size = target.locked ? 30 : 44;
+    this.el.style.display = '';
+    this.el.style.transform = `translate(${Math.round(p.x - size / 2)}px, ${Math.round(p.y - size / 2)}px)`;
+    this.el.style.width = this.el.style.height = `${size}px`;
+    this.el.classList.toggle('locked', target.locked);
+    this.el.classList.toggle('edge', p.edge);
+    const r = target.range >= 1000 ? `${(target.range / 1000).toFixed(1)} km` : `${Math.round(target.range / 10) * 10} m`;
+    const text = `${target.locked ? 'LOCK' : 'TRACK'} ${target.name} ${r}`;
+    if (text !== this.text) this.label.textContent = this.text = text;
+    this.shown = true;
+  }
+}
+
 /**
  * Target brackets over the hostile aircraft: a thin red square bracket around each one in view
  * (brighter while it attacks) with its range, and a small marker on the screen's edge toward any

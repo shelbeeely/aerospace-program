@@ -72,6 +72,25 @@ body.mode-hangar #radar, body.mode-hangar #planet-map { display: none; }
 .lg-runway { border-top: 2px solid #dff6ff; height: 5px !important; }
 .lg-ring { border: 1px solid rgba(0, 212, 255, 0.6); border-radius: 50%; }
 
+/* The lock: a thin cyan diamond while acquiring, solid with LOCK once locked. */
+.lock-mark { position: absolute; left: 0; top: 0; color: #00d4ff; pointer-events: none; will-change: transform; }
+.lock-mark::before { content: ''; position: absolute; inset: 14%; border: 1px solid currentColor; transform: rotate(45deg); }
+.lock-mark.locked::before { border-width: 2px; box-shadow: 0 0 6px rgba(0, 212, 255, 0.6); }
+.lock-mark small {
+  position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 4px;
+  font-size: 10px; letter-spacing: 0.08em; white-space: nowrap; text-shadow: 0 0 3px #000; opacity: 0.85;
+}
+.lock-mark.locked small { opacity: 1; font-weight: bold; }
+#missile-warn {
+  position: absolute; top: 30%; left: 50%; transform: translateX(-50%); pointer-events: none;
+  font-size: 24px; font-weight: bold; letter-spacing: 0.3em; color: #ff2a12;
+  text-shadow: 0 0 8px rgba(0,0,0,0.6); animation: blink 0.3s steps(2) infinite;
+}
+body.mode-hangar #missile-warn { display: none; }
+#hud #h-lock-row b { color: #7fe8ff; font-size: 14px; min-width: 0; flex: 1; }
+#hud #h-lock-row.locked b { color: #00d4ff; }
+#hud #h-turret-row b { font-size: 14px; min-width: 0; flex: 1; }
+
 /* Target brackets over hostile aircraft: thin red, no fill (light is selective). */
 #hostile-marks { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 body.mode-hangar #hostile-marks { display: none; }
