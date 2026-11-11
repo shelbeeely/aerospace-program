@@ -206,10 +206,12 @@ export class Hud {
     this.set(turretMode, s.auto ? 'AUTO' : '');
   }
 
-  /** The MISSILE warning: hostile missiles homing on the craft. */
-  setMissileWarning(n: number): void {
-    this.el.missile?.classList.toggle('hidden', n === 0);
-    if (n && this.el.missile) this.set(this.el.missile, n > 1 ? `MISSILE ×${n}` : 'MISSILE');
+  /** The MISSILE warning: hostile missiles homing on the craft; RAIL: a railgun turret charging at it. */
+  setMissileWarning(n: number, rail = 0): void {
+    this.el.missile?.classList.toggle('hidden', n === 0 && rail === 0);
+    if (!this.el.missile) return;
+    const parts = [rail ? 'RAIL' : '', n ? (n > 1 ? `MISSILE ×${n}` : 'MISSILE') : ''].filter(Boolean);
+    if (parts.length) this.set(this.el.missile, parts.join(' · '));
   }
 
   /** ORB row: apoapsis / periapsis (km) and period, once high or fast enough to care. */

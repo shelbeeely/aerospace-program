@@ -9,6 +9,8 @@ export interface HostileMark {
   color?: string;
   /** A friend: a small caret instead of brackets. */
   friend?: boolean;
+  /** A word before the range (e.g. RAIL). */
+  tag?: string;
 }
 
 const MAX = 12;
@@ -130,7 +132,7 @@ export class HostileMarkers {
       m.el.classList.toggle('attacking', h.attacking);
       m.el.classList.toggle('friend', !!h.friend);
       m.el.style.color = h.color ?? '';
-      const text = h.range >= 1000 ? `${(h.range / 1000).toFixed(1)} km` : `${Math.round(h.range / 10) * 10} m`;
+      const text = (h.tag ? `${h.tag} ` : '') + (h.range >= 1000 ? `${(h.range / 1000).toFixed(1)} km` : `${Math.round(h.range / 10) * 10} m`);
       if (text !== m.text) m.label.textContent = m.text = text;
       m.shown = true;
     }

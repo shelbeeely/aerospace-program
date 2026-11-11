@@ -170,6 +170,15 @@ export class RadarMap {
       g.strokeStyle = g.fillStyle = c.color;
       if (c.foe) g.fillRect(-3 * k, -3 * k, 6 * k, 6 * k);
       else g.strokeRect(-3 * k, -3 * k, 6 * k, 6 * k);
+      if (c.rail) {
+        // A railgun turret: a diamond set in its square.
+        g.globalAlpha = 1;
+        g.fillStyle = c.foe ? '#02050c' : c.color;
+        g.beginPath();
+        g.moveTo(0, -2 * k); g.lineTo(2 * k, 0); g.lineTo(0, 2 * k); g.lineTo(-2 * k, 0);
+        g.closePath();
+        g.fill();
+      }
     } else if (c.kind === 'player') {
       g.strokeStyle = PALE;
       g.beginPath();

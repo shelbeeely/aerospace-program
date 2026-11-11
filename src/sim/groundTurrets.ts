@@ -4,7 +4,7 @@ import { districtPlan } from '../arch/DistrictGenerator.ts';
 import { GRID } from '../arch/grid.ts';
 import { hash32, hashFloat, strSeed } from '../arch/rng.ts';
 
-import { TOWER_TURRET } from '../craft/towerTurret.ts';
+import { RAIL_TURRET, TOWER_TURRET } from '../craft/towerTurret.ts';
 import { anglesOf, applyTurret, leadAim, slewTurret, turretOf, type TurretLimits, type TurretPose } from '../craft/turret.ts';
 import { obstacleTop } from '../world/structures.ts';
 import { chunkAt, imageOffset } from '../world/planetCity.ts';
@@ -40,13 +40,16 @@ export interface TurretSite {
   /** The district (canonical chunk indices). */
   ci: number;
   cj: number;
+  /** A gun-and-missile turret, or a railgun turret. */
+  kind: TurretKind;
   /** Canonical roof centre (m) it stands on. */
   x: number;
   y: number;
   z: number;
 }
 
-export type TurretState = 'idle' | 'tracking' | 'firing';
+export type TurretState = 'idle' | 'tracking' | 'charging' | 'firing';
+export type TurretKind = 'gun' | 'rail';
 
 export interface GroundTurret {
   id: number;
@@ -61,6 +64,8 @@ export interface GroundTurret {
   derezAt: number | null;
   aimError: { h: number; p: number };
   missileAt: number;
+  /** Railgun: when the current charge began (s), or null when not charging. */
+  chargeAt: number | null;
   /** Line of sight to the player, re-checked a few times a second. */
   sees: boolean;
   seenAt: number;
@@ -86,19 +91,23 @@ export const TOWER_LIMITS: TurretLimits = { yawRate: 90 * DEG, pitchRate: 60 * D
 const RANGE = 2500, GUN_RANGE = 1800, GUN_SPEED = 620;
 const MISSILE_MIN = 600, MISSILE_EVERY = 10;
 const HP = 10;
+/** Railgun turrets: reach, the charge before each shot (s), and hit points (sturdier). */
+export const RAIL_RANGE = 3500, RAIL_CHARGE = 0.8;
+const RAIL_HP = 14;
 /** Turrets are live for sites within this distance of the player (m), dropped past the second. */
 const LIVE = 5000, DROP = 5600;
 const SEED = 0x7e77e7;
 
-/** The turret in a team's colours (red: the default, used by the checks), and its rig. */
-const defs = new Map<Side, CraftDef>();
-export const turretDef = (side: Side): CraftDef => {
-  let d = defs.get(side);
-  if (!d) defs.set(side, (d = sideLivery(TOWER_TURRET, side)));
+/** A turret in a team's colours (red gun turret: the default, used by the checks), and the rigs. */
+const defs = new Map<string, CraftDef>();
+export const turretDef = (side: Side, kind: TurretKind = 'gun'): CraftDef => {
+  const k = `${side}:${kind}`;
+  let d = defs.get(k);
+  if (!d) defs.set(k, (d = sideLivery(kind === 'rail' ? RAIL_TURRET : TOWER_TURRET, side)));
   return d;
 };
 export const TURRET_DEF = turretDef(1);
-const RIG = turretOf(TURRET_DEF)!;
+const RIGS = { gun: turretOf(TURRET_DEF)!, rail: turretOf(turretDef(1, 'rail'))! };
 /** Where the head's centre is above the base (m): the aim origin, and what the lock points at. */
 export const TURRET_HEAD_Y = 3;
 
@@ -133,7 +142,11 @@ export function turretSites(ci: number, cj: number, density: TurretDensity): Tur
       .filter((s) => s.roof && s.roof.y >= 35 && s.roof.y <= 320 && s.roof.r >= 2.5)
       .filter((s) => !pads.some((p) => Math.hypot(wrapDelta(p.x, s.roof!.x), wrapDelta(p.z, s.roof!.z)) < 40))
       .sort((a, b) => hash32(SEED, strSeed(a.id)) - hash32(SEED, strSeed(b.id)));
-    for (const s of candidates.slice(0, want)) out.push({ id: s.id, structureId: s.id, ci, cj, x: s.roof!.x, y: s.roof!.y, z: s.roof!.z });
+    for (const s of candidates.slice(0, want)) {
+      // About one in four is a railgun turret; one in two on the tallest towers.
+      const rail = hashFloat(SEED, strSeed(s.id), 7) < (s.roof!.y >= 120 ? 0.5 : 0.25);
+      out.push({ id: s.id, structureId: s.id, ci, cj, kind: rail ? 'rail' : 'gun', x: s.roof!.x, y: s.roof!.y, z: s.roof!.z });
+    }
   }
   siteCache.set(key, out);
   if (siteCache.size > 400) siteCache.delete(siteCache.keys().next().value!);
@@ -292,24 +305,26 @@ export class GroundTurretSystem {
     const pos = new THREE.Vector3(x, site.y, z);
     const weapons = new WeaponSystem();
     const color = sideLight(side);
-    weapons.arm(turretDef(side));
+    weapons.arm(turretDef(side, site.kind));
+    const rig = RIGS[site.kind];
+    const hp = site.kind === 'rail' ? RAIL_HP : HP;
     weapons.turnScale = 25 / 45; // its missiles turn like the hostile aircraft's: a hard turn can shake one
     const pose: TurretPose = { yaw: hashFloat(SEED, strSeed(site.id), 1) * Math.PI * 2 - Math.PI, pitch: 0 };
     const self = this;
     const t: GroundTurret = {
-      id: this.nextId++, site, pos, pose, hp: HP, maxHp: HP, hitAt: -Infinity, state: 'idle', derezAt: null,
-      aimError: { h: 0, p: 0 }, missileAt: -Infinity, sees: false, seenAt: -Infinity, weapons, body, color, side, target: null,
+      id: this.nextId++, site, pos, pose, hp, maxHp: hp, hitAt: -Infinity, state: 'idle', derezAt: null,
+      aimError: { h: 0, p: 0 }, missileAt: -Infinity, chargeAt: null, sees: false, seenAt: -Infinity, weapons, body, color, side, target: null,
       handle: null as unknown as LockTarget, foe: null as unknown as Foe, disabledUntil: -Infinity,
       host: {
         world: this.world, body, position: pos, rotation: new THREE.Quaternion(), linvel: new THREE.Vector3(), color,
         groundAt: (gx, gz) => self.groundAt(gx, gz),
-        mountPose: (_m, offset, dir) => applyTurret(RIG, pose, true, offset, dir),
+        mountPose: (_m, offset, dir) => applyTurret(rig, pose, true, offset, dir),
       },
     };
     weapons.onImpact = (h) => this.onImpact?.(h, t);
     const sys = this;
     t.handle = {
-      id: `turret:${site.id}`, kind: 'turret', name: 'Tower turret', radius: 2.5,
+      id: `turret:${site.id}`, kind: 'turret', name: site.kind === 'rail' ? 'Railgun turret' : 'Tower turret', radius: 2.5,
       alive: () => t.derezAt === null && sys.turrets.includes(t),
       position: (o) => o.set(t.pos.x, t.pos.y + TURRET_HEAD_Y, t.pos.z),
       velocity: (o) => o.set(0, 0, 0),
@@ -378,7 +393,7 @@ export class GroundTurretSystem {
       if (f.kind === 'turret' || !hostile(t.side, f.side) || !f.lock.alive()) continue;
       f.lock.position(this._b);
       const d = Math.hypot(wrapDelta(head.x, this._b.x), this._b.y - head.y, wrapDelta(head.z, this._b.z));
-      if (d < RANGE) near.push({ f, d });
+      if (d < (t.site.kind === 'rail' ? RAIL_RANGE : RANGE)) near.push({ f, d });
     }
     near.sort((a, b) => a.d - b.d);
     t.target = null;
@@ -405,6 +420,7 @@ export class GroundTurretSystem {
       t.state = 'idle';
       t.target = null;
       t.sees = false;
+      t.chargeAt = null;
       return;
     }
     const head = this._a.set(t.pos.x, t.pos.y + TURRET_HEAD_Y, t.pos.z);
@@ -417,6 +433,7 @@ export class GroundTurretSystem {
     if (!target) {
       // Nothing to shoot at: a slow sweep, the barrels settling level.
       t.state = 'idle';
+      t.chargeAt = null;
       slewTurret(t.pose, t.pose.yaw + 0.3, 0.05, dt, { ...TOWER_LIMITS, yawRate: 6 * DEG });
       return;
     }
@@ -428,6 +445,7 @@ export class GroundTurretSystem {
     const tp = target.lock.position(this._b);
     const rel = this._rel.set(wrapDelta(head.x, tp.x), tp.y - head.y, wrapDelta(head.z, tp.z));
     const range = rel.length();
+    if (t.site.kind === 'rail') return this.rail(t, dt, time, target, rel, range);
     const aim = anglesOf(leadAim(rel, target.lock.velocity(this._tv), GUN_SPEED, 9.81, this._aim));
     slewTurret(t.pose, aim.yaw + t.aimError.h, aim.pitch + t.aimError.p, dt, TOWER_LIMITS);
     let dy = aim.yaw - t.pose.yaw;
@@ -445,5 +463,42 @@ export class GroundTurretSystem {
       t.missileAt = time;
       t.state = 'firing';
     }
+  }
+
+  /**
+   * A railgun turret's fire control: the slug is instant, so it aims straight at the target
+   * (no lead); once the barrel is on, it charges for RAIL_CHARGE seconds (its lights come up)
+   * and fires if it is still on, one shot every 2.5 s (the weapon's own rate).
+   */
+  private rail(t: GroundTurret, dt: number, time: number, target: Foe, rel: THREE.Vector3, range: number): void {
+    const w = t.weapons;
+    const aim = anglesOf(rel);
+    slewTurret(t.pose, aim.yaw + t.aimError.h * 0.5, aim.pitch + t.aimError.p * 0.5, dt, { ...TOWER_LIMITS, yawRate: 45 * DEG, pitchRate: 35 * DEG });
+    let dy = aim.yaw - t.pose.yaw;
+    dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    const off = Math.hypot(dy, aim.pitch - t.pose.pitch);
+    t.state = 'tracking';
+    // Against AI aircraft it holds fire beyond 2 km (they could never close otherwise).
+    if (!target.engage || range > (target.kind === 'player' || target.kind === 'remote' ? RAIL_RANGE : 2000)) { t.chargeAt = null; return; }
+    const tol = Math.max(0.003, 5 / range);
+    const ready = time - (w.mounts[0]?.lastFired ?? -Infinity) >= 1 / 0.4;
+    if (t.chargeAt === null) {
+      if (off < tol * 2 && ready) t.chargeAt = time;
+      return;
+    }
+    t.state = 'charging';
+    if (time - t.chargeAt < RAIL_CHARGE) return;
+    t.chargeAt = null;
+    if (off < tol) {
+      w.trigger.primary = true;
+      t.state = 'firing';
+    }
+  }
+
+  /** Railgun turrets charging at this target now (the HUD's RAIL warning). */
+  charging(target: LockTarget): number {
+    let n = 0;
+    for (const t of this.turrets) if (t.derezAt === null && t.state === 'charging' && t.target?.lock === target) n++;
+    return n;
   }
 }

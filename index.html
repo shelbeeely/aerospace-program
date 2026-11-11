@@ -148,6 +148,16 @@
       <label>Enemy aircraft <b id="w-enemies-v">3</b> <input id="w-enemies" type="range" min="0" max="8" step="1" value="3" /></label>
       <label>Freelancers <b id="w-free-v">1</b> <input id="w-free" type="range" min="0" max="4" step="1" value="1" /></label>
       <label>Tower turrets <b id="w-turrets-v">Sparse</b> <input id="w-turrets" type="range" min="0" max="2" step="1" value="1" /></label>
+      <h3>Credits (testing)</h3>
+      <div class="credit-tools">
+        <b id="w-credits-v">0</b> credits
+        <div class="buttons">
+          <button type="button" data-credits="1000">+1,000</button>
+          <button type="button" data-credits="10000">+10,000</button>
+          <button type="button" data-credits="reset">Reset to 0</button>
+        </div>
+        <label>Set to <input id="w-credits-set" type="number" min="0" step="100" value="5000" /> <button type="button" id="w-credits-apply">Set</button></label>
+      </div>
       <p class="muted small">Three teams (Cyan, Red, Amber) hold the planet; pick yours in the hangar. Enemy aircraft and turrets fire on you only while your craft carries weapons (I cycles the loadout). Freelancers fight everyone. ' hires mercenaries.</p>
       <p class="muted small">Triggers affect flight physics. Reset clears events.</p>
       <div class="legend">

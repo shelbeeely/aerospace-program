@@ -298,7 +298,8 @@ with a third of the region cells, so territory comes in large contiguous patches
   They never capture.
 - **Mercenaries** are wingmen you hire with credits (`'`, or *Mercenaries* in the touch menu).
   You earn 100 credits per aircraft shot down, 150 per turret and 300 per district captured
-  (kept between sessions; the CREDITS row). A contract lasts five minutes and costs 200-650 by
+  (kept between sessions; the CREDITS row). To test without earning them: F3 → *Credits
+  (testing)* (+1,000, +10,000, set an amount, reset), or `game.giveCredits(n)` in the console. A contract lasts five minutes and costs 200-650 by
   design (`src/sim/mercenaries.ts`), up to three at once. A mercenary flies for you whatever
   your team, in bright blue with an M on the radar; it escorts, goes for anything attacking you,
   then your enemies, and leaves when its time is up.
@@ -378,6 +379,13 @@ twin guns and a missile barrel that elevate from −10° to +85° (they shoot at
 - **Shooting them:** ten gun rounds (fewer with cannon or missiles) derez one; a tower brought
   down takes its turret with it. Kills count on the HOSTILE row. A destroyed turret stays down
   until the world is reset (Backspace).
+- **Railgun turrets:** about one site in four (one in two on towers 120 m and up) carries a
+  railgun turret instead (`RAIL_TURRET`): one long twin-rail barrel, 14 hit points, a 3.5 km
+  reach. The slug is instant, so it aims straight at you; once on, it **charges for 0.8 s** (its
+  lights pulse up and the HUD flashes `RAIL`) and fires if it's still on, one shot every 2.5 s,
+  punching through up to three things. Break its line during the charge to dodge it. It follows
+  the same rules as the gun turrets (team, armed-only, EMP, capture), and shows as a square with
+  a diamond on the radar and `RAIL` on its bracket.
 - **Finding them:** red brackets in view, small red squares on the radar and planet map (solid
   while firing), and they can be locked: missiles home on them and the tank's turret lays on them.
 

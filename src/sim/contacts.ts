@@ -31,6 +31,8 @@ export interface Contact {
   foe?: boolean;
   /** A hired mercenary. */
   merc?: boolean;
+  /** A railgun turret. */
+  rail?: boolean;
 }
 
 /** Shortest signed distance from a to b along one wrapped axis (m). */
@@ -52,7 +54,7 @@ export function simContacts(sim: Simulation): Contact[] {
   }
   for (const t of sim.groundTurrets.turrets) {
     if (t.derezAt !== null) continue;
-    out.push({ id: `turret:${t.site.id}`, kind: 'turret', x: t.pos.x, z: t.pos.z, y: t.pos.y, heading: t.pose.yaw, color: t.color, name: 'Tower turret', attacking: t.state === 'firing', foe: hostile(sim.team, t.side) });
+    out.push({ id: `turret:${t.site.id}`, kind: 'turret', x: t.pos.x, z: t.pos.z, y: t.pos.y, heading: t.pose.yaw, color: t.color, name: t.site.kind === 'rail' ? 'Railgun turret' : 'Tower turret', attacking: t.state === 'firing' || t.state === 'charging', foe: hostile(sim.team, t.side), rail: t.site.kind === 'rail' });
   }
   for (const r of sim.traffic.riders) {
     if (r.derezAt !== null) continue;

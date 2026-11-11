@@ -99,6 +99,10 @@ body.emp #hud { animation: emp-flicker 0.18s steps(2) infinite; }
 @keyframes emp-flicker { 50% { opacity: 0.35; } }
 #hud #h-strat-row b { color: #dff6ff; font-size: 14px; min-width: 0; flex: 1; }
 
+#debug .credit-tools { margin: 4px 0 8px; }
+#debug .credit-tools .buttons { display: flex; gap: 4px; margin: 6px 0; flex-wrap: wrap; }
+#debug .credit-tools input[type=number] { width: 90px; background: rgba(0,0,0,0.35); color: #eaf2f8; border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; padding: 2px 4px; font: inherit; }
+
 /* Mercenaries panel. */
 #merc-panel { right: 16px; top: 16px; width: 300px; max-height: calc(100dvh - 32px); overflow-y: auto; z-index: 18; border-color: rgba(61, 124, 255, 0.4); }
 #merc-panel h3 { margin: 0 0 6px; letter-spacing: 0.2em; font-size: 12px; color: #dff6ff; }

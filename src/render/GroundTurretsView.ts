@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import type { GroundTurretSystem } from '../sim/groundTurrets.ts';
-import { TURRET_DEF } from '../sim/groundTurrets.ts';
+import { turretDef } from '../sim/groundTurrets.ts';
 import { RemoteCraftView } from './RemoteCraftView.ts';
 
 /**
@@ -25,13 +25,16 @@ export class GroundTurretsView {
       live.add(t.id);
       let v = this.views.get(t.id);
       if (!v) {
-        v = new RemoteCraftView(TURRET_DEF, t.color, { beacon: false });
+        // Its own design (gun or railgun) in its team's colours.
+        v = new RemoteCraftView(turretDef(t.side, t.site.kind), t.color, { beacon: false });
         this.views.set(t.id, v);
         this.scene.add(v.root);
       }
       v.update(t.pos, this.level, 0, 0, dt);
       v.setTurret(t.pose);
-      v.setLightState({ activity: t.state === 'idle' ? 0 : 1, integrity: t.hp / t.maxHp, time: this.time, inactive: t.disabledUntil > this.simTime });
+      // A railgun charging: its lights pulse up toward the shot.
+      const charge = t.state === 'charging' && t.chargeAt !== null ? Math.min(1, (this.simTime - t.chargeAt) / 0.8) : 0;
+      v.setLightState({ activity: t.state === 'idle' ? 0 : charge ? 0.5 + 0.5 * charge * (0.6 + 0.4 * Math.sin(this.time * 40)) : 1, integrity: t.hp / t.maxHp, time: this.time, inactive: t.disabledUntil > this.simTime });
     }
     for (const [id, v] of this.views) {
       if (live.has(id)) continue;

@@ -471,11 +471,26 @@ async function start() {
   const CREDIT_STORAGE = 'credits';
   sim.credits = Math.max(0, Math.floor(Number(stored(CREDIT_STORAGE)) || 0));
   let savedCredits = sim.credits;
+  { const shown = document.getElementById('w-credits-v'); if (shown) shown.textContent = sim.credits.toLocaleString(); }
   const STRATEGIC_STORAGE = 'strategic';
   const carried = stored(STRATEGIC_STORAGE);
   sim.strategic = carried === 'nuke' || carried === 'emp' ? carried : null;
   let savedStrategic = sim.strategic;
   const mercPanel = new MercPanel(sim, () => sim.airTraffic.pool.filter((d) => flyerKind(d) !== 'ground'), (t) => toast(t));
+  // Testing the credit system (F3 → Credits, or game.giveCredits(n) in the console).
+  const setCredits = (n: number, why: string) => {
+    sim.credits = Math.max(0, Math.floor(n));
+    toast(`${why}: ${sim.credits.toLocaleString()} credits (debug)`);
+    mercPanel.refresh(true);
+  };
+  const giveCredits = (n: number) => setCredits(sim.credits + n, `${n >= 0 ? '+' : ''}${n.toLocaleString()}`);
+  for (const b of document.querySelectorAll<HTMLButtonElement>('[data-credits]')) {
+    b.addEventListener('click', () => (b.dataset.credits === 'reset' ? setCredits(0, 'Reset') : giveCredits(Number(b.dataset.credits))));
+  }
+  document.getElementById('w-credits-apply')?.addEventListener('click', () => {
+    const v = Number((document.getElementById('w-credits-set') as HTMLInputElement | null)?.value);
+    if (Number.isFinite(v)) setCredits(v, 'Set');
+  });
   let noticeAt = -Infinity;
   aiCount?.addEventListener('input', updateAirPool);
   aiMine?.addEventListener('change', updateAirPool);
@@ -981,6 +996,9 @@ async function start() {
       /** The digital world: architecture, terrain and route views, the inspector (K). */
       arch: { world: archView, terrain: terrainView, routes: routeView, inspector, worldView },
       triggerDisaster,
+      /** Credits (testing the mercenaries and the armory): read, or give some. */
+      get credits() { return sim.credits; },
+      giveCredits,
       client,
       library,
       studio,
@@ -1232,7 +1250,7 @@ async function start() {
         if (!hostile(sim.team, t.side)) continue;
         const pos = new THREE.Vector3(t.pos.x, t.pos.y + 3, t.pos.z);
         const range = pos.distanceTo(sim.position);
-        if (range < 6000) marks.push({ pos, range, attacking: t.state === 'firing', color: t.color });
+        if (range < 6000) marks.push({ pos, range, attacking: t.state === 'firing' || t.state === 'charging', color: t.color, tag: t.site.kind === 'rail' ? 'RAIL' : undefined });
       }
       marks.sort((a, b) => a.range - b.range);
       const near = marks[0];
@@ -1277,7 +1295,7 @@ async function start() {
       }
       const t = sim.craft.turret;
       hud.setTurret(sim.craft.turretRig ? { yaw: t.yaw * 180 / Math.PI, pitch: t.pitch * 180 / Math.PI, auto: sim.turretAuto } : null);
-      hud.setMissileWarning(sim.incomingMissiles());
+      hud.setMissileWarning(sim.incomingMissiles(), sim.groundTurrets.charging(sim.selfTarget));
     } else {
       lockMarker.update(camera, null, window.innerWidth, window.innerHeight);
       hud.setMissileWarning(0);
@@ -1365,6 +1383,8 @@ async function start() {
     for (const n of sim.notices) if (n.time > noticeAt) { noticeAt = n.time; toast(n.text); }
     if (sim.credits !== savedCredits) {
       savedCredits = sim.credits;
+      const shown = document.getElementById('w-credits-v');
+      if (shown) shown.textContent = sim.credits.toLocaleString();
       try {
         localStorage.setItem(CREDIT_STORAGE, String(sim.credits));
       } catch { /* not remembered */ }

@@ -16,6 +16,8 @@ import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 import { STRATEGIC } from '../src/sim/strategic.ts';
 import { WEAPONS } from '../src/sim/weapons.ts';
 import { turretSites, TURRET_HEAD_Y } from '../src/sim/groundTurrets.ts';
+import { baseOwner } from '../src/sim/territory.ts';
+import type { Team } from '../src/sim/teams.ts';
 import type { AiFlyer } from '../src/sim/aiTraffic.ts';
 
 await initPhysics();
@@ -146,6 +148,7 @@ console.log('--- EMP');
 {
   const sim = world();
   sim.groundTurrets.density = 2;
+  sim.setTeam((baseOwner(site.ci, site.cj) ?? 0) as Team); // the turrets here are on its side: it's here to watch, not fight
   sim.airTraffic.enemies = 2;
   sim.airTraffic.pool = [JET];
   sim.traffic.enabled = true;
@@ -165,6 +168,8 @@ console.log('--- EMP');
   m.pos.copy(ground).add(new THREE.Vector3(0, 300, 200));
   const before = sim.airTraffic.derezzed + sim.groundTurrets.derezzed;
   sim.detonateEmp(ground.x, ground.y + 100, ground.z, true);
+  // (Measured at the pulse: afterwards turrets outside its reach may well shoot the gliders down.)
+  const destroyedByPulse = sim.airTraffic.derezzed + sim.groundTurrets.derezzed - before;
   let fired = 0;
   run(sim, 5, () => { fired += flyers.reduce((s, f) => s + (f.weapons?.trigger.primary || f.weapons?.trigger.secondary ? 1 : 0), 0); }, at);
   check(flyers.every((f, k) => f.pos.y < y0[k] - 10) && fired === 0, 'aircraft inside glide down and hold fire', flyers.map((f, k) => `${(y0[k] - f.pos.y).toFixed(0)} m down`).join(', '));
@@ -172,7 +177,7 @@ console.log('--- EMP');
   check(riders.every((r, k) => r.x + r.z === rx[k]), 'light cycles stall', `${riders.length} riders`);
   check(m.target === null, 'a homing missile in it loses its lock');
   check(sim.empActive && sim.controls.throttle === 0, 'the craft caught in it loses its engines');
-  check(sim.airTraffic.derezzed + sim.groundTurrets.derezzed === before, 'nothing is destroyed by it');
+  check(destroyedByPulse === 0, 'nothing is destroyed by it');
   run(sim, 6, undefined, at);
   check(flyers.every((f) => f.disabledUntil < sim.time) && !sim.empActive, 'after 8 s aircraft and the craft recover');
   check(turrets.every((t) => t.disabledUntil > sim.time), 'turrets stay down for 20 s');
