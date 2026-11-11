@@ -58,6 +58,8 @@ import { flyerKind, type Foe } from './sim/aiTraffic.ts';
 import { HostileMarkers, LockMarker, type HostileMark } from './hud/HostileMarkers.ts';
 import type { LockTarget } from './sim/lock.ts';
 import { RadarMap } from './hud/RadarMap.ts';
+import { GlobeView } from './render/GlobeView.ts';
+import { StrikePanel } from './ui/StrikePanel.ts';
 import { simContacts, wrapDelta, type Contact } from './sim/contacts.ts';
 import { terrainHeight } from './sim/terrain.ts';
 import { craftBounds } from './sim/weapons.ts';
@@ -482,6 +484,15 @@ async function start() {
   sim.strategic = carried === 'nuke' || carried === 'emp' ? carried : null;
   let savedStrategic = sim.strategic;
   const mercPanel = new MercPanel(sim, () => sim.airTraffic.pool.filter((d) => flyerKind(d) !== 'ground'), (t) => toast(t));
+  // The 3D strike globe (the map's Globe button, Shift+Tab): pick a spot, send aircraft, call strikes.
+  const globe = new GlobeView();
+  const strikePanel = new StrikePanel(sim, globe, (t) => toast(t));
+  const toggleGlobe = (on = !globe.visible) => {
+    if (on) radarMap.toggleMap(false);
+    globe.toggle(on, sim.position);
+  };
+  radarMap.onGlobe = () => toggleGlobe(true);
+  radarMap.setGlobe(false);
   // Testing the credit system (F3 → Credits, or game.giveCredits(n) in the console).
   const setCredits = (n: number, why: string) => {
     sim.credits = Math.max(0, Math.floor(n));
@@ -1004,6 +1015,8 @@ async function start() {
       /** Credits (testing the mercenaries and the armory): read, or give some. */
       get credits() { return sim.credits; },
       giveCredits,
+      globe,
+      toggleGlobe,
       client,
       library,
       studio,
@@ -1089,7 +1102,8 @@ async function start() {
         const m = sim.trails.cycleMode(sim.craft, sim.isAirplane(), sim.time);
         toast(m === 'wall' ? 'Jetwall: solid light' : m === 'ribbon' ? 'Light ribbon: fades behind you' : 'Trail off');
       }
-      else if (a === 'map') radarMap.toggleMap();
+      else if (a === 'map') { if (globe.visible) toggleGlobe(false); radarMap.toggleMap(); }
+      else if (a === 'globe') toggleGlobe();
       else if (a === 'radarRange') toast(`Radar ${radarMap.cycleRange() / 1000} km`);
       else if (a === 'recentre') {
         if (sim.craft.turretRig) { sim.recentreTurret(); toast('Turret: back to the nose'); }
@@ -1294,7 +1308,16 @@ async function start() {
         dropMarker.update(camera, { pos: pr.point, range: pr.point.distanceTo(sim.position), name: '', locked: pr.armed, text: pr.armed ? 'DROP' : 'DUD: TOO LOW' }, window.innerWidth, window.innerHeight);
       } else dropMarker.update(camera, null, window.innerWidth, window.innerHeight);
       _nose.set(0, 0, -1).applyQuaternion(sim.rotation);
-      radarMap.update(now / 1000, { drop, x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites(), lockedId: sim.lock.target?.id ?? null, territory: sim.groundTurrets.territory, teamColors: TEAMS.map((t) => t.light) });
+      const radarState = { drop, x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites(), lockedId: sim.lock.target?.id ?? null, territory: sim.groundTurrets.territory, teamColors: TEAMS.map((t) => t.light) };
+      radarMap.update(now / 1000, radarState);
+      if (globe.visible) {
+        globe.render({
+          me: { x: sim.position.x, z: sim.position.z, heading: radarState.heading }, contacts, sites: radarState.sites,
+          strikes: sim.strikes.map((s) => { const at = sim.strikeSystem.position(s); return { kind: s.kind, x: s.x, z: s.z, fromX: s.fromX, fromZ: s.fromZ, at: at ? { x: at.x, z: at.z } : null, eta: s.eta - sim.time }; }),
+          orders: sim.airTraffic.orders(), surface: radarMap.baseMap(), wash: radarMap.washMap(radarState), washVersion: sim.groundTurrets.territory.version,
+        });
+        strikePanel.update(dt);
+      }
       // The lock: the marker in the view and the LOCK row; the turret row; incoming missiles.
       const tracked = sim.lock.tracked;
       if (tracked) {

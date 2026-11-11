@@ -39,7 +39,7 @@ export class KeyboardDevice implements InputDevice {
         case 'KeyJ': this.actions.push('apPanel'); break;
         case 'KeyL': this.actions.push('trail'); break;
         case 'KeyI': this.actions.push('loadout'); break;
-        case 'Tab': this.actions.push('map'); break;
+        case 'Tab': this.actions.push(e.shiftKey ? 'globe' : 'map'); break;
         case 'Backslash': this.actions.push('radarRange'); break;
         case 'Slash': this.actions.push('recentre'); break;
         case 'Enter': this.actions.push('chase'); break;

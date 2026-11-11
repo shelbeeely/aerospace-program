@@ -42,6 +42,30 @@ export function wrapDelta(a: number, b: number): number {
   return d - C * Math.round(d / C);
 }
 
+/**
+ * The 3D strike globe's frame: the planet's map (blocks east from GRID.x0, south from GRID.z0)
+ * wrapped on a unit sphere the way three.js's SphereGeometry lays its texture: longitude from the
+ * map's x, latitude from its z (the map's top row at the north pole). Returns a point on the
+ * unit sphere.
+ */
+export function worldToGlobe(x: number, z: number, x0: number, z0: number): { x: number; y: number; z: number } {
+  const C = PLANET.circumference;
+  const u = (((x - x0) / C) % 1 + 1) % 1;
+  const v = (((z - z0) / C) % 1 + 1) % 1;
+  const phi = u * Math.PI * 2, theta = v * Math.PI;
+  return { x: -Math.cos(phi) * Math.sin(theta), y: Math.cos(theta), z: Math.sin(phi) * Math.sin(theta) };
+}
+
+/** The inverse: the planet x, z (in the image from x0, z0) under a point on the sphere. */
+export function globeToWorld(px: number, py: number, pz: number, x0: number, z0: number): { x: number; z: number } {
+  const C = PLANET.circumference;
+  const r = Math.hypot(px, py, pz) || 1;
+  const theta = Math.acos(Math.max(-1, Math.min(1, py / r)));
+  let phi = Math.atan2(pz, -px);
+  if (phi < 0) phi += Math.PI * 2;
+  return { x: x0 + (phi / (Math.PI * 2)) * C, z: z0 + (theta / Math.PI) * C };
+}
+
 /** The simulation's vehicles: AI aircraft (peaceful and hostile) and the light-cycle riders. */
 export function simContacts(sim: Simulation): Contact[] {
   const out: Contact[] = [];

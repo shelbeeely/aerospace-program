@@ -42,6 +42,7 @@ export type Action =
   | 'trail'
   | 'loadout'
   | 'map'
+  | 'globe'
   | 'radarRange'
   | 'recentre'
   | 'chase'

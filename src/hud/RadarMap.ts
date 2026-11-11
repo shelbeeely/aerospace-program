@@ -66,7 +66,7 @@ export class RadarMap {
     // Flat map or globe (remembered); the globe turns with a drag and zooms with the wheel.
     this.modeButton = document.getElementById('planet-map-mode');
     try { this.globe = localStorage.getItem('mapGlobe') === '1'; } catch { /* default flat */ }
-    this.modeButton?.addEventListener('click', () => this.setGlobe(!this.globe));
+    this.modeButton?.addEventListener('click', () => (this.onGlobe ? this.onGlobe() : this.setGlobe(!this.globe)));
     this.setGlobe(this.globe);
     const c = this.map;
     if (c) {
@@ -103,6 +103,8 @@ export class RadarMap {
 
   private globe = false;
   private readonly modeButton: HTMLElement | null;
+  /** Set: the Globe button opens this (the 3D strike globe) instead of the canvas globe. */
+  onGlobe: (() => void) | null = null;
   /** Where the globe looks (rad); `free` once dragged (else it follows the craft). */
   private readonly view = { lon: 0, lat: 0, free: false };
   private zoom = 1;
@@ -307,7 +309,7 @@ export class RadarMap {
   }
 
   /** The planet's surface, one pixel per block (painted once). */
-  private baseMap(): HTMLCanvasElement {
+  baseMap(): HTMLCanvasElement {
     if (this.base) return this.base;
     const n = GRID.blocks;
     const c = document.createElement('canvas');
@@ -336,7 +338,7 @@ export class RadarMap {
   private washVersion = -1;
 
   /** One pixel per district in its holder's colour (rebuilt when territory changes hands). */
-  private washMap(s: RadarState): HTMLCanvasElement | null {
+  washMap(s: RadarState): HTMLCanvasElement | null {
     const t = s.territory, colors = s.teamColors;
     if (!t || !colors) return null;
     if (this.wash && this.washVersion === t.version) return this.wash;
