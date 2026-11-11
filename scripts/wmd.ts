@@ -14,7 +14,8 @@ import { JET } from '../src/craft/jet.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 import { STRATEGIC } from '../src/sim/strategic.ts';
-import { WEAPONS } from '../src/sim/weapons.ts';
+import { predictDrop, WEAPONS } from '../src/sim/weapons.ts';
+import { terrainHeight } from '../src/sim/terrain.ts';
 import { turretSites, TURRET_HEAD_Y } from '../src/sim/groundTurrets.ts';
 import { baseOwner } from '../src/sim/territory.ts';
 import type { Team } from '../src/sim/teams.ts';
@@ -109,6 +110,47 @@ const ground = new THREE.Vector3(site.x, site.y + TURRET_HEAD_Y, site.z);
   p.heading.set(0, -1, 0);
   run(sim, 2.5, undefined, low);
   check(sim.blasts.length === 0 && !sim.weapons.projectiles.includes(p), 'a nuke that strikes before it arms is a dud');
+}
+{
+  // Dropped from a jet flying level at 1.8 km, 150 m/s, over open ground east of the city.
+  const sim = world();
+  sim.traffic.enabled = false;
+  sim.credits = 1500;
+  sim.buyStrategic('nuke');
+  sim.weapons.lock = null;
+  const high = new THREE.Vector3(9000, terrainHeight(9000, -2600) + 1800, -2600);
+  const fly = () => {
+    const b = sim.craft.body;
+    const t = b.translation();
+    b.setTranslation({ x: t.x, y: high.y, z: t.z }, true);
+    b.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+    b.setLinvel({ x: 0, y: 0, z: -150 }, true);
+    b.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  };
+  sim.craft.body.setTranslation(high, true);
+  fly();
+  sim.step(idle);
+  fly();
+  const from = new THREE.Vector3(0, -1.6, 0).applyQuaternion(sim.rotation).add(sim.position);
+  const pred = predictDrop('nuke', from, new THREE.Vector3(0, 0, -150), (x, z) => terrainHeight(x, z));
+  sim.launchStrategic();
+  const bomb = sim.weapons.projectiles.find((q) => q.kind === 'nuke')!;
+  check(!!bomb && bomb.pos.y < sim.position.y && Math.abs(bomb.vel.z + 150) < 2 && bomb.target === null, 'the nuke drops from the belly with the craft\'s speed, and doesn\'t home');
+  let fall = 0, burstAt: THREE.Vector3 | null = null;
+  for (let i = 0; i < 120 * 90 && !burstAt; i++) {
+    fly();
+    sim.step(idle);
+    if (sim.weapons.projectiles.includes(bomb) && bomb.age > 6) fall = -bomb.vel.y;
+    const b = sim.blasts.at(-1);
+    if (b) burstAt = new THREE.Vector3(b.x, b.y, b.z);
+  }
+  check(fall > 35 && fall < 55, 'under its chute it falls at about 45 m/s', `${fall.toFixed(0)} m/s`);
+  const agl = burstAt ? burstAt.y - terrainHeight(burstAt.x, burstAt.z) : NaN;
+  check(!!burstAt && Math.abs(agl - 300) < 20, 'armed, it bursts about 300 m above the ground', `${agl.toFixed(0)} m up`);
+  const miss = burstAt ? Math.hypot(burstAt.x - pred.point.x, burstAt.z - pred.point.z) : NaN;
+  check(pred.armed && miss < 150, 'the drop marker said where', `${miss.toFixed(0)} m off`);
+  const lowDrop = predictDrop('nuke', new THREE.Vector3(0, terrainHeight(0, 0) + 40, 0), new THREE.Vector3(0, 0, -120), (x, z) => terrainHeight(x, z));
+  check(!lowDrop.armed, 'dropped from 40 m it would reach the ground unarmed: a dud');
 }
 {
   const sim = world();

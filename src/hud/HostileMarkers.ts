@@ -43,20 +43,20 @@ export class LockMarker {
   private shown = false;
   private text = '';
 
-  constructor(root: HTMLElement | null) {
+  constructor(root: HTMLElement | null, cls = 'lock-mark') {
     if (!root) {
       this.el = this.label = null;
       return;
     }
     this.el = document.createElement('div');
-    this.el.className = 'lock-mark';
+    this.el.className = cls;
     this.el.style.display = 'none';
     this.label = document.createElement('small');
     this.el.appendChild(this.label);
     root.appendChild(this.el);
   }
 
-  update(camera: THREE.Camera, target: { pos: THREE.Vector3; range: number; name: string; locked: boolean } | null, width: number, height: number): void {
+  update(camera: THREE.Camera, target: { pos: THREE.Vector3; range: number; name: string; locked: boolean; text?: string } | null, width: number, height: number): void {
     if (!this.el || !this.label) return;
     if (!target) {
       if (this.shown) this.el.style.display = 'none';
@@ -71,7 +71,7 @@ export class LockMarker {
     this.el.classList.toggle('locked', target.locked);
     this.el.classList.toggle('edge', p.edge);
     const r = target.range >= 1000 ? `${(target.range / 1000).toFixed(1)} km` : `${Math.round(target.range / 10) * 10} m`;
-    const text = `${target.locked ? 'LOCK' : 'TRACK'} ${target.name} ${r}`;
+    const text = target.text ? `${target.text} ${r}` : `${target.locked ? 'LOCK' : 'TRACK'} ${target.name} ${r}`;
     if (text !== this.text) this.label.textContent = this.text = text;
     this.shown = true;
   }

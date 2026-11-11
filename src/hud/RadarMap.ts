@@ -17,6 +17,8 @@ export interface RadarState {
   sites: readonly LandingSite[];
   /** The locked vehicle's id (ringed on both), if any. */
   lockedId?: string | null;
+  /** A carried nuke: where it would burst if dropped now, and the fireball's radius (m). */
+  drop?: { x: number; z: number; radius: number; armed: boolean } | null;
   /** Who holds each district (the planet map washes it in the team's colour). */
   territory?: { version: number; ownerOf(ci: number, cj: number): number | null };
   /** The teams' light colours, by team id. */
@@ -287,6 +289,20 @@ export class RadarMap {
       if (ct.id === s.lockedId) this.ring(g, o + p.x * R * edge, o - p.y * R * edge, k);
     }
     g.restore();
+    if (s.drop) {
+      // Where a nuke dropped now would burst: the fireball's reach to scale, dashed if it would be a dud.
+      const p = radarPoint(s.x, s.z, s.heading, s.drop.x, s.drop.z, this.range);
+      if (p.inside) {
+        g.save();
+        g.strokeStyle = PALE;
+        g.lineWidth = k;
+        if (!s.drop.armed) g.setLineDash([3 * k, 3 * k]);
+        g.beginPath();
+        g.arc(o + p.x * R, o - p.y * R, Math.max(3 * k, (s.drop.radius / this.range) * R), 0, Math.PI * 2);
+        g.stroke();
+        g.restore();
+      }
+    }
     this.own(g, o, o, 0, k);
   }
 

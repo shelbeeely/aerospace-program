@@ -47,6 +47,9 @@ import { CraterView } from './render/CraterView.ts';
 import { BoomView } from './render/BoomView.ts';
 import { AiTrafficView } from './render/AiTrafficView.ts';
 import { GroundTurretsView } from './render/GroundTurretsView.ts';
+import { isSea } from './sim/layout.ts';
+import { STRATEGIC } from './sim/strategic.ts';
+import { predictDrop } from './sim/weapons.ts';
 import { StrategicView } from './render/StrategicView.ts';
 import type { TurretDensity } from './sim/groundTurrets.ts';
 import { hostile, isTeam, TEAMS, type Team } from './sim/teams.ts';
@@ -404,6 +407,8 @@ async function start() {
   const hostileMarkers = new HostileMarkers(document.getElementById('hostile-marks'));
   const radarMap = new RadarMap();
   const lockMarker = new LockMarker(document.getElementById('hostile-marks'));
+  const dropMarker = new LockMarker(document.getElementById('hostile-marks'), 'lock-mark drop-mark');
+  const _dropFrom = new THREE.Vector3();
   const _lockPos = new THREE.Vector3();
   const playerTargets = new Map<string, LockTarget>();
   const playerFoes = new Map<string, Foe>();
@@ -1279,8 +1284,17 @@ async function start() {
         _nose.set(0, 0, -1).applyQuaternion(p.pose.rotation);
         contacts.push({ id: `player:${p.id}`, kind: 'player', foe: p.team !== sim.team, x: p.pose.position.x, z: p.pose.position.z, y: p.pose.position.y, heading: Math.atan2(_nose.x, -_nose.z), color: p.color, name: p.name });
       }
+      // Carrying a nuke in the air: where it would burst if dropped now.
+      let drop: { x: number; z: number; radius: number; armed: boolean } | null = null;
+      if (sim.strategic === 'nuke' && !sim.exploded && sim.position.y - terrainHeight(sim.position.x, sim.position.z) > 20) {
+        _dropFrom.set(0, -1.6, 0).applyQuaternion(sim.rotation).add(sim.position);
+        const v = telemetry.velocity;
+        const pr = predictDrop('nuke', _dropFrom, new THREE.Vector3(v[0], v[1], v[2]), (x, z) => (isSea(x) ? 0 : terrainHeight(x, z)));
+        drop = { x: pr.point.x, z: pr.point.z, radius: STRATEGIC.nuke.fireball, armed: pr.armed };
+        dropMarker.update(camera, { pos: pr.point, range: pr.point.distanceTo(sim.position), name: '', locked: pr.armed, text: pr.armed ? 'DROP' : 'DUD: TOO LOW' }, window.innerWidth, window.innerHeight);
+      } else dropMarker.update(camera, null, window.innerWidth, window.innerHeight);
       _nose.set(0, 0, -1).applyQuaternion(sim.rotation);
-      radarMap.update(now / 1000, { x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites(), lockedId: sim.lock.target?.id ?? null, territory: sim.groundTurrets.territory, teamColors: TEAMS.map((t) => t.light) });
+      radarMap.update(now / 1000, { drop, x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites(), lockedId: sim.lock.target?.id ?? null, territory: sim.groundTurrets.territory, teamColors: TEAMS.map((t) => t.light) });
       // The lock: the marker in the view and the LOCK row; the turret row; incoming missiles.
       const tracked = sim.lock.tracked;
       if (tracked) {

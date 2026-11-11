@@ -335,18 +335,35 @@ export class GroundTurretSystem {
   }
 
   /** Keep the turrets near the player live (re-checked once a second, or on a new district). */
+  /**
+   * Other places that must be live besides the player (strike targets, order points, strikes in
+   * flight): turrets stream in round each of them too, so an attack far away plays out for real.
+   */
+  focus: Array<{ x: number; z: number }> = [];
+
+  /** Distance (m) from a point to the nearest place that is live (the player or a focus point). */
+  private nearestLive(x: number, z: number, player: THREE.Vector3): number {
+    let d = Math.hypot(wrapDelta(player.x, x), wrapDelta(player.z, z));
+    for (const f of this.focus) d = Math.min(d, Math.hypot(wrapDelta(f.x, x), wrapDelta(f.z, z)));
+    return d;
+  }
+
   private stream(time: number, player: THREE.Vector3): void {
-    const [ci, cj] = chunkAt(player.x, player.z);
-    const key = `${ci},${cj},${this.density}`;
+    const centres = [player, ...this.focus].map((p) => chunkAt(p.x, p.z));
+    const key = `${centres.map(([a, b]) => `${a},${b}`).join(';')}|${this.density}`;
     if (key === this.streamKey && time - this.streamAt < 1) return;
     this.streamKey = key;
     this.streamAt = time;
     const sites = new Set<string>();
+    const seen = new Set<string>();
     const reach = Math.ceil(DROP / GRID.chunkSize) + 1;
-    for (let di = -reach; di <= reach; di++) for (let dj = -reach; dj <= reach; dj++) {
+    for (const [ci, cj] of centres) for (let di = -reach; di <= reach; di++) for (let dj = -reach; dj <= reach; dj++) {
+      const ck = `${ci + di},${cj + dj}`;
+      if (seen.has(ck)) continue;
+      seen.add(ck);
       for (const s of turretSites(ci + di, cj + dj, this.density)) {
         sites.add(s.id);
-        if (Math.hypot(wrapDelta(player.x, s.x), wrapDelta(player.z, s.z)) > LIVE) continue;
+        if (this.nearestLive(s.x, s.z, player) > LIVE) continue;
         if (this.destroyed.has(s.id) || this.turrets.some((t) => t.site.id === s.id)) continue;
         this.spawn(s, player, time);
       }
@@ -358,7 +375,7 @@ export class GroundTurretSystem {
       const t = this.turrets[i];
       const gone = t.derezAt !== null
         ? time - t.derezAt > 2
-        : !sites.has(t.site.id) || Math.hypot(wrapDelta(player.x, t.pos.x), wrapDelta(player.z, t.pos.z)) > DROP
+        : !sites.has(t.site.id) || this.nearestLive(t.pos.x, t.pos.z, player) > DROP
           || Math.abs(t.pos.x - player.x) > C / 2 || Math.abs(t.pos.z - player.z) > C / 2;
       if (!gone) continue;
       if (t.derezAt === null) this.drop(t);
@@ -439,7 +456,7 @@ export class GroundTurretSystem {
     }
     // The aim wanders (a slow random walk pulled back to zero): about half a degree.
     // Against the player as before; against AI aircraft looser (or they'd sweep the sky clean).
-    const pull = Math.min(1, dt / 2), kick = (target.kind === 'player' ? 0.008 : 0.024) * Math.sqrt(dt);
+    const pull = Math.min(1, dt / 2), kick = (target.kind === 'player' ? 0.008 : target.kind === 'missile' ? 0.05 : 0.024) * Math.sqrt(dt);
     t.aimError.h += -t.aimError.h * pull + (this.random() * 2 - 1) * kick;
     t.aimError.p += -t.aimError.p * pull + (this.random() * 2 - 1) * kick;
     const tp = target.lock.position(this._b);
@@ -457,7 +474,7 @@ export class GroundTurretSystem {
       w.trigger.primary = true;
       t.state = 'firing';
     }
-    if (off < 0.05 && range > MISSILE_MIN && time - t.missileAt > MISSILE_EVERY) {
+    if (target.kind !== 'missile' && off < 0.05 && range > MISSILE_MIN && time - t.missileAt > MISSILE_EVERY) {
       w.trigger.secondary = true;
       w.lock = target.lock;
       t.missileAt = time;

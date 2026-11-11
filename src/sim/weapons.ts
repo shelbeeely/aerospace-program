@@ -51,6 +51,10 @@ export interface WeaponSpec {
   pierce?: number;
   /** Strategic weapons: seconds after launch before the warhead is live (an earlier impact is a dud). */
   armTime?: number;
+  /** A retarding chute: opens `at` s after release and holds the fall near `fall` m/s. */
+  chute?: { at: number; fall: number };
+  /** Airburst: once armed, it goes off this high above the ground (m). */
+  airburst?: number;
   /** Trigger group: primary (guns, cannon) or secondary (bombs, missiles). */
   group: 'primary' | 'secondary';
   /** Bounces off structures before it detonates (identity discs, pulse bolts). */
@@ -72,7 +76,8 @@ export const WEAPONS: Record<WeaponKind, WeaponSpec> = {
   // The railgun: an instant slug out to 4 km that punches through three things before it stops.
   rail: { label: 'Railgun', speed: 0, rate: 0.4, ammo: 20, mass: 8, blast: 2.5, life: 0, gravity: 0, group: 'primary', beam: 4000, pierce: 3 },
   // Strategic weapons, launched one at a time (bought with credits): heavy, slow, homing.
-  nuke: { label: 'Nuke', speed: 40, rate: 0.2, ammo: 1, mass: 400, blast: 400, life: 30, thrust: 60, maxSpeed: 220, gravity: 0.1, group: 'secondary', turn: 20 * Math.PI / 180, seeker: 70 * Math.PI / 180, fuse: 25, armTime: 3 },
+  // The nuke is a bomb: dropped from the belly, a retarding chute, an airburst 300 m up once armed.
+  nuke: { label: 'Nuke', speed: 0, rate: 0.2, ammo: 1, mass: 400, blast: 400, life: 120, gravity: 1, group: 'secondary', armTime: 4, chute: { at: 1.5, fall: 45 }, airburst: 300 },
   emp: { label: 'EMP', speed: 40, rate: 0.2, ammo: 1, mass: 200, blast: 800, life: 30, thrust: 80, maxSpeed: 260, gravity: 0.1, group: 'secondary', turn: 25 * Math.PI / 180, seeker: 70 * Math.PI / 180, fuse: 30, armTime: 1.5 },
 };
 
@@ -200,7 +205,7 @@ const MUZZLE: Record<WeaponKind, THREE.Vector3> = {
   missile: new THREE.Vector3(0, -0.12, -1.1),
   bomb: new THREE.Vector3(0, -0.35, 0),
   rail: new THREE.Vector3(0, 0, -1.9),
-  nuke: new THREE.Vector3(0, -0.5, -1),
+  nuke: new THREE.Vector3(0, -1.6, 0),
   emp: new THREE.Vector3(0, -0.5, -1),
 };
 
@@ -277,6 +282,38 @@ const _h = new THREE.Vector3();
 const _tv = new THREE.Vector3();
 const _hq = new THREE.Quaternion();
 const _hi = new THREE.Quaternion();
+/**
+ * A dropped bomb's acceleration (into `out`, which already holds gravity): with its chute open,
+ * quadratic drag that holds the fall near the chute's speed (and bleeds off the forward drift).
+ */
+function dropAccel(vel: THREE.Vector3, age: number, spec: WeaponSpec, out: THREE.Vector3): void {
+  if (!spec.chute || age < spec.chute.at) return;
+  const k = TUNING.gravity / (spec.chute.fall * spec.chute.fall);
+  out.addScaledVector(vel, -k * vel.length());
+}
+
+/**
+ * Where a strategic bomb dropped now would go off: its fall integrated ahead (gravity, the chute)
+ * until it is armed and at its airburst height, or reaches the ground first (a dud). `groundAt`:
+ * ground height (m). Returns the point, whether it would be armed, and the seconds it takes.
+ */
+export function predictDrop(kind: StrategicKind, pos: THREE.Vector3, vel: THREE.Vector3, groundAt: (x: number, z: number) => number): { point: THREE.Vector3; armed: boolean; time: number } {
+  const spec = WEAPONS[kind];
+  const p = pos.clone(), v = vel.clone(), a = new THREE.Vector3();
+  const dt = 0.05;
+  for (let t = 0; t < spec.life; t += dt) {
+    const ground = groundAt(p.x, p.z);
+    const armed = !spec.armTime || t >= spec.armTime;
+    if (armed && spec.airburst && p.y - ground <= spec.airburst) return { point: p, armed: true, time: t };
+    if (p.y <= ground) return { point: p.setY(ground), armed, time: t };
+    a.set(0, -TUNING.gravity * spec.gravity, 0);
+    dropAccel(v, t, spec, a);
+    v.addScaledVector(a, dt);
+    p.addScaledVector(v, dt);
+  }
+  return { point: p, armed: true, time: spec.life };
+}
+
 /** Projectile ids are unique across every weapon system (the renderer keys trails by them). */
 let nextProjectileId = 1;
 
@@ -337,7 +374,8 @@ export class WeaponSystem {
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(host.rotation).normalize();
     const pos = MUZZLE[kind].clone().applyQuaternion(host.rotation).add(host.position);
     const vel = host.linvel.clone().addScaledVector(dir, spec.speed);
-    const target = this.lock?.alive() ? this.lock : null;
+    // A dropped bomb (the nuke) falls where it falls; a missile (the EMP) homes on the lock.
+    const target = !spec.chute && this.lock?.alive() ? this.lock : null;
     const p: Projectile = { id: nextProjectileId++, kind, pos, vel, heading: dir.clone(), age: 0, color: host.color, bounces: 0, target };
     this.projectiles.push(p);
     this.fired++;
@@ -463,11 +501,22 @@ export class WeaponSystem {
         if (along < spec.maxSpeed) _g.addScaledVector(p.heading, spec.thrust);
       }
       if (p.kind === 'bomb') _g.addScaledVector(p.vel, -0.00005 * p.vel.length());
+      if (spec.chute) dropAccel(p.vel, p.age, spec, _g);
+      // Airburst: armed and low enough, it goes off where it is.
+      if (spec.airburst && spec.armTime && p.age >= spec.armTime && p.pos.y - host.groundAt(p.pos.x, p.pos.z) <= spec.airburst) {
+        const hit = this.impact(p, p.pos.clone(), new THREE.Vector3(0, 1, 0), null, time);
+        list.splice(i, 1);
+        this.hits++;
+        this.impacts.push(hit);
+        if (this.impacts.length > 64) this.impacts.splice(0, this.impacts.length - 64);
+        this.onImpact?.(hit);
+        continue;
+      }
       _a.copy(p.pos);
       p.vel.addScaledVector(_g, dt);
       _b.copy(p.pos).addScaledVector(p.vel, dt);
       // Bombs are nose-heavy: they weathercock nose-first into the airflow over about a second.
-      if (p.kind === 'bomb' && p.vel.lengthSq() > 1) p.heading.lerp(_c.copy(p.vel).normalize(), Math.min(1, dt * 2.5)).normalize();
+      if ((p.kind === 'bomb' || spec.chute) && p.vel.lengthSq() > 1) p.heading.lerp(_c.copy(p.vel).normalize(), Math.min(1, dt * 2.5)).normalize();
       // Sweep the segment just flown.
       const seg = _b.clone().sub(_a);
       const len = seg.length();

@@ -83,6 +83,10 @@ body.mode-hangar #radar, body.mode-hangar #planet-map { display: none; }
   font-size: 10px; letter-spacing: 0.08em; white-space: nowrap; text-shadow: 0 0 3px #000; opacity: 0.85;
 }
 .lock-mark.locked small { opacity: 1; font-weight: bold; }
+.lock-mark.drop-mark { color: #dff6ff; }
+.lock-mark.drop-mark::before { transform: none; border-radius: 50%; inset: 0; }
+.lock-mark.drop-mark:not(.locked)::before { border-style: dashed; }
+
 #missile-warn {
   position: absolute; top: 30%; left: 50%; transform: translateX(-50%); pointer-events: none;
   font-size: 24px; font-weight: bold; letter-spacing: 0.3em; color: #ff2a12;
