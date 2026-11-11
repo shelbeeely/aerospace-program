@@ -1,9 +1,9 @@
 /**
  * Enemy AI aircraft, headless. Run with `npm run enemies`.
  *
- * 1. Hostiles are kept at their count beside the peaceful traffic: aeroplanes in red-team colours
- *    (warm dark bodies, red light), armed with guns and missiles.
- * 2. An unarmed player is left alone: they patrol and never fire.
+ * 1. Enemy aircraft are kept at their count beside the peaceful traffic: aeroplanes in their
+ *    team's colours (the two teams the player isn't on), armed with guns and missiles.
+ * 2. An unarmed player is left alone: no enemy hunts it or hits it (they fight each other).
  * 3. An armed player is hunted: they close, attack and fire, their rounds damage the craft, and
  *    they neither fly into the ground or a structure nor ram the player.
  * 4. A hostile takes several gun hits; shooting it down counts as a kill and another arrives.
@@ -13,7 +13,8 @@ import * as THREE from 'three';
 import { BUILTINS } from '../src/craft/builtins.ts';
 import { JET } from '../src/craft/jet.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
-import { BODY_WARM, LIGHTS, redTeam } from '../src/craft/style1982.ts';
+import { BODY_COOL, BODY_WARM, LIGHTS, redTeam } from '../src/craft/style1982.ts';
+import { TEAMS } from '../src/sim/teams.ts';
 import { flyerKind } from '../src/sim/aiTraffic.ts';
 import { Autopilot } from '../src/sim/autopilot.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
@@ -37,19 +38,19 @@ console.log('--- unarmed player');
   sim.traffic.enabled = false;
   sim.airTraffic.pool = pool;
   sim.airTraffic.count = 4;
-  sim.airTraffic.hostiles = 3;
+  sim.airTraffic.enemies = 3;
   let left = 0;
   for (let i = 0; i < 120 * 90; i++) {
     sim.step(idle);
-    if (i % 60 === 0 && sim.airTraffic.hostileFlyers().some((f) => f.combat !== 'patrol')) left++;
+    if (i % 60 === 0 && sim.airTraffic.hostileFlyers().some((f) => f.target?.kind === 'player')) left++;
   }
   const hostiles = sim.airTraffic.hostileFlyers();
   const peaceful = sim.airTraffic.flyers.filter((f) => !f.hostile && f.derezAt === null);
   check(hostiles.length === 3 && peaceful.length === 4, 'three hostiles fly beside four peaceful aircraft', hostiles.map((f) => `${f.name} (${f.speed.toFixed(0)} m/s)`).join(', '));
   check(hostiles.every((f) => flyerKind(f.def) === 'airplane'), 'hostiles are aeroplanes');
-  const palette = [...BODY_WARM, ...LIGHTS] as readonly string[];
-  const red = hostiles.every((f) => f.color === RED && f.def.parts.every((p) => palette.includes(p.color)) && f.def.parts.some((p) => p.color === RED));
-  check(red, 'they wear red-team colours: warm dark bodies, red light');
+  const palette = [...BODY_WARM, ...BODY_COOL, ...LIGHTS] as readonly string[];
+  const worn = hostiles.every((f) => f.side !== null && f.side !== sim.team && f.side < 3 && f.color === TEAMS[f.side].light && f.def.parts.every((p) => palette.includes(p.color)));
+  check(worn, 'they wear their own team\'s colours, of the two other teams', hostiles.map((f) => TEAMS[f.side as 0].name).join(', '));
   const lit = (def: typeof JET) => {
     const area = (p: (typeof def.parts)[number]) => (p.shape.type === 'box' ? p.shape.size[0] * p.shape.size[1] + p.shape.size[1] * p.shape.size[2] + p.shape.size[0] * p.shape.size[2] : p.shape.type === 'sphere' ? 6 * p.shape.radius ** 2 : 4 * p.shape.radius * p.shape.length);
     const all = def.parts.reduce((s, p) => s + area(p), 0);
@@ -58,8 +59,7 @@ console.log('--- unarmed player');
   const share = Math.max(...pool.filter((d) => flyerKind(d) === 'airplane').map((d) => lit(redTeam(d))));
   check(share < 0.3, 'light stays selective on every red-team design', `at most ${(share * 100).toFixed(0)}% lit`);
   check(hostiles.every((f) => f.weapons && f.weapons.mounts.some((m) => m.kind === 'gun') && f.weapons.mounts.some((m) => m.kind === 'missile')), 'each carries guns and missiles');
-  const fired = hostiles.reduce((s, f) => s + (f.weapons?.fired ?? 0), 0);
-  check(sim.weapons.mounts.length === 0 && left === 0 && fired === 0, 'they leave an unarmed craft alone', `${fired} rounds fired`);
+  check(sim.weapons.mounts.length === 0 && left === 0 && sim.hitsTaken === 0, 'they leave an unarmed craft alone', `${left} samples hunting it`);
 }
 
 // ---------------------------------------------------------------- 3. armed: the hunt
@@ -68,7 +68,7 @@ function hunt(seconds: number) {
   const sim = new Simulation(JET);
   sim.traffic.enabled = false;
   sim.airTraffic.pool = pool;
-  sim.airTraffic.hostiles = 3;
+  sim.airTraffic.enemies = 3;
   // Airborne at 600 m, flying a wide lazy circle.
   const b = sim.craft.body;
   b.setTranslation({ x: 0, y: 600, z: -2000 }, true);
@@ -100,10 +100,10 @@ function hunt(seconds: number) {
   check(sim.hitsTaken > 0, 'their rounds strike the craft', `${sim.hitsTaken} hits, ${sim.failures.filter((f) => f.cause === 'weapon').length} parts shot off`);
   check(sim.exploded && sim.derezCause === 'shot', 'a craft that never evades is shot down', `after ${sim.time.toFixed(0)} s (${sim.derezCause ?? 'still flying'})`);
   check(minClear > 10, 'they stay clear of the ground and the structures', `closest ${minClear.toFixed(0)} m`);
-  check(sim.airTraffic.derezzed === 0 && minRange > 15, 'they break off rather than ram', `closest pass ${minRange.toFixed(0)} m`);
+  check(minRange > 15, 'they break off rather than ram', `closest pass ${minRange.toFixed(0)} m`);
   // Once the craft is gone they go back to their patrol.
   for (let i = 0; i < 120 * 3; i++) sim.step(idle);
-  check(sim.airTraffic.hostileFlyers().every((f) => f.combat === 'patrol'), 'and they return to patrol once it is down');
+  check(sim.airTraffic.hostileFlyers().every((f) => f.target?.kind !== 'player'), 'and they leave it be once it is down');
 }
 
 // ---------------------------------------------------------------- 4. hit points and kills
@@ -112,7 +112,7 @@ console.log('--- shooting one down');
   const sim = new Simulation(JET);
   sim.traffic.enabled = false;
   sim.airTraffic.pool = [JET];
-  sim.airTraffic.hostiles = 1;
+  sim.airTraffic.enemies = 1;
   sim.weapons.arm(JET, 'guns');
   for (let i = 0; i < 30; i++) sim.step(idle);
   const f = sim.airTraffic.hostileFlyers()[0];

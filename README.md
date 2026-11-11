@@ -23,6 +23,7 @@ npm run air            # AI air traffic: count, clearance, destinations and circ
 npm run radar          # radar and planet map: contacts, heading-up scope, wrap-aware geometry
 npm run lock           # target lock, homing missiles, turret traverse/elevation and auto-aim, chase mode
 npm run turrets        # tower turrets: placement, streaming, armed-only fire, line of sight, kills, fracture
+npm run teams          # teams: liveries, territory, the AI war, friendly fire, capture, freelancers, mercenaries
 npm run enemies        # enemy aircraft: red-team colours, patrol vs hunt, gunnery, hit points, kills, determinism
 npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
@@ -258,12 +259,46 @@ anything in the way. The flight model is a kinematic coordinated turn (banking i
 two dozen cost almost nothing; each carries a kinematic collider, so you can fly into one or
 shoot it down (it derezzes in its circuit colour and another takes its place).
 
+## Teams, territory and the war
+
+Three teams hold the planet: **Cyan**, **Red** and **Amber** (`src/sim/teams.ts`). Each starts
+with a third of the region cells, so territory comes in large contiguous patches
+(`src/sim/territory.ts`); the planet map washes every district in its holder's colour.
+
+- **Pick your team** in the hangar (TEAM, above SPAWN; remembered). Your craft is restyled in
+  its livery (`teamLivery` / `sideLivery`: the team's light on its bodies, within the light
+  budget), and spawn sites in another team's territory say so. Your designs are saved without
+  the livery.
+- **Turrets take sides:** a tower turret belongs to its district's holder. Your team's never fire
+  on you; the others' do (while you're armed), and they fire on enemy aircraft too.
+- **The AI war:** team aircraft fight every other side, not only you (F3: *Friendly aircraft*
+  0-6, *Enemy aircraft* 0-8 split between the two other teams). With nothing to fight,
+  friendlies escort you and go first for anything attacking you. Enemy aircraft also attack
+  turrets of the teams they fight, diving on them and firing homing missiles from outside their
+  guns' reach.
+- **Capture:** when the last turret of a district falls, the district goes to the team whose
+  fire destroyed it (yours if you did it) and its turrets rise again in the new colours 20 s
+  later. AI teams capture too, so the front line moves on its own. A world reset (Backspace)
+  restores the starting map.
+- **No friendly fire:** your rounds don't hurt your side's aircraft or turrets, and theirs
+  don't hurt you; the lock never picks a friend.
+- **Freelancers** (F3, 0-4, default 1) belong to no one and fight everyone: white light on steel.
+  They never capture.
+- **Mercenaries** are wingmen you hire with credits (`'`, or *Mercenaries* in the touch menu).
+  You earn 100 credits per aircraft shot down, 150 per turret and 300 per district captured
+  (kept between sessions; the CREDITS row). A contract lasts five minutes and costs 200-650 by
+  design (`src/sim/mercenaries.ts`), up to three at once. A mercenary flies for you whatever
+  your team, in bright blue with an M on the radar; it escorts, goes for anything attacking you,
+  then your enemies, and leaves when its time is up.
+- **Multiplayer:** your team is sent to the room (in the hello and whenever you change it);
+  other players show as friend or foe by team, team-mates are never locked, and your AI and
+  turrets treat enemy-team players as foes. Territory, the AI and captures are still simulated
+  by each client.
+
 ## Enemy aircraft
 
-Hostile programs fly among the traffic (F3 → *AI air traffic* → *Hostile aircraft*, 0-8,
-default 2, remembered): the fast aeroplanes of the same pool in red-team colours (warm
-near-black bodies, red light; `redTeam()` in `src/craft/style1982.ts`), each with its own guns
-and missiles and six hit points.
+Enemy programs fly among the traffic in their team's colours: the fast aeroplanes of the same
+pool, each with its own guns and missiles and six hit points.
 
 - **They hunt only an armed craft.** While yours carries no weapons (the Trainer, or loadout
   *Unarmed*; `I` cycles it) they patrol like everyone else. Arm it within 4 km of one and it

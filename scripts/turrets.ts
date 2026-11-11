@@ -23,6 +23,8 @@ import { terrainHeight } from '../src/sim/terrain.ts';
 import { landingSites } from '../src/world/landingSites.ts';
 import { obstacleTop } from '../src/world/structures.ts';
 import { validateCraft } from '../src/craft/validate.ts';
+import { baseOwner } from '../src/sim/territory.ts';
+import type { Team } from '../src/sim/teams.ts';
 import { BODY_WARM, LIGHTS } from '../src/craft/style1982.ts';
 
 await initPhysics();
@@ -75,10 +77,12 @@ function hold(sim: Simulation, p: THREE.Vector3, look = head): void {
   b.setLinvel({ x: 0, y: 0, z: 0 }, true);
   b.setAngvel({ x: 0, y: 0, z: 0 }, true);
 }
+/** A world where the player flies for a team that doesn't hold the site's district (its turret is an enemy). */
 function world(def = JET): Simulation {
   const sim = new Simulation(def);
   sim.traffic.enabled = false;
   sim.groundTurrets.density = 1;
+  sim.setTeam((((baseOwner(site.ci, site.cj) ?? 0) + 1) % 3) as Team);
   return sim;
 }
 const turretAt = (sim: Simulation) => sim.groundTurrets.turrets.find((t) => t.site.id === site.id && t.derezAt === null);
@@ -107,7 +111,7 @@ console.log('--- streaming');
   check(!sim.groundTurrets.turrets.some((t) => t.site.id === site.id), 'and goes when the player leaves');
   for (let i = 0; i < 150; i++) { hold(sim, near); sim.step(idle); }
   const t = turretAt(sim)!;
-  sim.derezTurret(t, true);
+  sim.derezTurret(t, false); // (no side's kill: no capture)
   for (let i = 0; i < 150; i++) { hold(sim, far); sim.step(idle); }
   for (let i = 0; i < 150; i++) { hold(sim, near); sim.step(idle); }
   check(!turretAt(sim) && sim.groundTurrets.destroyed.has(site.id), 'a destroyed turret stays down after leaving and coming back');

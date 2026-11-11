@@ -150,6 +150,25 @@ test('two players see each other, states and events relay, other rooms are isola
   for (const x of [a, c, d]) x.close();
 });
 
+test('teams: given on hello, relayed on change, invalid ones read as Cyan', async () => {
+  const a = new Client(), b = new Client();
+  await a.opened();
+  a.send({ t: 'hello', v: PROTOCOL_VERSION, room: 'TEAMS', name: 'Red one', color: '#ff2a12', craft: CRAFT, team: 1 });
+  await a.waitFor('welcome');
+  await b.opened();
+  b.send({ t: 'hello', v: PROTOCOL_VERSION, room: 'TEAMS', name: 'Odd one', color: '#ffffff', craft: CRAFT, team: 7 as never });
+  const wb = await b.waitFor('welcome');
+  expect(wb.players.map((p) => p.team)).toEqual([1]);
+  const joined = await a.waitFor('join');
+  expect(joined.player.team).toBe(0);
+  a.send({ t: 'team', team: 2 });
+  const change = await b.waitFor('team');
+  expect(change.team).toBe(2);
+  expect(change.id).toBe(wb.players[0].id);
+  a.close();
+  b.close();
+});
+
 test('room creation, bad codes and protocol version', async () => {
   const a = new Client();
   const w = await a.join('', 'Alpha');

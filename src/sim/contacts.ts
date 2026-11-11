@@ -1,5 +1,6 @@
 import { PLANET } from './layout.ts';
 import { HX, HZ, TRAFFIC } from './traffic.ts';
+import { hostile } from './teams.ts';
 import type { Simulation } from './Simulation.ts';
 
 /**
@@ -24,8 +25,12 @@ export interface Contact {
   /** Its circuit colour. */
   color: string;
   name: string;
-  /** A hostile that is hunting the player. */
+  /** A combat aircraft or turret that is fighting (attacking someone). */
   attacking?: boolean;
+  /** Fights the player's side (enemy team, freelancer). */
+  foe?: boolean;
+  /** A hired mercenary. */
+  merc?: boolean;
 }
 
 /** Shortest signed distance from a to b along one wrapped axis (m). */
@@ -40,11 +45,14 @@ export function simContacts(sim: Simulation): Contact[] {
   const out: Contact[] = [];
   for (const f of sim.airTraffic.flyers) {
     if (f.derezAt !== null) continue;
-    out.push({ id: `air:${f.id}`, kind: f.hostile ? 'hostile' : 'aircraft', x: f.pos.x, z: f.pos.z, y: f.pos.y, heading: f.heading, color: f.color, name: f.name, attacking: f.hostile && f.combat !== 'patrol' });
+    out.push({
+      id: `air:${f.id}`, kind: f.hostile ? 'hostile' : 'aircraft', x: f.pos.x, z: f.pos.z, y: f.pos.y, heading: f.heading, color: f.color, name: f.name,
+      attacking: f.hostile && f.combat !== 'patrol', foe: f.side !== null && hostile(sim.team, f.side), merc: f.role === 'merc',
+    });
   }
   for (const t of sim.groundTurrets.turrets) {
     if (t.derezAt !== null) continue;
-    out.push({ id: `turret:${t.site.id}`, kind: 'turret', x: t.pos.x, z: t.pos.z, y: t.pos.y, heading: t.pose.yaw, color: t.color, name: 'Tower turret', attacking: t.state === 'firing' });
+    out.push({ id: `turret:${t.site.id}`, kind: 'turret', x: t.pos.x, z: t.pos.z, y: t.pos.y, heading: t.pose.yaw, color: t.color, name: 'Tower turret', attacking: t.state === 'firing', foe: hostile(sim.team, t.side) });
   }
   for (const r of sim.traffic.riders) {
     if (r.derezAt !== null) continue;

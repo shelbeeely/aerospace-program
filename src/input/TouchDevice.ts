@@ -107,6 +107,7 @@ export class TouchDevice implements InputDevice {
       button('Flaps', 'Flaps: next detent', () => (this.flapCycle = true)),
       button('Weapons', 'Weapons loadout: next', 'loadout'),
       button('Map', 'Planet map: every vehicle', 'map'),
+      button('Mercenaries', 'Hire mercenaries', 'mercs'),
       button('Sound', 'Sound on/off', 'mute'),
       button('Photo', 'Screenshot', 'screenshot'),
     );

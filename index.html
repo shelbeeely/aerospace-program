@@ -21,7 +21,7 @@
       <div class="map-head"><b>PLANET MAP</b><span id="planet-map-info"></span><button type="button" id="planet-map-close" title="Close (Tab)">Close</button></div>
       <canvas id="planet-map-canvas"></canvas>
       <div class="map-legend">
-        <span><i class="lg-own"></i>you</span><span><i class="lg-air"></i>aircraft</span><span><i class="lg-hostile"></i>hostile</span><span><i class="lg-turret"></i>turret</span>
+        <span><i class="lg-own"></i>you</span><span><i class="lg-air"></i>aircraft</span><span><i class="lg-hostile"></i>hostile</span><span><i class="lg-turret"></i>turret</span><span><i class="lg-team" style="background:#00d4ff"></i>Cyan</span><span><i class="lg-team" style="background:#ff2a12"></i>Red</span><span><i class="lg-team" style="background:#ffb000"></i>Amber</span><span><i class="lg-team" style="background:#dff6ff"></i>freelancer</span><span><i class="lg-team" style="background:#3d7cff"></i>mercenary</span>
         <span><i class="lg-rider"></i>light cycle</span><span><i class="lg-player"></i>player</span><span><i class="lg-runway"></i>runway</span>
         <span><i class="lg-ring"></i>radar range</span>
       </div>
@@ -56,6 +56,7 @@
       <div class="row" id="h-arm-row" style="display:none"><span>ARM</span><b id="h-arm">--</b><small></small></div>
       <div class="row" id="h-lock-row" style="display:none"><span title="Target lock: the vehicle on your aim line. Locked missiles home on it, the turret aims at it, Enter chases it">LOCK</span><b id="h-lock">--</b><small id="h-lock-r"></small></div>
       <div class="row" id="h-turret-row" style="display:none"><span title="Turret: traverse (arrows ← →) and elevation (↑ ↓); / recentres">TURRET</span><b id="h-turret">--</b><small id="h-turret-m"></small></div>
+      <div class="row" id="h-merc-row" style="display:none"><span title="Credits, and hired mercenaries with the soonest contract end (' to hire)">CREDITS</span><b id="h-merc">--</b><small id="h-merc-t"></small></div>
       <div class="row" id="h-hostile-row" style="display:none"><span title="Hostile aircraft: how many, the nearest one's range and bearing, and your kills">HOSTILE</span><b id="h-hostile">--</b><small id="h-hostile-k"></small></div>
       <div class="row" id="h-fuel-row"><span>FUEL</span><b id="h-fuel">--</b><small>%</small></div>
       <div class="row" id="h-batt-row" style="display: none"><span>BATT</span><b id="h-batt">--</b><small>%</small></div>
@@ -141,9 +142,11 @@
       <h3>AI air traffic</h3>
       <label>Aircraft around you <b id="w-ai-count-v">8</b> <input id="w-ai-count" type="range" min="0" max="24" step="1" value="8" /></label>
       <label><input id="w-ai-mine" type="checkbox" checked /> Include my designs (single player)</label>
-      <label>Hostile aircraft <b id="w-hostile-count-v">2</b> <input id="w-hostile-count" type="range" min="0" max="8" step="1" value="2" /></label>
+      <label>Friendly aircraft <b id="w-friends-v">2</b> <input id="w-friends" type="range" min="0" max="6" step="1" value="2" /></label>
+      <label>Enemy aircraft <b id="w-enemies-v">3</b> <input id="w-enemies" type="range" min="0" max="8" step="1" value="3" /></label>
+      <label>Freelancers <b id="w-free-v">1</b> <input id="w-free" type="range" min="0" max="4" step="1" value="1" /></label>
       <label>Tower turrets <b id="w-turrets-v">Sparse</b> <input id="w-turrets" type="range" min="0" max="2" step="1" value="1" /></label>
-      <p class="muted small">Hostile aircraft and tower turrets fire on you only while your craft carries weapons (I cycles the loadout).</p>
+      <p class="muted small">Three teams (Cyan, Red, Amber) hold the planet; pick yours in the hangar. Enemy aircraft and turrets fire on you only while your craft carries weapons (I cycles the loadout). Freelancers fight everyone. ' hires mercenaries.</p>
       <p class="muted small">Triggers affect flight physics. Reset clears events.</p>
       <div class="legend">
         <span style="color:#33ff55">■ lift</span>

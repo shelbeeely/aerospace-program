@@ -17,9 +17,13 @@ export interface RadarState {
   sites: readonly LandingSite[];
   /** The locked vehicle's id (ringed on both), if any. */
   lockedId?: string | null;
+  /** Who holds each district (the planet map washes it in the team's colour). */
+  territory?: { version: number; ownerOf(ci: number, cj: number): number | null };
+  /** The teams' light colours, by team id. */
+  teamColors?: readonly string[];
 }
 
-const CYAN = '#00d4ff', RED = '#ff2a12', PALE = '#dff6ff', DIM = 'rgba(111, 138, 168, 0.55)';
+const CYAN = '#00d4ff', PALE = '#dff6ff', DIM = 'rgba(111, 138, 168, 0.55)';
 /** The Outlands on the map: dark surfaces, one step apart (light stays for what moves). */
 const OUTLANDS: Record<string, [number, number, number]> = {
   'grid-plains': [10, 26, 51], sea: [22, 44, 68], canyons: [30, 22, 38], wasteland: [18, 24, 36], 'mech-caverns': [6, 10, 20],
@@ -110,10 +114,10 @@ export class RadarMap {
       g.fillStyle = c.color;
       g.fillRect(-k, -k, 2 * k, 2 * k);
     } else if (c.kind === 'turret') {
-      // A tower turret: a small red square, solid while it is firing.
+      // A tower turret: a small square in its team's colour, solid if it is an enemy's.
       g.globalAlpha = c.attacking ? 1 : 0.75;
-      g.strokeStyle = g.fillStyle = RED;
-      if (c.attacking) g.fillRect(-3 * k, -3 * k, 6 * k, 6 * k);
+      g.strokeStyle = g.fillStyle = c.color;
+      if (c.foe) g.fillRect(-3 * k, -3 * k, 6 * k, 6 * k);
       else g.strokeRect(-3 * k, -3 * k, 6 * k, 6 * k);
     } else if (c.kind === 'player') {
       g.strokeStyle = PALE;
@@ -122,18 +126,31 @@ export class RadarMap {
       g.closePath();
       g.stroke();
     } else {
-      // An arrowhead on its heading: a hostile solid red (brighter while it attacks).
+      // An arrowhead on its heading in its side's colour: an enemy solid (brighter while it
+      // fights), a friend outlined with a dot, a mercenary marked M, other traffic outlined dim.
+      g.save();
       g.rotate(angle);
       g.beginPath();
       g.moveTo(0, -5.5 * k); g.lineTo(3.6 * k, 4 * k); g.lineTo(0, 2 * k); g.lineTo(-3.6 * k, 4 * k);
       g.closePath();
-      if (c.kind === 'hostile') {
+      g.strokeStyle = g.fillStyle = c.color;
+      if (c.kind === 'hostile' && c.foe) {
         g.globalAlpha = c.attacking ? 1 : 0.7;
-        g.fillStyle = RED;
         g.fill();
-      } else {
-        g.strokeStyle = c.color;
+      } else if (c.kind === 'hostile') {
         g.stroke();
+        g.fillRect(-0.8 * k, -0.8 * k, 1.6 * k, 1.6 * k);
+      } else {
+        g.globalAlpha = 0.6;
+        g.stroke();
+      }
+      g.restore();
+      if (c.merc) {
+        g.fillStyle = c.color;
+        g.font = `bold ${8 * k}px ui-monospace, monospace`;
+        g.textAlign = 'left';
+        g.textBaseline = 'middle';
+        g.fillText('M', 5 * k, -4 * k);
       }
     }
     g.restore();
@@ -239,6 +256,29 @@ export class RadarMap {
     return (this.base = c);
   }
 
+  private wash: HTMLCanvasElement | null = null;
+  private washVersion = -1;
+
+  /** One pixel per district in its holder's colour (rebuilt when territory changes hands). */
+  private washMap(s: RadarState): HTMLCanvasElement | null {
+    const t = s.territory, colors = s.teamColors;
+    if (!t || !colors) return null;
+    if (this.wash && this.washVersion === t.version) return this.wash;
+    const n = GRID.chunks;
+    const c = (this.wash ??= document.createElement('canvas'));
+    c.width = c.height = n;
+    const g = c.getContext('2d')!;
+    g.clearRect(0, 0, n, n);
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      const team = t.ownerOf(i, j);
+      if (team === null) continue;
+      g.fillStyle = colors[team];
+      g.fillRect(i, j, 1, 1);
+    }
+    this.washVersion = t.version;
+    return c;
+  }
+
   private drawMap(c: HTMLCanvasElement, s: RadarState): void {
     const { size, k } = this.fit(c);
     const g = c.getContext('2d');
@@ -250,6 +290,15 @@ export class RadarMap {
     g.imageSmoothingEnabled = false;
     const base = this.baseMap();
     for (const tx of [ox - size, ox]) for (const ty of [oy - size, oy]) g.drawImage(base, tx, ty, size, size);
+    // Territory: each district faintly washed in its holder's colour.
+    const wash = this.washMap(s);
+    if (wash) {
+      g.imageSmoothingEnabled = true;
+      g.globalAlpha = 0.28;
+      for (const tx of [ox - size, ox]) for (const ty of [oy - size, oy]) g.drawImage(wash, tx, ty, size, size);
+      g.globalAlpha = 1;
+      g.imageSmoothingEnabled = false;
+    }
     const at = (x: number, z: number) => {
       const p = mapPoint(s.x, s.z, x, z);
       return [p.u * size, p.v * size] as const;
@@ -282,9 +331,10 @@ export class RadarMap {
     g.arc(size / 2, size / 2, this.range * m, 0, Math.PI * 2);
     g.stroke();
     const order = { rider: 0, aircraft: 1, player: 2, turret: 3, hostile: 4 } as const;
-    const count = { rider: 0, aircraft: 0, player: 0, turret: 0, hostile: 0 };
+    const count = { rider: 0, aircraft: 0, player: 0, turret: 0, hostile: 0, friend: 0 };
     for (const ct of [...s.contacts].sort((a, b) => order[a.kind] - order[b.kind])) {
-      count[ct.kind]++;
+      if (ct.kind === 'hostile' && !ct.foe) count.friend++;
+      else count[ct.kind]++;
       const [x, y] = at(ct.x, ct.z);
       this.mark(g, ct, x, y, ct.heading, k);
       if (ct.id === s.lockedId) this.ring(g, x, y, k);
@@ -308,7 +358,7 @@ export class RadarMap {
     g.fillStyle = DIM;
     g.fillText('N', size / 2, 10 * k);
     if (this.info) {
-      const text = `${count.aircraft} aircraft · ${count.hostile} hostile${count.turret ? ` · ${count.turret} turrets` : ''} · ${count.rider} light cycles${count.player ? ` · ${count.player} players` : ''}`;
+      const text = `${count.aircraft} aircraft · ${count.friend} friendly · ${count.hostile} enemy${count.turret ? ` · ${count.turret} turrets` : ''} · ${count.rider} light cycles${count.player ? ` · ${count.player} players` : ''}`;
       if (this.info.textContent !== text) this.info.textContent = text;
     }
   }

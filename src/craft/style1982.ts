@@ -40,6 +40,7 @@ const hueDist = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Math.a
 
 /** Snap a colour to the nearest 1982 light colour by hue (unsaturated: white). */
 export function snapLight(color: string): string {
+  if ((LIGHTS as readonly string[]).includes(color.toLowerCase())) return color.toLowerCase(); // already a 1982 light
   const c = hsl(color);
   if (!c || c[1] < 0.2) return LIGHTS[5];
   let best = 0;
@@ -167,20 +168,26 @@ export function style1982(def: CraftDef): CraftDef {
 }
 
 /**
- * The same craft in red-team colours (hostile programs): every light red, every body surface
- * the warm near-black of the same step, the trail red. Idempotent, and still a 1982 craft.
+ * The same craft in a side's livery: every light in `light` (a 1982 light colour), every body
+ * surface the same step of the warm or the cool body set, the trail in `light`. Idempotent, and
+ * still a 1982 craft (the light budget is the one style1982 already kept).
  */
-export function redTeam(def: CraftDef): CraftDef {
+export function livery(def: CraftDef, light: string, warmBody: boolean): CraftDef {
   const styled = style1982(def);
-  const red = LIGHTS[2];
+  const to = warmBody ? BODY_WARM : BODY_COOL, from = warmBody ? BODY_COOL : BODY_WARM;
   const parts = styled.parts.map((p) => {
     const c = p.color.toLowerCase();
-    const cool = (BODY_COOL as readonly string[]).indexOf(c);
-    const color = isPalette(c, LIGHTS) ? red : cool >= 0 ? BODY_WARM[cool] : isPalette(c, BODY_WARM) ? c : snapBody(c, true);
-    const modules = p.modules?.map((m) => (m.type === 'trail' ? { ...m, color: red } : m));
+    const i = (from as readonly string[]).indexOf(c);
+    const color = isPalette(c, LIGHTS) ? light : i >= 0 ? to[i] : isPalette(c, to) ? c : snapBody(c, warmBody);
+    const modules = p.modules?.map((m) => (m.type === 'trail' ? { ...m, color: light } : m));
     return { ...p, color, ...(modules ? { modules } : {}) };
   });
   return style1982({ ...styled, parts });
+}
+
+/** The same craft in red-team colours: red light, warm near-black bodies. */
+export function redTeam(def: CraftDef): CraftDef {
+  return livery(def, LIGHTS[2], true);
 }
 
 /** Is this colour a dark body surface (dim structural edges) rather than light? */

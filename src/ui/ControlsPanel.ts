@@ -21,6 +21,7 @@ const KEYBOARD: Array<[string, string]> = [
   ['← → ↑ ↓', 'turret: traverse and elevate (tank); left alone, it aims at the lock'],
   ['/', 'turret back to the nose'],
   ['Enter', 'chase the locked vehicle (flight computer; again or the stick ends it)'],
+  ["'", 'mercenaries: hire wingmen with the credits you earn'],
   ['\\', 'radar range: 2 / 5 / 12 km'],
   ['U', 'autopilot on / off (then W/S altitude, A/D heading, Shift/Ctrl speed)'],
   ['J', 'flight computer: hold, takeoff, land, go to, orbit, level (a firm stick input takes over)'],

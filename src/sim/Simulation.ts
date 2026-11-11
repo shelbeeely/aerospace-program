@@ -21,7 +21,9 @@ import { LightningSystem, type LightningStrike, type StrikeTarget } from './ligh
 import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
 import { craftBounds, WEAPON_DAMAGE, WEAPONS, WeaponSystem, type Mount, type WeaponHost, type WeaponImpact, type WeaponKind } from './weapons.ts';
-import { AiAirTraffic, type AiFlyer, type AirTarget } from './aiTraffic.ts';
+import { AiAirTraffic, type AiFlyer, type AirTarget, type Foe } from './aiTraffic.ts';
+import { hostile, sideLivery, sideName, TEAMS, type Side, type Team } from './teams.ts';
+import { CREDITS, mercPrice } from './mercenaries.ts';
 import { GroundTurretSystem, TURRET_HEAD_Y, type GroundTurret } from './groundTurrets.ts';
 import { WeaponMount } from '../modules/WeaponMount.ts';
 import { BOOM_DAMAGE, BOOM_DEREZ, BOOM_SHATTER, boomBite, boomOverpressure, boomReach, type BoomEvent } from './sonicBoom.ts';
@@ -175,7 +177,10 @@ export class Simulation {
   derezFlyer(f: AiFlyer, byPlayer = false): void {
     if (f.derezAt !== null) return;
     this.airTraffic.derez(f, this.time);
-    if (byPlayer && f.hostile) this.airTraffic.kills++;
+    if (byPlayer && f.side !== null && hostile(this.team, f.side)) {
+      this.airTraffic.kills++;
+      this.earn(CREDITS.aircraft, `${f.name} shot down`);
+    }
     const p = f.pos;
     this.explosions.push({ x: p.x, y: p.y, z: p.z, time: this.time, radius: 6 + f.radius, color: f.color, speed: f.speed });
     if (this.explosions.length > 32) this.explosions.splice(0, this.explosions.length - 32);
@@ -184,13 +189,22 @@ export class Simulation {
     this.version++;
   }
 
-  /** A tower turret derezzes: a red flash and voxels on the roof (a player's kill counts). */
-  derezTurret(t: GroundTurret, byPlayer = false): void {
+  /**
+   * A tower turret derezzes: a flash and voxels on the roof in its colour. `by`: the side whose
+   * fire did it (the player's kill pays); the district may change hands.
+   */
+  derezTurret(t: GroundTurret, byPlayer = false, by: Side | null = byPlayer ? this.team : null): void {
     if (t.derezAt !== null) return;
     this.turretBlast(t);
-    this.groundTurrets.derez(t, this.time);
-    if (byPlayer) this.airTraffic.kills++;
+    if (byPlayer) {
+      this.airTraffic.kills++;
+      this.earn(CREDITS.turret, 'turret destroyed');
+    }
+    this.capturedByPlayer = byPlayer;
+    this.groundTurrets.derez(t, this.time, by);
+    this.capturedByPlayer = false;
   }
+  private capturedByPlayer = false;
 
   private turretBlast(t: GroundTurret): void {
     const x = t.pos.x, y = t.pos.y + TURRET_HEAD_Y * 0.6, z = t.pos.z;
@@ -230,7 +244,54 @@ export class Simulation {
   /** Guns, cannon, bombs and missiles (Rapier ray-swept projectiles); see sim/weapons.ts. */
   readonly weapons = new WeaponSystem();
   /** What the hostile aircraft hunt: this craft. */
-  private readonly airTarget: AirTarget = { vel: new THREE.Vector3(), alive: true, armed: false };
+  private readonly airTarget: AirTarget = { vel: new THREE.Vector3(), alive: true, armed: false, foes: [] };
+  /** The player's team (its craft wears the team's livery). */
+  team: Team = 0;
+  /** The craft as it was designed (before the team's livery). */
+  private sourceDef!: CraftDef;
+  /** The craft as designed (no team livery): what the hangar edits and saves. */
+  get designDef(): CraftDef {
+    return this.sourceDef;
+  }
+  /** The player as a foe to the other sides; and other players (from the network). */
+  private readonly playerFoe: Foe = { side: 0, lock: null as unknown as LockTarget, kind: 'player', engage: false, ground: false };
+  extraFoes: Foe[] = [];
+  /** Credits earned (kills, captures) and spent (mercenaries). */
+  credits = 0;
+  /** Things worth a word to the player (credits earned, districts captured), newest last. */
+  readonly notices: Array<{ text: string; time: number }> = [];
+  private notice(text: string): void {
+    this.notices.push({ text, time: this.time });
+    if (this.notices.length > 16) this.notices.splice(0, this.notices.length - 16);
+  }
+  private earn(amount: number, why: string): void {
+    this.credits += amount;
+    this.notice(`+${amount} credits · ${why}`);
+  }
+
+  /** Join a team: the craft is rebuilt in its livery, and the team aircraft re-form. */
+  setTeam(team: Team): void {
+    if (team === this.team) return;
+    this.team = team;
+    this.airTraffic.setPlayerTeam(team);
+    this.lock.clear();
+    this.loadCraft(this.sourceDef);
+  }
+
+  /**
+   * Hire a mercenary in this design: it costs credits and flies in from about 2 km out.
+   * Returns why not, or null on success.
+   */
+  hireMercenary(def: CraftDef): string | null {
+    const price = mercPrice(def);
+    if (price <= 0) return `${def.name} can't be hired (it doesn't fly)`;
+    if (this.credits < price) return `Not enough credits (${price} needed, ${this.credits} held)`;
+    const f = this.airTraffic.hireMerc(def, this.position, this.time);
+    if (!f) return 'Three mercenaries already hired';
+    this.credits -= price;
+    this.notice(`${f.name} hired for 5 minutes (−${price} credits)`);
+    return null;
+  }
   /** Target lock: the vehicle on the aim line (the nose, or the turret's barrel). */
   readonly lock = new LockSystem();
   /** Other lock targets the simulation doesn't own (other players, from the network). */
@@ -381,6 +442,8 @@ export class Simulation {
     this.staticWorld = new StaticWorld(this.world, this.town);
 
     const { position, rotation } = this.spawnPose(null);
+    this.sourceDef = craftDef;
+    craftDef = sideLivery(craftDef, this.team);
     this.craft = new Craft(this.world, craftDef, position, rotation);
     this.damage = new DamageModel(this.craft);
     this.weapons.arm(craftDef);
@@ -393,7 +456,15 @@ export class Simulation {
     // A tower brought down under fire takes its turret with it (the player's kill if they did it).
     this.groundTurrets.onTowerFell = (t) => {
       this.turretBlast(t);
-      if (this.time - t.hitAt < 5) this.airTraffic.kills++;
+      if (this.time - t.hitAt < 5) {
+        this.airTraffic.kills++;
+        this.earn(CREDITS.turret, 'turret brought down');
+      }
+    };
+    this.groundTurrets.onCapture = (_ci, _cj, team, from) => {
+      const name = `${TEAMS[from].name} district`;
+      if (team === this.team && this.capturedByPlayer) this.earn(CREDITS.capture, `${name} captured`);
+      else this.notice(`${name} captured by ${sideName(team)}`);
     };
     this.onContactForce((e) => {
       // Fresh debris spawns overlapping the airframe; separating them isn't an impact.
@@ -554,6 +625,8 @@ export class Simulation {
   /** Swap in a different craft (e.g. one just generated). The old body is removed. */
   loadCraft(def: CraftDef): void {
     assertValidCraft(def);
+    this.sourceDef = def;
+    def = sideLivery(def, this.team);
     this.rebuildCraft(def);
     this.weapons.arm(def);
     this.explosionResets = 0;
@@ -721,8 +794,24 @@ export class Simulation {
     this.airTarget.alive = !this.exploded;
     this.airTarget.lock = this.selfTarget;
     this.airTarget.armed = this.weapons.mounts.length > 0;
+    // Who can fight whom: the player (fired on only while armed), the turrets, other players;
+    // the aircraft add themselves.
+    const pf = this.playerFoe;
+    pf.side = this.team;
+    pf.lock = this.selfTarget;
+    pf.engage = this.airTarget.alive && this.airTarget.armed;
+    pf.ground = this.position.y - terrainHeight(this.position.x, this.position.z) < 8;
+    this.airTarget.team = this.team;
+    const foes = this.airTarget.foes!;
+    foes.length = 0;
+    foes.push(pf);
+    for (const t of this.groundTurrets.turrets) if (t.derezAt === null) foes.push(t.foe);
+    foes.push(...this.extraFoes);
     this.airTraffic.step(this.dt, this.time, this.position, this.airTarget);
-    this.groundTurrets.step(this.dt, this.time, this.position, this.airTarget);
+    const turretFoes = [pf, ...this.extraFoes];
+    for (const f of this.airTraffic.flyers) if (f.foe && f.derezAt === null && !f.leaving) turretFoes.push(f.foe);
+    // The player sees its unarmed self watched: the turrets get the player even when it isn't armed.
+    this.groundTurrets.step(this.dt, this.time, this.position, turretFoes);
 
     this.world.step(this.events);
     this.readBodyState();
@@ -1003,19 +1092,10 @@ export class Simulation {
   lockTargets(): LockTarget[] {
     const out: LockTarget[] = [];
     const air = this.airTraffic;
+    // Never the player's own side: friendly aircraft, mercenaries and turrets aren't locked.
     for (const f of air.flyers) {
-      if (f.derezAt !== null) continue;
-      let h = this.lockHandles.get(f);
-      if (!h) {
-        h = {
-          id: `air:${f.id}`, kind: f.hostile ? 'hostile' : 'aircraft', name: f.name, radius: f.radius,
-          alive: () => f.derezAt === null && air.flyers.includes(f),
-          position: (o) => o.copy(f.pos),
-          velocity: (o) => o.copy(f.vel),
-        };
-        this.lockHandles.set(f, h);
-      }
-      out.push(h);
+      if (f.derezAt !== null || (f.side !== null && !hostile(this.team, f.side))) continue;
+      out.push(f.handle);
     }
     this.liveRiders = new Set(this.traffic.riders);
     for (const r of this.traffic.riders) {
@@ -1032,21 +1112,7 @@ export class Simulation {
       }
       out.push(h);
     }
-    const turrets = this.groundTurrets;
-    for (const t of turrets.turrets) {
-      if (t.derezAt !== null) continue;
-      let h = this.lockHandles.get(t);
-      if (!h) {
-        h = {
-          id: `turret:${t.site.id}`, kind: 'turret', name: 'Tower turret', radius: 2.5,
-          alive: () => t.derezAt === null && turrets.turrets.includes(t),
-          position: (o) => o.set(t.pos.x, t.pos.y + TURRET_HEAD_Y, t.pos.z),
-          velocity: (o) => o.set(0, 0, 0),
-        };
-        this.lockHandles.set(t, h);
-      }
-      out.push(h);
-    }
+    for (const t of this.groundTurrets.turrets) if (t.derezAt === null && hostile(this.team, t.side)) out.push(t.handle);
     out.push(...this.extraLockTargets);
     return out;
   }
@@ -1160,8 +1226,11 @@ export class Simulation {
     // AI aircraft: hit directly, or caught in a blast. Each has hit points (a peaceful flyer one,
     // a hostile several); hostiles don't shoot each other down.
     const flyer = col ? this.airTraffic.byCollider(col.handle) : undefined;
+    // Whose round: a side (the shooter's, or the player's team); a round never hurts its own side.
+    const by: Side = shooter ? shooter.side! : this.team;
     const strike = (f: AiFlyer) => {
-      if (f === shooter || (shooter && f.hostile)) return;
+      if (f === shooter) return;
+      if (f.side !== null && !hostile(by, f.side)) return;
       if (this.airTraffic.damage(f, WEAPON_DAMAGE[h.kind], this.time)) this.derezFlyer(f, !shooter);
     };
     if (flyer) strike(flyer);
@@ -1169,8 +1238,8 @@ export class Simulation {
     // Tower turrets: the player's rounds and blasts wear them down (hostiles never hit them).
     const turret = col ? this.groundTurrets.byCollider(col.handle) : undefined;
     const hitTurret = (t: GroundTurret) => {
-      if (shooter) return;
-      if (this.groundTurrets.damage(t, WEAPON_DAMAGE[h.kind], this.time)) this.derezTurret(t, true);
+      if (t === shooter || !hostile(by, t.side)) return;
+      if (this.groundTurrets.damage(t, WEAPON_DAMAGE[h.kind], this.time)) this.derezTurret(t, !shooter, by);
     };
     if (turret) hitTurret(turret);
     if (h.blast >= 3) for (const t of this.groundTurrets.turrets) {
@@ -1179,7 +1248,7 @@ export class Simulation {
     }
     // A hostile's round on the player's craft: the struck part loses hit points (and breaks off
     // at zero); a warhead that goes off against it, or beside it, derezzes it outright.
-    if (shooter && !this.exploded) {
+    if (shooter && !this.exploded && hostile(by, this.team)) {
       const partId = col ? this.craft.partIdForCollider(col.handle) : undefined;
       const near = h.blast >= 7 && p.distanceTo(this.position) < h.blast;
       if (partId !== undefined || near) {

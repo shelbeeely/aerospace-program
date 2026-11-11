@@ -155,7 +155,7 @@ console.log('--- hostile missiles');
   const sim = new Simulation(JET);
   sim.traffic.enabled = false;
   sim.airTraffic.pool = BUILTINS.map((b) => b.craft);
-  sim.airTraffic.hostiles = 3;
+  sim.airTraffic.enemies = 3;
   const b = sim.craft.body;
   b.setTranslation({ x: 0, y: 600, z: -2000 }, true);
   b.setLinvel({ x: 0, y: 0, z: -150 }, true);

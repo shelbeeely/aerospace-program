@@ -8,7 +8,7 @@ import type { Simulation } from '../sim/Simulation.ts';
 import { DEREZ_TIME, type Trail, type TrailMode, type TrailPoint, type TrailSystem } from '../sim/trails.ts';
 import {
   MAX_TRAIL_POINTS, PROTOCOL_VERSION, STATE_HZ, normalizeRoom, r2, r4, splitGroupName, validCraftShape, validEvent, validState,
-  type ClientMessage, type NetEvent, type NetState, type NetTrail, type NetTrailPoint, type PlayerInfo, type ServerMessage,
+  type ClientMessage, type NetEvent, type NetState, type NetTrail, type NetTrailPoint, type PlayerInfo, type ServerMessage, asTeam, type NetTeam,
 } from './protocol.ts';
 
 /**
@@ -66,6 +66,8 @@ export interface RemotePlayer {
   id: string;
   name: string;
   color: string;
+  /** Their team (0 Cyan, 1 Red, 2 Amber): friend or foe. */
+  team: NetTeam;
   craft: CraftDef;
   view: RemoteCraftView | null;
   buffer: Snapshot[];
@@ -210,7 +212,7 @@ export class NetClient {
     ws.onopen = () => {
       const o = this.opts!;
       this.lastCraft = this.game.sim.craft.def;
-      this.send({ t: 'hello', v: PROTOCOL_VERSION, room: this.room || o.room, name: o.name, color: o.color, craft: this.lastCraft });
+      this.send({ t: 'hello', v: PROTOCOL_VERSION, room: this.room || o.room, name: o.name, color: o.color, craft: this.lastCraft, team: asTeam(this.game.sim.team) });
     };
     ws.onmessage = (e) => {
       let m: ServerMessage;
@@ -233,6 +235,11 @@ export class NetClient {
         this.setStatus('error', e.reason ? `Disconnected: ${e.reason}` : was ? 'Disconnected' : `Can't reach ${this.opts?.server}`);
       }
     };
+  }
+
+  /** Tell the room we changed team (others see our new colours with the next craft update). */
+  setTeam(team: number): void {
+    if (this.connected) this.send({ t: 'team', team: asTeam(team) });
   }
 
   private send(m: ClientMessage): void {
@@ -300,6 +307,14 @@ export class NetClient {
         }
         break;
       }
+      case 'team': {
+        const p = this.players.get(m.id);
+        if (p) {
+          p.team = asTeam(m.team);
+          this.onChange?.();
+        }
+        break;
+      }
       case 'event': {
         const p = this.players.get(m.id);
         if (p && validEvent(m.e)) this.applyEvent(p, m.e);
@@ -319,7 +334,7 @@ export class NetClient {
   private addPlayer(info: PlayerInfo): void {
     if (info.id === this.selfId || this.players.has(info.id) || !validCraftShape(info.craft)) return;
     const p: RemotePlayer = {
-      id: info.id, name: info.name, color: info.color, craft: info.craft, view: null, buffer: [], clockOffset: null,
+      id: info.id, name: info.name, color: info.color, team: asTeam(info.team), craft: info.craft, view: null, buffer: [], clockOffset: null,
       latest: null, trails: new Map(), trailMode: 'wall',
       pose: { position: new THREE.Vector3(), rotation: new THREE.Quaternion(), speed: 0, visible: false },
     };

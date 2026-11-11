@@ -30,6 +30,9 @@ export class Hud {
     arm: $('h-arm'),
     hostileRow: $('h-hostile-row'),
     lockRow: $('h-lock-row'),
+    mercRow: $('h-merc-row'),
+    merc: $('h-merc'),
+    mercT: $('h-merc-t'),
     lock: $('h-lock'),
     lockRange: $('h-lock-r'),
     turretRow: $('h-turret-row'),
@@ -153,6 +156,17 @@ export class Hud {
     const range = s.range >= 1000 ? `${(s.range / 1000).toFixed(1)}km` : `${Math.round(s.range / 10) * 10}m`;
     this.set(hostile, `${s.count} · ${range} ${String(Math.round(s.bearing) % 360).padStart(3, '0')}°`);
     this.set(hostileKills, s.underFire ? 'UNDER FIRE' : s.kills ? `${s.kills} down` : '');
+  }
+
+  /** CREDITS row: credits held, and hired mercenaries with the soonest contract end. */
+  setMercs(s: { credits: number; hired: number; soonest: number } | null): void {
+    const { mercRow: row, merc, mercT } = this.el;
+    if (!row || !merc || !mercT) return;
+    row.style.display = s ? '' : 'none';
+    if (!s) return;
+    this.set(merc, `${s.credits}`);
+    const t = Math.max(0, s.soonest);
+    this.set(mercT, s.hired ? `MERC ${s.hired} · ${Math.floor(t / 60)}:${Math.floor(t % 60).toString().padStart(2, '0')}` : 'cr');
   }
 
   /** LOCK row: the vehicle tracked or locked, and its range (hidden with none). */

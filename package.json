@@ -16,6 +16,7 @@
     "radar": "node --experimental-transform-types --no-warnings scripts/radar.ts",
     "lock": "node --experimental-transform-types --no-warnings scripts/lock.ts",
     "turrets": "node --experimental-transform-types --no-warnings scripts/turrets.ts",
+    "teams": "node --experimental-transform-types --no-warnings scripts/teams.ts",
     "orbit": "node --experimental-transform-types --no-warnings scripts/orbit.ts",
     "weapons": "node --experimental-transform-types --no-warnings scripts/weapons.ts",
     "destruction": "node --experimental-transform-types --no-warnings scripts/destruction.ts",

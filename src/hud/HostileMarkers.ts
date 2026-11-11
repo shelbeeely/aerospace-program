@@ -5,9 +5,13 @@ export interface HostileMark {
   pos: THREE.Vector3;
   range: number;
   attacking: boolean;
+  /** Its side's colour (red when unset). */
+  color?: string;
+  /** A friend: a small caret instead of brackets. */
+  friend?: boolean;
 }
 
-const MAX = 8;
+const MAX = 12;
 
 /** Where a world point lands on the screen, slid to the edge (`edge` true) when it is out of view. */
 function screenPoint(camera: THREE.Camera, pos: THREE.Vector3, width: number, height: number, margin: number): { x: number; y: number; edge: boolean } {
@@ -124,6 +128,8 @@ export class HostileMarkers {
       m.el.style.width = m.el.style.height = `${size}px`;
       m.el.classList.toggle('edge', edge);
       m.el.classList.toggle('attacking', h.attacking);
+      m.el.classList.toggle('friend', !!h.friend);
+      m.el.style.color = h.color ?? '';
       const text = h.range >= 1000 ? `${(h.range / 1000).toFixed(1)} km` : `${Math.round(h.range / 10) * 10} m`;
       if (text !== m.text) m.label.textContent = m.text = text;
       m.shown = true;

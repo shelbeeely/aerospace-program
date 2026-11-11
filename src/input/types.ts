@@ -44,7 +44,8 @@ export type Action =
   | 'map'
   | 'radarRange'
   | 'recentre'
-  | 'chase';
+  | 'chase'
+  | 'mercs';
 
 /** What a device may know about the game when it reads. */
 export interface InputContext {
