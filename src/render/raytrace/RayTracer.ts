@@ -5,7 +5,7 @@ import type { RayShape } from './shapes.ts';
 
 // Analytic primitive tracing inspired by erichlof/THREE.js-RayTracing-Renderer (CC0).
 // This implementation uses TSL so the same graph compiles for WebGPU and WebGL2.
-const { Fn, If, Loop, Break, float, int, vec3, vec4, ivec2, uniform, texture,
+const { Fn, If, Loop, Break, smoothstep, float, int, vec3, vec4, ivec2, uniform, texture,
   textureLoad, uv, normalize, dot, cross, abs, min, max, sqrt, reflect, mix, pow,
   fract, step, sin } = TSL as any;
 
@@ -140,7 +140,7 @@ export class RayTracer {
           If(h.w.lessThan(closest),()=>{closest.assign(h.w);normal.assign(h.xyz);index.assign(i);});
         });
         If(index.lessThan(0),()=>{
-          radiance.addAssign(throughput.mul(mix(vec3(0.06,0.006,0.13),vec3(0.004,0.001,0.015),max(direction.y,0))));
+          radiance.addAssign(throughput.mul(mix(vec3(0.16,0.06,0.02),vec3(0.003,0.006,0.02),smoothstep(0.0,0.35,max(direction.y,0)))));
           Break();
         });
         const p=rayOrigin.add(direction.mul(closest)).toVar();

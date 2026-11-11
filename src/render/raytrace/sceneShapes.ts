@@ -3,6 +3,7 @@ import type { ShapeDef } from '../../craft/types.ts';
 import type { Simulation } from '../../sim/Simulation.ts';
 import { COAST, LAYOUT } from '../../sim/layout.ts';
 import { craftShapes } from './packShapes.ts';
+import { HANGAR } from '../hangarLayout.ts';
 import type { RayShape } from './shapes.ts';
 
 function tint(hex: string): Vector3 {
@@ -25,20 +26,35 @@ export function debrisShape(shape: ShapeDef, position: Vector3, rotation: Quater
   return { kind: shape.type === 'cone' || shape.type === 'capsule' ? 'cylinder' : shape.type, position, rotation: q, size, color: tint(color), emission: 3.2 };
 }
 
-/** Analytic approximation of the neon hangar shell, floor and turntable. */
+/**
+ * Analytic approximation of the hangar (HangarView): the dark floor, the stepped platform with
+ * its lit rim, the pilastered walls, the beams with their red edge lines, the halo rings' plane
+ * and the door portal. Dark navy surfaces with dim edges; light only where the raster hangar has it.
+ */
 export function hangarShapes(sim: Simulation, position: Vector3, rotation: Quaternion): RayShape[] {
-  return [
+  const { W, H, D, DOOR_W, DOOR_H, BAY } = HANGAR;
+  const out: RayShape[] = [
     ...craftShapes(sim.craft, position, rotation),
-    { kind: 'plane', position: new Vector3(), rotation: new Quaternion(), size: new Vector3(), color: tint('#00eaff'), emission: 1.4 },
-    { kind: 'cylinder', position: new Vector3(0, 0.05, 0), rotation: new Quaternion(), size: new Vector3(7, 0.05, 7), color: tint('#00eaff'), emission: 3.2 },
-    box(new Vector3(-23, 7.5, 0), new Vector3(0.1, 7.5, 21), '#ff2bd6'),
-    box(new Vector3(23, 7.5, 0), new Vector3(0.1, 7.5, 21), '#ff2bd6'),
-    box(new Vector3(0, 7.5, 21), new Vector3(23, 7.5, 0.1), '#9d4dff'),
-    box(new Vector3(0, 15, 0), new Vector3(23, 0.1, 21), '#00eaff'),
-    box(new Vector3(-20, 7.5, -21), new Vector3(3, 7.5, 0.1), '#ff2bd6'),
-    box(new Vector3(20, 7.5, -21), new Vector3(3, 7.5, 0.1), '#ff2bd6'),
-    box(new Vector3(0, 13.25, -21), new Vector3(17, 1.75, 0.1), '#ff2bd6'),
+    { kind: 'plane', position: new Vector3(), rotation: new Quaternion(), size: new Vector3(W / 2, 0, D / 2), color: tint('#2a4466'), emission: 0.5 },
+    { kind: 'cylinder', position: new Vector3(0, 0.06, 0), rotation: new Quaternion(), size: new Vector3(9.6, 0.06, 9.6), color: tint('#10284f'), emission: 0.8 },
+    { kind: 'cylinder', position: new Vector3(0, 0.18, 0), rotation: new Quaternion(), size: new Vector3(7.6, 0.06, 7.6), color: tint('#10284f'), emission: 0.8 },
+    { kind: 'cylinder', position: new Vector3(0, 0.29, 0), rotation: new Quaternion(), size: new Vector3(6.6, 0.05, 6.6), color: tint('#00d4ff'), emission: 2.4 },
+    // Walls (dark), back recess, roof.
+    box(new Vector3(-W / 2, H / 2, 0), new Vector3(0.1, H / 2, D / 2), '#22485a', 0.6),
+    box(new Vector3(W / 2, H / 2, 0), new Vector3(0.1, H / 2, D / 2), '#22485a', 0.6),
+    box(new Vector3(0, H / 2, D / 2), new Vector3(W / 2, H / 2, 0.1), '#22485a', 0.6),
+    box(new Vector3(0, H, 0), new Vector3(W / 2, 0.1, D / 2), '#9fc4e0', 0.5),
+    box(new Vector3(-(W + DOOR_W) / 4, H / 2, -D / 2), new Vector3((W - DOOR_W) / 4, H / 2, 0.1), '#10284f', 0.8),
+    box(new Vector3((W + DOOR_W) / 4, H / 2, -D / 2), new Vector3((W - DOOR_W) / 4, H / 2, 0.1), '#10284f', 0.8),
+    box(new Vector3(0, (H + DOOR_H) / 2, -D / 2), new Vector3(DOOR_W / 2, (H - DOOR_H) / 2, 0.1), '#10284f', 0.8),
+    box(new Vector3(0, DOOR_H - 0.06, -D / 2 + 1.4), new Vector3(DOOR_W / 2 - 1, 0.06, 0.05), '#ffb000', 3),
   ];
+  // Pilasters and roof beams (red edge lines) every bay.
+  for (let z = -D / 2 + 2; z <= D / 2 - 2; z += BAY) {
+    for (const sx of [-1, 1]) out.push(box(new Vector3(sx * (W / 2 - 0.9), H / 2, z), new Vector3(0.9, H / 2, 0.8), '#10284f', 0.9));
+    out.push(box(new Vector3(0, H - 1, z), new Vector3(W / 2 - 0.5, 1, 0.5), '#ff3b1f', 0.9));
+  }
+  return out;
 }
 
 /** Current craft/debris plus bounded nearby town blocks. RT uses analytic scenery approximations. */
