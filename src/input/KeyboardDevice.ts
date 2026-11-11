@@ -4,7 +4,7 @@ const GAME_CODES = new Set([
   'Backspace', 'KeyL',
   'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyB', 'KeyR', 'KeyC', 'KeyZ', 'KeyX',
   'KeyT', 'KeyG', 'KeyH', 'KeyY', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'F3',
-  'Space', 'KeyN', 'BracketLeft', 'BracketRight', 'KeyM', 'KeyP', 'KeyK', 'KeyF', 'Period', 'Comma', 'F6', 'F7', 'KeyU', 'KeyJ', 'KeyV', 'KeyO', 'KeyI',
+  'Space', 'KeyN', 'BracketLeft', 'BracketRight', 'KeyM', 'KeyP', 'KeyK', 'KeyF', 'Period', 'Comma', 'F6', 'F7', 'KeyU', 'KeyJ', 'KeyV', 'KeyO', 'KeyI', 'Tab', 'Backslash',
 ]);
 
 export class KeyboardDevice implements InputDevice {
@@ -39,6 +39,8 @@ export class KeyboardDevice implements InputDevice {
         case 'KeyJ': this.actions.push('apPanel'); break;
         case 'KeyL': this.actions.push('trail'); break;
         case 'KeyI': this.actions.push('loadout'); break;
+        case 'Tab': this.actions.push('map'); break;
+        case 'Backslash': this.actions.push('radarRange'); break;
         case 'Period': case 'F7': this.flapSteps++; break; // flaps down a notch
         case 'Comma': case 'F6': this.flapSteps--; break; // flaps up a notch
         case 'KeyZ': this.throttleSet = 1; break;

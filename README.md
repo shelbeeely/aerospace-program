@@ -20,6 +20,7 @@ npm run weapons        # weapons: fitted multiples, cannon cratering, tank bulld
 npm run craft          # vehicle rules: connected parts, the 1982 palette, the vehicle grammar, ground-vehicle design loop (offline)
 npm run engines        # fast flight: compressibility, ramjet/scramjet/solid/turbojet, thrust vectoring, airbrake, chute, cone/capsule parts, weight floors
 npm run air            # AI air traffic: count, clearance, destinations and circling, shot down and replaced
+npm run radar          # radar and planet map: contacts, heading-up scope, wrap-aware geometry
 npm run enemies        # enemy aircraft: red-team colours, patrol vs hunt, gunnery, hit points, kills, determinism
 npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
@@ -184,6 +185,8 @@ stick expo, haptics, and touch controls auto/on/off.
 | V (hold) | fire guns / cannon (armed craft: the tank by default) |
 | O (hold) | drop bombs / fire missiles |
 | I | weapons loadout: fitted (when the craft has weapon parts), unarmed, guns, cannon, guns + bombs, guns + missiles, tank, laser + discs, pulse + missiles, full |
+| Tab | planet map: every vehicle in the world (or click the radar) |
+| \\ | radar range: 2 / 5 / 12 km |
 
 > Browsers don't let pages block Ctrl+W, so tapping Ctrl for throttle-down next to W can
 > close the tab. Prefer Z/X or a gamepad if that bites you.
@@ -277,6 +280,23 @@ and missiles and six hit points.
 
 Hostiles are deterministic for the seed and use their own random stream, so the peaceful
 traffic flies the same with or without them.
+
+## Radar and planet map
+
+A radar scope sits in the corner of the view (`src/hud/RadarMap.ts`): heading up, with range
+rings, a north mark, the landing sites and every vehicle in range. `\` (or the range button)
+steps it through 2, 5 and 12 km; a hostile or another player beyond the range sits on the rim.
+`Tab` (or a click on the scope, or *Map* in the touch menu) opens the planet map: the whole
+planet unrolled north-up and centred on your craft, with the city (paler where the skyline is
+taller), the Outlands, the sea, every runway by name, the radar's reach, and every vehicle in
+the world, counted in its header.
+
+Aircraft are arrowheads on their heading, outlined in their circuit colour; hostiles are solid
+red, brighter while they attack; light cycles are dots in their team colour; other players are
+pale diamonds with their names. Both are wrap-aware (`src/sim/contacts.ts`): a vehicle across
+the planet's seam is drawn as near as it really is. The world only keeps vehicles near you
+(aircraft within 12 km, light cycles on the streets around you), so that is where the map shows
+them.
 
 ## Going fast: engines, parts and modules
 

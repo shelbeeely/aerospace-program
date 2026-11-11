@@ -37,7 +37,9 @@ export type Action =
   | 'autopilot'
   | 'apPanel'
   | 'trail'
-  | 'loadout';
+  | 'loadout'
+  | 'map'
+  | 'radarRange';
 
 /** What a device may know about the game when it reads. */
 export interface InputContext {

@@ -13,6 +13,19 @@
   <body class="mode-hangar">
     <canvas id="view"></canvas>
     <div id="hostile-marks"></div>
+    <div id="radar">
+      <canvas id="radar-scope" title="Radar: every vehicle in range, heading up. Click for the planet map (Tab)"></canvas>
+      <button type="button" id="radar-range" title="Radar range (\)">5 KM</button>
+    </div>
+    <div id="planet-map" class="panel hidden">
+      <div class="map-head"><b>PLANET MAP</b><span id="planet-map-info"></span><button type="button" id="planet-map-close" title="Close (Tab)">Close</button></div>
+      <canvas id="planet-map-canvas"></canvas>
+      <div class="map-legend">
+        <span><i class="lg-own"></i>you</span><span><i class="lg-air"></i>aircraft</span><span><i class="lg-hostile"></i>hostile</span>
+        <span><i class="lg-rider"></i>light cycle</span><span><i class="lg-player"></i>player</span><span><i class="lg-runway"></i>runway</span>
+        <span><i class="lg-ring"></i>radar range</span>
+      </div>
+    </div>
 
     <div id="hud" class="panel">
       <div class="row"><span>AIRSPEED</span><b id="h-speed">0</b><small>kt</small></div>

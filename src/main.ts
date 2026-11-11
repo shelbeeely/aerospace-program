@@ -47,6 +47,8 @@ import { CraterView } from './render/CraterView.ts';
 import { BoomView } from './render/BoomView.ts';
 import { AiTrafficView } from './render/AiTrafficView.ts';
 import { HostileMarkers, type HostileMark } from './hud/HostileMarkers.ts';
+import { RadarMap } from './hud/RadarMap.ts';
+import { simContacts, type Contact } from './sim/contacts.ts';
 import { terrainHeight } from './sim/terrain.ts';
 import { craftBounds } from './sim/weapons.ts';
 import { LOADOUT_ORDER, LOADOUTS, WEAPONS, type Loadout, type WeaponKind } from './sim/weapons.ts';
@@ -391,6 +393,8 @@ async function start() {
   const hostileCount = document.getElementById('w-hostile-count') as HTMLInputElement | null;
   const hostileLabel = document.getElementById('w-hostile-count-v');
   const hostileMarkers = new HostileMarkers(document.getElementById('hostile-marks'));
+  const radarMap = new RadarMap();
+  const _nose = new THREE.Vector3();
   const updateAirPool = () => {
     const own = aiMine?.checked !== false && !net.connected ? library.list().map((e) => e.craft) : [];
     sim.airTraffic.pool = [...BUILTINS.map((b) => b.craft), ...own];
@@ -969,6 +973,8 @@ async function start() {
         const m = sim.trails.cycleMode(sim.craft, sim.isAirplane(), sim.time);
         toast(m === 'wall' ? 'Jetwall: solid light' : m === 'ribbon' ? 'Light ribbon: fades behind you' : 'Trail off');
       }
+      else if (a === 'map') radarMap.toggleMap();
+      else if (a === 'radarRange') toast(`Radar ${radarMap.cycleRange() / 1000} km`);
       else if (a === 'loadout') {
         const l = sim.weapons.cycle();
         toast(l === 'none' ? 'Weapons: unarmed' : `Weapons: ${LOADOUTS[l].label} · V fires guns/cannon, O bombs/missiles`);
@@ -1077,6 +1083,17 @@ async function start() {
       } : null);
       if (mode === 'flight') hostileMarkers.update(camera, marks, window.innerWidth, window.innerHeight);
       else hostileMarkers.hide();
+    }
+    if (mode === 'flight') {
+      // Radar and planet map: the simulation's vehicles, and the other players on the Grid.
+      const contacts: Contact[] = simContacts(sim);
+      for (const p of net.players.values()) {
+        if (!p.pose.visible) continue;
+        _nose.set(0, 0, -1).applyQuaternion(p.pose.rotation);
+        contacts.push({ kind: 'player', x: p.pose.position.x, z: p.pose.position.z, y: p.pose.position.y, heading: Math.atan2(_nose.x, -_nose.z), color: p.color, name: p.name });
+      }
+      _nose.set(0, 0, -1).applyQuaternion(sim.rotation);
+      radarMap.update(now / 1000, { x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites() });
     }
     if (!sim.explosions.length) explosionHeardAt = -Infinity;
     for (const e of sim.explosions) {
