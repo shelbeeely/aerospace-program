@@ -59,6 +59,7 @@ import { flyerKind, type Foe } from './sim/aiTraffic.ts';
 import { HostileMarkers, LockMarker, type HostileMark } from './hud/HostileMarkers.ts';
 import type { LockTarget } from './sim/lock.ts';
 import { RadarMap } from './hud/RadarMap.ts';
+import { AdsbTags } from './hud/AdsbTags.ts';
 import { GlobeView } from './render/GlobeView.ts';
 import { StrikePanel } from './ui/StrikePanel.ts';
 import { simContacts, wrapDelta, type Contact } from './sim/contacts.ts';
@@ -409,6 +410,7 @@ async function start() {
   const aiCountLabel = document.getElementById('w-ai-count-v');
   const hostileMarkers = new HostileMarkers(document.getElementById('hostile-marks'));
   const radarMap = new RadarMap();
+  const adsbTags = new AdsbTags(document.getElementById('hostile-marks'));
   const lockMarker = new LockMarker(document.getElementById('hostile-marks'));
   const dropMarker = new LockMarker(document.getElementById('hostile-marks'), 'lock-mark drop-mark');
   const _dropFrom = new THREE.Vector3();
@@ -1320,7 +1322,10 @@ async function start() {
         dropMarker.update(camera, { pos: pr.point, range: pr.point.distanceTo(sim.position), name: '', locked: pr.armed, text: pr.armed ? 'DROP' : 'DUD: TOO LOW' }, window.innerWidth, window.innerHeight);
       } else dropMarker.update(camera, null, window.innerWidth, window.innerHeight);
       _nose.set(0, 0, -1).applyQuaternion(sim.rotation);
-      const radarState = { drop, x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites(), lockedId: sim.lock.target?.id ?? null, territory: sim.groundTurrets.territory, teamColors: TEAMS.map((t) => t.light) };
+      // ADS-B: every vehicle's broadcast, for the radar, the tags in the view and the globe.
+      const adsb = sim.adsbRecords();
+      adsbTags.update(camera, mode === 'flight' && radarMap.adsbOn && !globe.visible ? adsb : null, sim.position, window.innerWidth, window.innerHeight);
+      const radarState = { adsb, drop, x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites(), lockedId: sim.lock.target?.id ?? null, territory: sim.groundTurrets.territory, teamColors: TEAMS.map((t) => t.light) };
       radarMap.update(now / 1000, radarState);
       if (globe.visible) {
         // Designs for the models: the AI aircraft's, other players' (in their side's livery), yours.
@@ -1343,7 +1348,7 @@ async function start() {
           return null;
         };
         globe.render({
-          me: { x: sim.position.x, z: sim.position.z, heading: radarState.heading }, adsb: sim.adsbRecords(), tracks: sim.adsb.tracks,
+          me: { x: sim.position.x, z: sim.position.z, heading: radarState.heading }, adsb, tracks: sim.adsb.tracks,
           turrets: contacts.filter((c) => c.kind === 'turret'), sites: radarState.sites, model,
           strikes: sim.strikes.map((s) => { const at = sim.strikeSystem.position(s); return { kind: s.kind, x: s.x, z: s.z, fromX: s.fromX, fromZ: s.fromZ, at: at ? { x: at.x, z: at.z, y: at.y } : null, eta: s.eta - sim.time }; }),
           orders: sim.airTraffic.orders(), surface: radarMap.baseMap(), wash: radarMap.washMap(radarState), washVersion: sim.groundTurrets.territory.version,

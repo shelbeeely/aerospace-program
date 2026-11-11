@@ -104,7 +104,7 @@ export function riderRecord(r: Rider, time: number, from: { x: number; z: number
   return {
     id: `rider:${r.id}`, callsign, type: 'Light cycle', category: 'ground', side: null,
     sideName: r.team === 0 ? 'Cyan program' : 'Amber program', color: TRAFFIC.colors[r.team], foe: false,
-    x: r.x, z: r.z, alt: terrainHeight(r.x, r.z), agl: 0,
+    x: r.x, z: r.z, alt: 0, agl: 0, // (riders keep to the streets, at ground level)
     gs, track: Math.atan2(HX[r.heading], -HZ[r.heading]), vs: 0,
     squawk: stalled ? '7600' : squawkOf(callsign), status: stalled ? 'stalled (EMP)' : 'riding',
     range: Math.hypot(wrapDelta(from.x, r.x), wrapDelta(from.z, r.z)),

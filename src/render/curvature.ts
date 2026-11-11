@@ -29,6 +29,22 @@ function bend(world: TslNode): TslNode {
   return mix(world, vec3(xz.x, y, xz.y), curveOn);
 }
 
+/**
+ * The bend on the CPU: where a flat-world point is drawn (for overlays that must sit on what is
+ * rendered, like the ADS-B tags).
+ */
+export function bendPoint(p: THREE.Vector3, out = new THREE.Vector3()): THREE.Vector3 {
+  if (!curveOn.value) return out.copy(p);
+  const o = curveOrigin.value as THREE.Vector3;
+  const R0 = PLANET.radius;
+  const dx = p.x - o.x, dz = p.z - o.z;
+  const d = Math.hypot(dx, dz);
+  const theta = d / R0;
+  const radial = p.y + R0;
+  const s = theta > 1e-5 ? Math.sin(theta) / theta : 1;
+  return out.set(o.x + dx * (radial / R0) * s, radial * Math.cos(theta) - R0, o.z + dz * (radial / R0) * s);
+}
+
 /** Local-space position after the bend (compose with an existing positionNode). */
 export function curvedPosition(base: TslNode = positionLocal): TslNode {
   const world: TslNode = modelWorldMatrix.mul(vec4(base, 1)).xyz;

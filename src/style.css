@@ -737,3 +737,13 @@ body.armed .tfire { display: block; }
 #strike-globe .card-buttons { display: flex; gap: 6px; margin-top: 8px; }
 #strike-globe .card-buttons button { flex: 1; background: #0e1d2e; color: #cfeaff; border: 1px solid rgba(0, 212, 255, 0.35); border-radius: 4px; padding: 4px 6px; font: inherit; cursor: pointer; }
 #strike-globe .card-buttons button:last-child { flex: 0 0 auto; }
+#radar-adsb {
+  position: absolute; left: 0; bottom: 0; padding: 1px 5px; background: rgba(4, 10, 22, 0.8); color: #6f8aa8;
+  border: 1px solid rgba(111, 138, 168, 0.35); border-radius: 3px; font: inherit; font-size: 10px; letter-spacing: 0.08em; cursor: pointer;
+}
+#radar-adsb.on { color: #dff6ff; border-color: rgba(0, 212, 255, 0.55); }
+/* ADS-B tags in the view: faint, small, beside each vehicle. */
+.adsb-tag { position: absolute; left: 0; top: 0; pointer-events: none; font: 10px/1.25 ui-monospace, Menlo, monospace; white-space: pre; opacity: 0.8; will-change: transform; }
+.adsb-tag b { font-weight: 500; }
+.adsb-tag span { color: #b9cfe0; }
+.adsb-tag.foe { opacity: 0.95; }
