@@ -501,8 +501,16 @@ npm run test:server     # bun test server: two clients join, relay, isolation, s
 F3 has explicit **Tornado**, **Hurricane**, **Earthquake**, and **Clear events** buttons.
 In the game, **tornadoes also form at random** (weather panel: *Random tornadoes*): seeded,
 one at a time, 1.4-3.2 km from you, heading roughly your way. Headless runs have no random
-events. Tornadoes move along seeded paths, add Rankine-vortex swirl/inflow/updrafts, and are
-drawn as a solid mass: a dark, opaque funnel that sways and carries rotating spiral striations
+events. Tornadoes travel winding, seeded tracks (~9 m/s, random ones 7-20 m/s, swinging on
+slow sine terms rather than sliding on a ruler line) and carry a Rankine-vortex wind: swirl, a
+surface "corner flow" inflow about as strong as the swirl near the ground, and a core updraft
+of 0.7x the peak swirl. They leave a **path of destruction**: every loose body nearby (rubble,
+craft debris, a ground vehicle you're driving) feels bluff-body drag on that wind, up to 3x in
+the core (pressure deficit, suction vortices), so things are drawn in and taken up the funnel;
+the core tears through every structure it crosses (blocks ripped out whole as flying rubble,
+more shredded, what they held up falls), catches riders and their light walls, takes aircraft
+flying low through it, and scours a scar into the grid every ~30 m of its track
+(`sim.tornadoToll` counts it). Tornadoes are drawn as a solid mass: a dark, opaque funnel that sways and carries rotating spiral striations
 under a wall cloud, with a dust skirt and a debris cloud of voxel fragments orbiting its base. Hurricanes add a
 Holland wind field and spiral rain bands; earthquakes physically shake the runway with an
 analytic, seeded ground motion. Reset clears the event timeline.
@@ -512,7 +520,8 @@ The headless API is `sim.atmosphere.events`: `trigger(kind, { x, z, duration, st
 `surgeHeight(x, z)`. Weather time restarts on reset. Additional smoke/wind sources may register
 an additive callback in `sim.atmosphere.windContributors`. Browser helpers are
 `game.worldEvents` and `game.triggerDisaster(kind)`. `npm run events` checks deterministic
-wind, surge, rain, scheduler lifecycle and actual Rapier ground motion.
+wind, surge, rain, scheduler lifecycle, actual Rapier ground motion, and the tornado's winding
+track, inflow, lofting of loose objects and its path of destruction through a structure.
 
 ## Roadmap
 

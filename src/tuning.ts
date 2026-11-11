@@ -273,7 +273,8 @@ export const DISASTER_TUNING = {
   tornadoCoreRadius: 75,
   tornadoPeakSpeed: 55,
   tornadoHeight: 900,
-  tornadoTravelSpeed: 4,
+  /** Ground speed along the path (m/s); random tornadoes go 0.75-2.25x this (real ones: ~10-20 m/s). */
+  tornadoTravelSpeed: 9,
   /** Random tornadoes (when enabled): mean seconds between them, the quiet time before the first, how far from the player they form (m) and their lifetimes (s). */
   randomTornadoMean: 360,
   randomTornadoFirst: 60,

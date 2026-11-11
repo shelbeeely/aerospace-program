@@ -17,12 +17,14 @@ import { TrafficSystem } from './traffic.ts';
 import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
+import type { BlockBuilding, Block } from '../world/BlockBuilding.ts';
 import { ChipEmitter } from './chips.ts';
 import { craftBounds, WeaponSystem, type WeaponHost, type WeaponImpact } from './weapons.ts';
 import { AiAirTraffic, type AiFlyer } from './aiTraffic.ts';
 import { WeaponMount } from '../modules/WeaponMount.ts';
 import { BOOM_DAMAGE, BOOM_DEREZ, BOOM_SHATTER, boomBite, boomOverpressure, boomReach, type BoomEvent } from './sonicBoom.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
+import { tornadoWind, windForce } from './events/tornado.ts';
 import { vehicleKind } from './vehicleTests.ts';
 import { nearestRoadPoint, siteSpawnPoint, type SpawnPoint, type SpawnSite } from '../world/spawnSites.ts';
 import { orbitElements, type OrbitTelemetry, type Telemetry } from './telemetry.ts';
@@ -63,6 +65,10 @@ export interface Debris {
  */
 const _fwd = new THREE.Vector3();
 const _right = new THREE.Vector3();
+
+const _tw = new THREE.Vector3();
+const _tp = new THREE.Vector3();
+const _tf = new THREE.Vector3();
 
 export class Simulation {
   readonly dt = 1 / TUNING.physicsHz;
@@ -512,6 +518,8 @@ export class Simulation {
     this.chips.reset();
     this.explosions.length = 0;
     this.craters.length = 0;
+    this.tornadoScar.clear();
+    this.tornadoToll = { blocks: 0, riders: 0, flyers: 0, scars: 0 };
     this.booms.length = 0;
     this.boomDamage = 0;
     this.lightning.reset(this.atmosphere.settings.seed);
@@ -631,6 +639,7 @@ export class Simulation {
     this.planetForces();
     this.traffic.step(this.dt, this.time, this.position, this.trails);
     this.airTraffic.step(this.dt, this.time, this.position);
+    this.tornadoForces();
 
     this.world.step(this.events);
     this.readBodyState();
@@ -641,6 +650,7 @@ export class Simulation {
     this.syncWeaponMounts();
     this.bulldoze();
     this.playerBoom();
+    this.tornadoDamage();
     const resets = this.explosionResets;
     this.guardAgainstExplosion();
     // After an explosion reset the step's contacts belong to a craft that's gone: drop them.
@@ -962,6 +972,131 @@ export class Simulation {
     // An energy splash erupts where the round meets the grid (not off a wall face high up).
     const gy = isSea(p.x) ? 0 : terrainHeight(p.x, p.z);
     if (p.y - gy < 4) this.chips.emit({ x: p.x, y: gy, z: p.z, radius: 0.5, vx: h.vel.x * 0.1, vy: 0, vz: h.vel.z * 0.1, speed: 8 + h.blast * 1.2, count: Math.round(60 + h.blast * 10), size: 0.14, color: h.color, splash: true });
+  }
+
+  // ---------------------------------------------------------------- tornadoes
+
+  /** Per tornado: where its ground scar was last laid (it scours one every ~30 m of track). */
+  private readonly tornadoScar = new Map<number, { x: number; z: number }>();
+  private tornadoDamageAt = -Infinity;
+  /** Structure blocks, riders, aircraft and wall segments tornadoes have taken (tests, HUD). */
+  tornadoToll = { blocks: 0, riders: 0, flyers: 0, scars: 0 };
+
+  /**
+   * Tornado winds on everything loose: every dynamic body within four core radii (rubble, craft
+   * debris, a ground vehicle you're driving) feels bluff-body drag on the vortex wind (swirl,
+   * the strong surface inflow that draws things in, the core updraft that lifts them). Inside
+   * the core the pressure deficit and suction vortices add to it (up to 3x, the difference
+   * between being shoved and being taken up). Aircraft already fly in the wind (their aero
+   * surfaces), so the player's craft only gets this when it has none.
+   */
+  private tornadoForces(): void {
+    const ev = this.atmosphere.events;
+    const tornadoes = ev.active.filter((e) => e.kind === 'tornado');
+    if (!tornadoes.length) return;
+    const ground = this.craft.aeroSurfaces.length === 0 && this.craft.rotors.length === 0;
+    for (const e of tornadoes) {
+      const I = ev.intensity(e);
+      if (I < 0.05) continue;
+      const t = e.tornado;
+      const reach = t.coreRadius * 4;
+      this.world.forEachRigidBody((b) => {
+        if (!b.isDynamic() || b.isSleeping() && Math.hypot(b.translation().x - t.x, b.translation().z - t.z) > reach) return;
+        if (b === this.craft.body && !ground) return;
+        const p = b.translation();
+        const dx = p.x - t.x, dz = p.z - t.z;
+        const r = Math.hypot(dx, dz);
+        if (r > reach) return;
+        _tw.set(0, 0, 0);
+        tornadoWind(_tp.set(p.x, p.y - terrainHeight(p.x, p.z), p.z), 0, t, _tw).multiplyScalar(I);
+        const suction = 1 + 2 * Math.exp(-((r / (t.coreRadius * 1.4)) ** 2));
+        windForce(_tw, b.linvel(), b.mass(), _tf, 100).multiplyScalar(suction); // loose things are light for their size (a rubble block: ~110 kg/m³)
+        // Never more than ~6 g: a body in the core is flung, not teleported.
+        const cap = b.mass() * 60;
+        const f = _tf.length();
+        if (f > cap) _tf.multiplyScalar(cap / f);
+        b.applyImpulse({ x: _tf.x * this.dt, y: _tf.y * this.dt, z: _tf.z * this.dt }, true);
+      });
+    }
+  }
+
+  /**
+   * The path of destruction, a few times a second for each tornado on the ground: the core
+   * chews through every structure it crosses (intact ones fracture into their Rapier blocks
+   * first; the blocks inside the core column are torn out, and what they held up falls as
+   * rubble that the wind then takes), catches riders and their light walls, takes aircraft
+   * flying low through it, and scours a scar into the grid every ~30 m of its track.
+   */
+  private tornadoDamage(): void {
+    if (this.time - this.tornadoDamageAt < 0.2) return;
+    const ev = this.atmosphere.events;
+    const tornadoes = ev.active.filter((e) => e.kind === 'tornado');
+    if (!tornadoes.length) return;
+    this.tornadoDamageAt = this.time;
+    for (const e of tornadoes) {
+      const I = ev.intensity(e);
+      if (I < 0.3) continue;
+      const t = e.tornado;
+      const rd = t.coreRadius * 0.35 * Math.min(1.5, I); // the destructive core, ~26 m at full strength
+      // Structures: fracture the ones the core reaches, then tear out the core column.
+      for (const g of this.staticWorld.structures.groups) {
+        if (this.staticWorld.fractured.has(g.id)) continue;
+        const x1 = g.x0 + g.size[0] * g.blockSize, z1 = g.z0 + g.size[2] * g.blockSize;
+        const dx = Math.max(g.x0 - t.x, 0, t.x - x1), dz = Math.max(g.z0 - t.z, 0, t.z - z1);
+        if (dx * dx + dz * dz > rd * rd) continue;
+        if (this.staticWorld.fractured.size >= TUNING.maxFracturedStructures) break;
+        this.staticWorld.fracture(g.id, { impulse: 0, x: t.x, y: 0, z: t.z }, this.time, false);
+      }
+      // The blocks inside the core column, nearest the axis first. A few each tick are torn out
+      // whole as flying rubble (the wind then lifts and flings them); more are shredded (chips).
+      // Over a second or two the core clears a swath as wide as itself.
+      const inCore: Array<{ b: BlockBuilding; block: Block; d: number }> = [];
+      for (const b of this.town.buildings) {
+        const [ox, , oz] = b.def.origin;
+        const s = b.blockSize;
+        const x1 = ox + b.def.size[0] * s, z1 = oz + b.def.size[2] * s;
+        const dx = Math.max(ox - t.x, 0, t.x - x1), dz = Math.max(oz - t.z, 0, t.z - z1);
+        if (dx * dx + dz * dz > rd * rd) continue;
+        const ceiling = t.height * 0.5;
+        for (const block of b.list) {
+          if (!block.alive) continue;
+          const c = b.worldCentre(block, _tp);
+          if (c.y > ceiling) continue;
+          const d = Math.hypot(c.x - t.x, c.z - t.z);
+          if (d < rd + s * 0.5) inCore.push({ b, block, d });
+        }
+      }
+      inCore.sort((p, q) => p.d - q.d);
+      const rip = Math.round(8 * Math.min(1.5, I));
+      for (const { b, block } of inCore.slice(0, rip)) {
+        this.tornadoToll.blocks += this.town.rip(b, [block], this.time, (k) => {
+          const c = b.worldCentre(k, _tp);
+          _tw.set(0, 0, 0);
+          tornadoWind(_tf.set(c.x, c.y, c.z), 0, t, _tw);
+          return { x: _tw.x * 0.5 * I, y: _tw.y * 0.5 * I + 6, z: _tw.z * 0.5 * I };
+        });
+      }
+      const shred = inCore.slice(rip, rip + Math.round(40 * Math.min(1.5, I)));
+      this.tornadoToll.blocks += this.town.destroy(shred.map((s) => s.block));
+      // Riders on the ground and their light walls; aircraft flying low through the funnel.
+      this.tornadoToll.riders += this.traffic.derezWithin(t.x, t.z, rd * 1.2, this.time);
+      this.trails.cutAt(t.x, t.z, rd);
+      for (const f of this.airTraffic.flyers) {
+        if (f.derezAt !== null) continue;
+        if (Math.hypot(f.pos.x - t.x, f.pos.z - t.z) < t.coreRadius * 0.8 && f.pos.y < t.height * 0.7) {
+          this.derezFlyer(f);
+          this.tornadoToll.flyers++;
+        }
+      }
+      // A scar along the track.
+      const last = this.tornadoScar.get(e.id);
+      if (!last || Math.hypot(t.x - last.x, t.z - last.z) > 30) {
+        const n = this.craters.length;
+        this.crater(t.x, terrainHeight(t.x, t.z), t.z, 10 * Math.min(1.3, I), '#6f8aa8');
+        if (this.craters.length > n) this.tornadoToll.scars++;
+        this.tornadoScar.set(e.id, { x: t.x, z: t.z });
+      }
+    }
   }
 
   /** A bulldozer shoving through structure or rubble: no damage to it (the rubble still feels it). */

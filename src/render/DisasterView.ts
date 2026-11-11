@@ -62,8 +62,6 @@ export class DisasterView {
       const origin = event.kind === 'tornado' ? event.tornado : event.hurricane;
       group.position.set(origin.x, 0, origin.z);
       if (event.kind === 'tornado') {
-        group.position.x += age * event.tornado.velocityX;
-        group.position.z += age * event.tornado.velocityZ;
         this.tornadoes.get(event)?.update(age, events.intensity(event));
       } else if (event.kind === 'hurricane') group.rotation.y = age * 0.025;
       else for (let i = 0; i < group.children.length; i++) {

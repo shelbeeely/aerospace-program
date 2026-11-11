@@ -79,6 +79,8 @@ export class Town {
   /** Impulse taken by each chunk this step (N·s). */
   private readonly chunkImpulse = new Map<Chunk, number>();
   private readonly touched = new Set<BlockBuilding>();
+  /** Buildings that lost blocks outside `update` (ripped out by wind): support is rechecked next update. */
+  private readonly pendingSupport = new Set<BlockBuilding>();
   private readonly _p = { x: 0, y: 0, z: 0 };
   private readonly world: RAPIER.World;
   private readonly registry: { add(c: RAPIER.Collider, block: Block): void; delete(c: RAPIER.Collider): void };
@@ -174,9 +176,11 @@ export class Town {
   /** Apply this step's hits: destroy blocks, drop what lost support, shatter hard landings. */
   update(time: number): void {
     this.lastTime = time;
-    if (!this.blockImpulse.size && !this.chunkImpulse.size && !this.pool.chunks.length) return;
+    if (!this.blockImpulse.size && !this.chunkImpulse.size && !this.pool.chunks.length && !this.pendingSupport.size) return;
     const touched = this.touched;
     touched.clear();
+    for (const b of this.pendingSupport) touched.add(b);
+    this.pendingSupport.clear();
     const s = TUNING.blockSize;
     if (this.blockImpulse.size) {
       for (const [b, j] of this.blockImpulse) {
@@ -298,8 +302,38 @@ export class Town {
     return n;
   }
 
+  /**
+   * Wind tearing blocks out whole (a tornado): each block leaves its building as its own rubble
+   * body carrying `velocity(block)`, so the wind can take it; what it held up falls on the next
+   * update. A block the rubble caps can't take is destroyed instead. Returns the blocks taken.
+   */
+  rip(building: BlockBuilding, blocks: readonly Block[], time: number, velocity: (b: Block) => { x: number; y: number; z: number }): number {
+    let n = 0;
+    for (const b of blocks) {
+      if (!b.alive) continue;
+      const v = velocity(b);
+      building.remove(b);
+      if (!this.pool.spawn(building, [b], time, v)) this.recordBreak(building, b, time);
+      else this.destroyed++;
+      n++;
+    }
+    if (n) {
+      this.pendingSupport.add(building);
+      this.version++;
+    }
+    return n;
+  }
+
+  /** Destroy these blocks outright on the next update (they burst into chips). */
+  destroy(blocks: readonly Block[]): number {
+    let n = 0;
+    for (const b of blocks) if (b.alive) { this.blockImpulse.set(b, Infinity); n++; }
+    return n;
+  }
+
   /** Every building whole again, all rubble gone. */
   reset(): void {
+    this.pendingSupport.clear();
     this.pool.clear();
     for (const b of this.buildings) b.restore();
     this.blockImpulse.clear();

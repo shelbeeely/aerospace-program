@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { DISASTER_TUNING as D } from '../../tuning.ts';
 import { groundAcceleration, groundDisplacement } from './earthquake.ts';
 import { hurricaneRain, hurricaneWind, surgeHeight, type Hurricane } from './hurricane.ts';
-import { tornadoWind, type Tornado } from './tornado.ts';
+import { advanceTornado, tornadoWind, type Tornado } from './tornado.ts';
 
 export type EventKind = 'tornado' | 'hurricane' | 'earthquake';
 export interface EventOptions {
@@ -79,7 +79,11 @@ export class WorldEvents {
       id: this.nextId++, kind, start, duration,
       strength: Math.max(0, Math.min(2, options.strength ?? 1)),
       seed: (this.random() * 4294967296) >>> 0,
-      tornado: { x, z, velocityX: Math.cos(angle) * D.tornadoTravelSpeed, velocityZ: Math.sin(angle) * D.tornadoTravelSpeed, coreRadius: D.tornadoCoreRadius, peakSpeed: D.tornadoPeakSpeed, height: D.tornadoHeight },
+      tornado: {
+        x, z, velocityX: Math.cos(angle) * D.tornadoTravelSpeed, velocityZ: Math.sin(angle) * D.tornadoTravelSpeed,
+        coreRadius: D.tornadoCoreRadius, peakSpeed: D.tornadoPeakSpeed, height: D.tornadoHeight,
+        heading: angle, speed: D.tornadoTravelSpeed, wander: this.random() * Math.PI * 2,
+      },
       hurricane: { x, z, maxRadius: D.hurricaneMaxRadius, peakSpeed: D.hurricanePeakSpeed, hollandB: D.hurricaneHollandB },
     };
     // Bound retained events even under repeated UI triggers.
@@ -97,6 +101,8 @@ export class WorldEvents {
     if (!Number.isFinite(dt) || dt < 0) throw new Error('Event dt must be finite and nonnegative');
     this.time += dt;
     this.events = this.events.filter(e => e.start + e.duration > this.time);
+    // Tornadoes travel their winding paths.
+    for (const e of this.events) if (e.kind === 'tornado' && this.time > e.start) advanceTornado(e.tornado, this.time - e.start, Math.min(dt, this.time - e.start));
     if (this.randomTornadoes) this.spawnRandomTornado();
   }
 
@@ -115,9 +121,11 @@ export class WorldEvents {
     const z = this.focus.z + Math.sin(bearing) * dist;
     const [t0, t1] = D.randomTornadoDuration;
     const e = this.schedule('tornado', this.time, { x, z, duration: t0 + this.random() * (t1 - t0), strength: 0.7 + this.random() * 0.6 });
-    // Head back toward the focus, give or take 50 degrees, at 3-9 m/s.
+    // Head back toward the focus, give or take 50 degrees, at 0.75-2.25x the travel speed.
     const heading = bearing + Math.PI + (this.random() - 0.5) * 1.75;
     const speed = D.tornadoTravelSpeed * (0.75 + this.random() * 1.5);
+    e.tornado.heading = heading;
+    e.tornado.speed = speed;
     e.tornado.velocityX = Math.cos(heading) * speed;
     e.tornado.velocityZ = Math.sin(heading) * speed;
   }
