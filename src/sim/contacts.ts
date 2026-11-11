@@ -66,6 +66,19 @@ export function globeToWorld(px: number, py: number, pz: number, x0: number, z0:
   return { x: x0 + (phi / (Math.PI * 2)) * C, z: z0 + (theta / Math.PI) * C };
 }
 
+/**
+ * The strike globe's close view: a flat local frame in metres round a centre (east +x, south +z),
+ * the shortest way round the planet, so it is seamless across the wrap.
+ */
+export function toLocal(x: number, z: number, cx: number, cz: number): { x: number; z: number } {
+  return { x: wrapDelta(cx, x), z: wrapDelta(cz, z) };
+}
+
+/** The inverse of toLocal: the planet point (in the centre's image) at a local point. */
+export function fromLocal(lx: number, lz: number, cx: number, cz: number): { x: number; z: number } {
+  return { x: cx + lx, z: cz + lz };
+}
+
 /** The simulation's vehicles: AI aircraft (peaceful and hostile) and the light-cycle riders. */
 export function simContacts(sim: Simulation): Contact[] {
   const out: Contact[] = [];

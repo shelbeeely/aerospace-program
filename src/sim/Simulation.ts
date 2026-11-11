@@ -34,6 +34,7 @@ import { nearestRoadPoint, siteSpawnPoint, type SpawnPoint, type SpawnSite } fro
 import { orbitElements, type OrbitTelemetry, type Telemetry } from './telemetry.ts';
 import { StrikeSystem, type Strike, type StrikeKind } from './strikes.ts';
 import { wrapDelta } from './contacts.ts';
+import { AdsbTracker, craftRecord, flyerRecord, riderRecord, type AdsbRecord } from './adsb.ts';
 
 function roundOrbit(o: OrbitTelemetry): OrbitTelemetry {
   const r = (x: number | null, d = 0) => (x === null ? null : Math.round(x * 10 ** d) / 10 ** d);
@@ -836,6 +837,7 @@ export class Simulation {
     this.traffic.clear();
     this.airTraffic.clear();
     this.groundTurrets.clear();
+    this.adsb.clear();
     this.staticWorld.reset();
     this.town.reset();
     this.chips.reset();
@@ -1007,6 +1009,7 @@ export class Simulation {
     this.airTraffic.stepWeapons(this.dt, this.time);
     this.groundTurrets.stepWeapons(this.dt, this.time);
     this.strikeSystem.step(this.dt);
+    if (this.adsb.due(this.time)) this.adsb.sample(this.adsbRecords(), this.time);
     this.syncWeaponMounts();
     this.bulldoze();
     this.playerBoom();
@@ -1509,6 +1512,29 @@ export class Simulation {
   /** Every weapon system with rounds in flight: the craft's own and the hostiles' (the renderer). */
   allWeapons(): WeaponSystem[] {
     return [this.weapons, ...this.airTraffic.weaponSystems(), ...this.groundTurrets.weaponSystems(), this.strikeSystem.view];
+  }
+
+  /** ADS-B: every vehicle's broadcast and its last minute of track (sampled once a second). */
+  readonly adsb = new AdsbTracker();
+  /** Other players' broadcasts (set by the network each frame; sampled with the rest). */
+  extraAdsb: AdsbRecord[] = [];
+
+  /** Every vehicle's ADS-B record now: the AI aircraft, the light cycles, the craft, other players. */
+  adsbRecords(): AdsbRecord[] {
+    const out: AdsbRecord[] = [];
+    const from = this.position;
+    for (const f of this.airTraffic.flyers) { const r = flyerRecord(f, this.team, this.time, from); if (r) out.push(r); }
+    for (const r of this.traffic.riders) { const x = riderRecord(r, this.time, from); if (x) out.push(x); }
+    if (!this.exploded) {
+      const fwd = _fwd.set(0, 0, -1).applyQuaternion(this.rotation);
+      out.push(craftRecord({
+        id: 'self', callsign: 'YOU', type: this.craft.def.name, self: true, side: this.team, team: this.team,
+        x: this.position.x, y: this.position.y, z: this.position.z, vx: this.linvel.x, vy: this.linvel.y, vz: this.linvel.z,
+        heading: Math.atan2(fwd.x, -fwd.z), emp: this.time < this.empUntil, hurt: this.hitsTaken > 0 && this.time - this.lastHitAt < 10,
+      }, from));
+    }
+    out.push(...this.extraAdsb);
+    return out;
   }
 
   /** Strikes in flight (the strike globe). */

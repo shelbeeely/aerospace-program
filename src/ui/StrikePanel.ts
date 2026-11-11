@@ -5,6 +5,7 @@ import { hostile, TEAMS } from '../sim/teams.ts';
 import { wrapDelta } from '../sim/contacts.ts';
 import { chunkAt } from '../world/planetCity.ts';
 import type { GlobeView } from '../render/GlobeView.ts';
+import { knots } from '../sim/adsb.ts';
 
 /**
  * The strike panel beside the strike globe: for the spot picked on the globe, the district, who
@@ -18,6 +19,8 @@ export class StrikePanel {
   private readonly buttons: HTMLElement;
   private readonly live: HTMLElement;
   private readonly status: HTMLElement;
+  private readonly card: HTMLElement;
+  private readonly modeBtn: HTMLButtonElement;
   private shown = '';
   private timer = 0;
 
@@ -36,16 +39,26 @@ export class StrikePanel {
     const title = el('b', '', 'STRIKE GLOBE');
     const close = el('button', 'panel-close', 'Close ✕');
     close.addEventListener('click', () => globe.toggle(false));
-    head.append(title, close);
+    // Basic (markers) or detailed (real models, full buildings up close); remembered.
+    this.modeBtn = el('button', 'globe-mode') as HTMLButtonElement;
+    this.modeBtn.type = 'button';
+    this.modeBtn.title = 'Basic: markers and plain buildings (light on the GPU). Detailed: the real aircraft models and full architecture up close.';
+    this.modeBtn.addEventListener('click', () => globe.setMode(globe.mode === 'detailed' ? 'basic' : 'detailed'));
+    globe.onMode = () => this.label();
+    head.append(title, this.modeBtn, close);
     this.credits = el('div', 'merc-credits');
+    // The selected vehicle's ADS-B card.
+    this.card = el('div', 'globe-card hidden');
     this.target = el('div', 'globe-target');
     this.buttons = el('div', 'globe-buttons');
     const liveTitle = el('h3', '', 'IN FLIGHT');
     this.live = el('div', 'globe-live small');
     this.status = el('p', 'merc-status small');
     const note = el('p', 'muted small', 'Strikes set out from the nearest district your team holds. Turrets on the way and at the target can shoot them down; kills and captures pay you.');
-    globe.side.append(head, this.credits, this.target, this.buttons, this.status, liveTitle, this.live, note);
+    globe.side.append(head, this.card, this.credits, this.target, this.buttons, this.status, liveTitle, this.live, note);
     globe.onPick = () => { this.shown = ''; this.status.textContent = ''; this.refresh(); };
+    globe.onSelect = () => this.refresh();
+    this.label();
   }
 
   /** Refresh about four times a second while the globe is open. */
@@ -65,8 +78,60 @@ export class StrikePanel {
     this.refresh();
   }
 
+  private label(): void {
+    this.modeBtn.textContent = this.globe.mode === 'detailed' ? 'Detailed' : 'Basic';
+    this.modeBtn.classList.toggle('on', this.globe.mode === 'detailed');
+  }
+
+  /** The selected vehicle's ADS-B card (live). */
+  private drawCard(): void {
+    const id = this.globe.selected;
+    const r = id ? this.sim.adsbRecords().find((x) => x.id === id) : undefined;
+    this.card.classList.toggle('hidden', !r);
+    if (!r) { this.card.replaceChildren(); return; }
+    const row = (k: string, v: string, cls = '') => {
+      const d = document.createElement('div');
+      d.className = `card-row ${cls}`;
+      const a = document.createElement('span'); a.textContent = k;
+      const b = document.createElement('b'); b.textContent = v;
+      d.append(a, b);
+      return d;
+    };
+    const head = document.createElement('div');
+    head.className = 'card-head';
+    head.style.color = r.color;
+    head.textContent = `${r.callsign}`;
+    const sub = document.createElement('div');
+    sub.className = 'muted small';
+    sub.textContent = `${r.type} · ${r.sideName}${r.foe ? ' · hostile' : ''}`;
+    const deg = Math.round(((r.track * 180) / Math.PI + 360) % 360).toString().padStart(3, '0');
+    const emergency = r.squawk === '7700' || r.squawk === '7600';
+    const btns = document.createElement('div');
+    btns.className = 'card-buttons';
+    const btn = (label: string, f: () => void) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = label;
+      b.addEventListener('click', f);
+      btns.append(b);
+    };
+    btn('Target here', () => { this.globe.picked = { x: r.x, z: r.z }; this.globe.onPick?.(r.x, r.z); });
+    btn(this.globe.follow ? 'Stop following' : 'Follow', () => { this.globe.follow = !this.globe.follow; this.drawCard(); });
+    btn('✕', () => this.globe.select(null));
+    this.card.replaceChildren(head, sub,
+      row('Altitude', `${Math.round(r.alt).toLocaleString()} m (${Math.round(r.agl).toLocaleString()} AGL)`),
+      row('Ground speed', `${knots(r.gs)} kt · ${Math.round(r.gs)} m/s`),
+      row('Vertical rate', `${r.vs >= 0 ? '+' : ''}${Math.round(r.vs * 60).toLocaleString()} m/min`),
+      row('Track', `${deg}°`),
+      row('Squawk', r.squawk + (r.squawk === '7700' ? ' EMERGENCY' : r.squawk === '7600' ? ' NO RADIO' : ''), emergency ? 'alert' : ''),
+      row('Range', `${(r.range / 1000).toFixed(1)} km`),
+      row('Status', r.status),
+      btns);
+  }
+
   private refresh(): void {
     const sim = this.sim;
+    this.drawCard();
     this.credits.textContent = `Credits: ${sim.credits}`;
     const p = this.globe.picked;
     const mercs = sim.airTraffic.flyers.filter((f) => f.role === 'merc' && f.derezAt === null && !f.leaving).length;

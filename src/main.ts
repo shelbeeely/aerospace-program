@@ -52,7 +52,8 @@ import { STRATEGIC } from './sim/strategic.ts';
 import { predictDrop } from './sim/weapons.ts';
 import { StrategicView } from './render/StrategicView.ts';
 import type { TurretDensity } from './sim/groundTurrets.ts';
-import { hostile, isTeam, TEAMS, type Team } from './sim/teams.ts';
+import { hostile, isTeam, sideLivery, TEAMS, type Team } from './sim/teams.ts';
+import { craftRecord } from './sim/adsb.ts';
 import { MercPanel } from './ui/MercPanel.ts';
 import { flyerKind, type Foe } from './sim/aiTraffic.ts';
 import { HostileMarkers, LockMarker, type HostileMark } from './hud/HostileMarkers.ts';
@@ -415,6 +416,7 @@ async function start() {
   const playerTargets = new Map<string, LockTarget>();
   const playerFoes = new Map<string, Foe>();
   const _nose = new THREE.Vector3();
+  const _globeEuler = new THREE.Euler();
   /** A war slider's value, shown beside it. */
   const sideSlider = (id: string): number => {
     const input = document.getElementById(id) as HTMLInputElement | null;
@@ -485,7 +487,8 @@ async function start() {
   let savedStrategic = sim.strategic;
   const mercPanel = new MercPanel(sim, () => sim.airTraffic.pool.filter((d) => flyerKind(d) !== 'ground'), (t) => toast(t));
   // The 3D strike globe (the map's Globe button, Shift+Tab): pick a spot, send aircraft, call strikes.
-  const globe = new GlobeView();
+  // Detailed (real models, full architecture up close) unless the device is a phone or set low.
+  const globe = new GlobeView(!mobile && quality !== 'low' && !perf.powerSaver);
   const strikePanel = new StrikePanel(sim, globe, (t) => toast(t));
   const toggleGlobe = (on = !globe.visible) => {
     if (on) radarMap.toggleMap(false);
@@ -1293,11 +1296,20 @@ async function start() {
     if (mode === 'flight') {
       // Radar and planet map: the simulation's vehicles, and the other players on the Grid.
       const contacts: Contact[] = simContacts(sim);
+      const playerAdsb = [];
       for (const p of net.players.values()) {
         if (!p.pose.visible) continue;
         _nose.set(0, 0, -1).applyQuaternion(p.pose.rotation);
-        contacts.push({ id: `player:${p.id}`, kind: 'player', foe: p.team !== sim.team, x: p.pose.position.x, z: p.pose.position.z, y: p.pose.position.y, heading: Math.atan2(_nose.x, -_nose.z), color: p.color, name: p.name });
+        const heading = Math.atan2(_nose.x, -_nose.z);
+        contacts.push({ id: `player:${p.id}`, kind: 'player', foe: p.team !== sim.team, x: p.pose.position.x, z: p.pose.position.z, y: p.pose.position.y, heading, color: p.color, name: p.name });
+        // Their ADS-B: name as the callsign, velocity from their latest state.
+        const v = p.latest?.v ?? [0, 0, 0];
+        playerAdsb.push(craftRecord({
+          id: `player:${p.id}`, callsign: p.name.toUpperCase().slice(0, 10), type: p.craft.name, self: false, side: p.team, team: sim.team, color: p.color,
+          x: p.pose.position.x, y: p.pose.position.y, z: p.pose.position.z, vx: v[0], vy: v[1], vz: v[2], heading,
+        }, sim.position));
       }
+      sim.extraAdsb = playerAdsb;
       // Carrying a nuke in the air: where it would burst if dropped now.
       let drop: { x: number; z: number; radius: number; armed: boolean } | null = null;
       if (sim.strategic === 'nuke' && !sim.exploded && sim.position.y - terrainHeight(sim.position.x, sim.position.z) > 20) {
@@ -1311,9 +1323,29 @@ async function start() {
       const radarState = { drop, x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites(), lockedId: sim.lock.target?.id ?? null, territory: sim.groundTurrets.territory, teamColors: TEAMS.map((t) => t.light) };
       radarMap.update(now / 1000, radarState);
       if (globe.visible) {
+        // Designs for the models: the AI aircraft's, other players' (in their side's livery), yours.
+        const flyers = new Map(sim.airTraffic.flyers.map((f) => [`air:${f.id}`, f]));
+        const liveries = new Map<string, CraftDef>();
+        const model = (id: string) => {
+          if (id === 'self') {
+            _globeEuler.setFromQuaternion(sim.rotation, 'YXZ');
+            return { def: sim.craft.def, pitch: _globeEuler.x, bank: -_globeEuler.z };
+          }
+          const f = flyers.get(id);
+          if (f) return { def: f.def, pitch: f.pitch, bank: f.bank };
+          if (id.startsWith('player:')) {
+            const p = net.players.get(id.slice(7));
+            if (!p) return null;
+            let def = liveries.get(id);
+            if (!def) liveries.set(id, (def = sideLivery(p.craft, p.team)));
+            return { def };
+          }
+          return null;
+        };
         globe.render({
-          me: { x: sim.position.x, z: sim.position.z, heading: radarState.heading }, contacts, sites: radarState.sites,
-          strikes: sim.strikes.map((s) => { const at = sim.strikeSystem.position(s); return { kind: s.kind, x: s.x, z: s.z, fromX: s.fromX, fromZ: s.fromZ, at: at ? { x: at.x, z: at.z } : null, eta: s.eta - sim.time }; }),
+          me: { x: sim.position.x, z: sim.position.z, heading: radarState.heading }, adsb: sim.adsbRecords(), tracks: sim.adsb.tracks,
+          turrets: contacts.filter((c) => c.kind === 'turret'), sites: radarState.sites, model,
+          strikes: sim.strikes.map((s) => { const at = sim.strikeSystem.position(s); return { kind: s.kind, x: s.x, z: s.z, fromX: s.fromX, fromZ: s.fromZ, at: at ? { x: at.x, z: at.z, y: at.y } : null, eta: s.eta - sim.time }; }),
           orders: sim.airTraffic.orders(), surface: radarMap.baseMap(), wash: radarMap.washMap(radarState), washVersion: sim.groundTurrets.territory.version,
         });
         strikePanel.update(dt);

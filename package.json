@@ -19,6 +19,7 @@
     "teams": "node --experimental-transform-types --no-warnings scripts/teams.ts",
     "wmd": "node --experimental-transform-types --no-warnings scripts/wmd.ts",
     "strikes": "node --experimental-transform-types --no-warnings scripts/strikes.ts",
+    "adsb": "node --experimental-transform-types --no-warnings scripts/adsb.ts",
     "netdamage": "node --experimental-transform-types --no-warnings scripts/netdamage.ts",
     "orbit": "node --experimental-transform-types --no-warnings scripts/orbit.ts",
     "weapons": "node --experimental-transform-types --no-warnings scripts/weapons.ts",

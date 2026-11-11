@@ -201,6 +201,28 @@ export function archMaterial(): THREE.MeshBasicNodeMaterial {
   return (opaque = m);
 }
 
+let flatPair: { opaque: THREE.MeshBasicNodeMaterial; light: THREE.MeshBasicNodeMaterial } | null = null;
+/**
+ * The same two materials as separate copies that the main view never bends round the planet:
+ * for scenes of their own (the strike globe's close view), where the world is drawn flat.
+ */
+export function archMaterialsFlat(): { opaque: THREE.MeshBasicNodeMaterial; light: THREE.MeshBasicNodeMaterial } {
+  if (flatPair) return flatPair;
+  const o = new THREE.MeshBasicNodeMaterial({ side: THREE.FrontSide });
+  const d = decode();
+  o.colorNode = shade(d);
+  o.opacityNode = d.visible;
+  o.alphaTest = 0.5;
+  o.name = 'arch-surface-flat';
+  const l = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: true });
+  const d2 = decode();
+  const V: TslNode = normalize(cameraPosition.sub(positionWorld));
+  const edgeOn: TslNode = float(0.35).add(pow(float(1).sub(abs(dot(d2.N, V))), 1.4).mul(0.9));
+  l.colorNode = d2.lightCol.mul(d2.glowI.mul(ARCH_PARAMS.glowGain).mul(0.32).mul(d2.act).mul(edgeOn).mul(exp(d2.uv.y.div(-700))).mul(d2.visible));
+  l.name = 'arch-light-flat';
+  return (flatPair = { opaque: o, light: l });
+}
+
 let interior: THREE.MeshBasicNodeMaterial | null = null;
 /** Same shader, double-sided: interiors are seen from inside their shells. */
 export function archInteriorMaterial(): THREE.MeshBasicNodeMaterial {

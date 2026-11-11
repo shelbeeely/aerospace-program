@@ -71,7 +71,7 @@ export function landformComponents(f: Landform, ox: number, oz: number): Compone
  * Tilted slab: the physics hull tilts a box about its centre; emitComponent tilts about the
  * box's base centre, so shift the component by the difference (in the slab's ry frame).
  */
-function emitSlab(w: GeometryWriter, f: Landform, ox: number, oz: number): void {
+export function emitSlab(w: GeometryWriter, f: Landform, ox: number, oz: number): void {
   const look = LOOK[f.arch][f.tier - 1];
   const off = (f.h / 2) * Math.sin(f.rx);
   const c: Component = {
