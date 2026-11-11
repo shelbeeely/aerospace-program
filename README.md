@@ -86,6 +86,15 @@ npm run build          # typecheck + production build
    and plays through the game's own audio whenever you fly it, looping and faded in, under the
    game volume (M mutes). The Studio's Music section composes or removes the theme of the
    vehicle you're in.
+   **Test bench** (Studio → "Test bench: compare models", or open the game with `?bench`):
+   run the same prompt through up to eight designer models with identical settings
+   (reasoning effort, flight-test budget, detail) and the same test card, one to four at a
+   time, optionally several runs per model to see how consistent each is. Each run is
+   measured alone (no fail-over to other models). A live table shows every run's turn and
+   last tool call, then its calm and gusty scores, parts, turns, flight tests, time and cost;
+   a summary ranks the models by pass rate, then mean score. Watch a run build on the
+   turntable, view, save or fly any result, and download the comparison as CSV or as JSON with
+   every craft. Every bench run is also kept as training data.
    There are no custom liveries: every vehicle wears the 1982 palette.
    Every vehicle, stock or generated, is also dressed by the **vehicle grammar**
    (`src/craft/grammar.ts`): the building rules applied to vehicles. From what each part does it

@@ -19,6 +19,7 @@ import {
 } from '../gen/openrouter.ts';
 import { formatReport } from '../sim/flightTest.ts';
 import { runFlightTest } from '../sim/flightTestClient.ts';
+import { ModelBench } from './ModelBench.ts';
 
 export interface StudioHost {
   client: OpenRouter;
@@ -103,6 +104,8 @@ export class Studio {
   private searchInfo!: HTMLElement;
   /** The selected Designer's endpoint terms, when it is agentic-only. */
   private termsNote!: HTMLElement;
+  /** The model test bench (several designers, one prompt, compared). */
+  private bench!: ModelBench;
 
   private readonly el: {
     status: HTMLElement;
@@ -221,6 +224,24 @@ export class Studio {
     };
     settings.append(this.el.keyNote);
 
+    this.bench = new ModelBench({
+      client: host.client,
+      library: host.library,
+      models: () => this.models,
+      freeOnly: () => this.prefs.freeOnly,
+      prompt: () => this.el.prompt.value,
+      settings: () => ({ effort: this.prefs.effort, tests: this.prefs.tests, detail: this.el.detailPass.checked }),
+      lock: (ctrl) => this.setBusy(ctrl),
+      canGenerate: () => this.canGenerate(),
+      status: (t, k) => this.setStatus(t, k),
+      spendChanged: () => this.updateSpend(),
+      keepTrace: (t) => void saveTrace(t).then(() => this.updateTraceCount()),
+      preview: (c) => host.preview(c),
+      select: (e) => host.select(e),
+      fly: () => host.fly(),
+      hangarChanged: () => this.renderHangar(),
+    });
+
     const chips = h('div', { class: 'chips' });
     for (const s of SUGGESTIONS) chips.append(h('button', { class: 'chip', onclick: () => ((prompt.value = s), prompt.focus()) }, s));
 
@@ -245,6 +266,7 @@ export class Studio {
         this.el.log,
         this.el.result,
       ),
+      this.bench.root,
       settings,
       h('details', { class: 'settings crew-settings' },
         h('summary', {}, 'Models & generation settings'),
@@ -282,6 +304,8 @@ export class Studio {
     this.updateSpend();
     void this.updateTraceCount();
     void this.loadModels();
+    // ?bench opens the Studio on the test bench.
+    if (new URLSearchParams(location.search).has('bench')) { this.show(); this.bench.open(); }
   }
 
   show(): void {
@@ -376,6 +400,7 @@ export class Studio {
       this.searchInfo.textContent = this.search ? `${n} matching text model(s) of ${this.models.length} in the catalog; matches are listed first in each job.` : '';
     }
     this.savePrefs();
+    this.bench?.refresh();
   }
 
   private pick(job: JobId, id: string): void {
