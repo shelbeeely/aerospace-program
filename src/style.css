@@ -61,6 +61,7 @@ body.mode-hangar #radar, body.mode-hangar #planet-map { display: none; }
 #planet-map .map-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 #planet-map .map-head b { letter-spacing: 0.2em; font-size: 12px; color: #dff6ff; }
 #planet-map .map-head span { flex: 1; color: #9fb2c2; font-size: 11px; }
+#planet-map-canvas { touch-action: none; }
 #planet-map .map-head button { background: #0e1d2e; color: #cfeaff; border: 1px solid rgba(0, 212, 255, 0.35); border-radius: 4px; padding: 3px 10px; font: inherit; cursor: pointer; }
 #planet-map .map-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; width: min(78vh, 92vw, 760px); color: #9fb2c2; font-size: 11px; }
 #planet-map .map-legend i { display: inline-block; width: 9px; height: 9px; margin-right: 5px; vertical-align: -1px; box-sizing: border-box; }
@@ -91,6 +92,12 @@ body.mode-hangar #missile-warn { display: none; }
 #hud #h-lock-row b { color: #7fe8ff; font-size: 14px; min-width: 0; flex: 1; }
 #hud #h-lock-row.locked b { color: #00d4ff; }
 #hud #h-turret-row b { font-size: 14px; min-width: 0; flex: 1; }
+
+/* A nuke's flash over the whole view, and an EMP's flicker on the HUD. */
+#nuke-flash { position: absolute; inset: 0; background: #f4fbff; opacity: 0; pointer-events: none; z-index: 40; }
+body.emp #hud { animation: emp-flicker 0.18s steps(2) infinite; }
+@keyframes emp-flicker { 50% { opacity: 0.35; } }
+#hud #h-strat-row b { color: #dff6ff; font-size: 14px; min-width: 0; flex: 1; }
 
 /* Mercenaries panel. */
 #merc-panel { right: 16px; top: 16px; width: 300px; max-height: calc(100dvh - 32px); overflow-y: auto; z-index: 18; border-color: rgba(61, 124, 255, 0.4); }

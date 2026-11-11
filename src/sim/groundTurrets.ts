@@ -75,6 +75,8 @@ export interface GroundTurret {
   /** It, as a lock target and as a foe to others. */
   handle: LockTarget;
   foe: Foe;
+  /** An EMP has knocked it out until then (s): dark, it holds fire. */
+  disabledUntil: number;
 }
 
 
@@ -297,7 +299,7 @@ export class GroundTurretSystem {
     const t: GroundTurret = {
       id: this.nextId++, site, pos, pose, hp: HP, maxHp: HP, hitAt: -Infinity, state: 'idle', derezAt: null,
       aimError: { h: 0, p: 0 }, missileAt: -Infinity, sees: false, seenAt: -Infinity, weapons, body, color, side, target: null,
-      handle: null as unknown as LockTarget, foe: null as unknown as Foe,
+      handle: null as unknown as LockTarget, foe: null as unknown as Foe, disabledUntil: -Infinity,
       host: {
         world: this.world, body, position: pos, rotation: new THREE.Quaternion(), linvel: new THREE.Vector3(), color,
         groundAt: (gx, gz) => self.groundAt(gx, gz),
@@ -387,11 +389,24 @@ export class GroundTurretSystem {
     }
   }
 
+  /** An EMP: dark and silent until `until`. */
+  disable(t: GroundTurret, until: number): void {
+    t.disabledUntil = Math.max(t.disabledUntil, until);
+    t.target = null;
+    t.weapons.trigger.primary = t.weapons.trigger.secondary = false;
+  }
+
   /** One turret's fire control. */
   private aim(t: GroundTurret, dt: number, time: number, foes: Foe[]): void {
     const w = t.weapons;
     w.trigger.primary = w.trigger.secondary = false;
     w.lock = null;
+    if (time < t.disabledUntil) {
+      t.state = 'idle';
+      t.target = null;
+      t.sees = false;
+      return;
+    }
     const head = this._a.set(t.pos.x, t.pos.y + TURRET_HEAD_Y, t.pos.z);
     if (time - t.seenAt > 0.25) {
       t.seenAt = time;

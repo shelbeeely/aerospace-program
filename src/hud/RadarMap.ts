@@ -1,6 +1,6 @@
 import { GRID, mod } from '../arch/grid.ts';
 import { TERRAIN_ARCHETYPES } from '../arch/WorldRegionManager.ts';
-import { mapPoint, radarPoint, type Contact } from '../sim/contacts.ts';
+import { globeAngles, globeProject, globeUnproject, mapPoint, radarPoint, type Contact } from '../sim/contacts.ts';
 import { PLANET, type LandingSite } from '../sim/layout.ts';
 import { BLOCK_KIND, blockSummary } from '../world/planetCity.ts';
 
@@ -61,7 +61,58 @@ export class RadarMap {
     this.scope?.addEventListener('click', () => this.toggleMap());
     this.rangeButton?.addEventListener('click', () => this.cycleRange());
     document.getElementById('planet-map-close')?.addEventListener('click', () => this.toggleMap(false));
+    // Flat map or globe (remembered); the globe turns with a drag and zooms with the wheel.
+    this.modeButton = document.getElementById('planet-map-mode');
+    try { this.globe = localStorage.getItem('mapGlobe') === '1'; } catch { /* default flat */ }
+    this.modeButton?.addEventListener('click', () => this.setGlobe(!this.globe));
+    this.setGlobe(this.globe);
+    const c = this.map;
+    if (c) {
+      let drag: { x: number; y: number } | null = null;
+      c.addEventListener('pointerdown', (e) => {
+        if (!this.globe) return;
+        drag = { x: e.clientX, y: e.clientY };
+        c.setPointerCapture(e.pointerId);
+      });
+      c.addEventListener('pointermove', (e) => {
+        if (!drag || !this.globe) return;
+        const k = Math.PI / (c.clientWidth * this.zoom);
+        this.view.lon -= (e.clientX - drag.x) * k;
+        this.view.lat = Math.max(-1.45, Math.min(1.45, this.view.lat + (e.clientY - drag.y) * k));
+        this.view.free = true;
+        this.turning = performance.now();
+        drag = { x: e.clientX, y: e.clientY };
+        this.last = -Infinity;
+      });
+      const end = () => { drag = null; this.last = -Infinity; };
+      c.addEventListener('pointerup', end);
+      c.addEventListener('pointercancel', end);
+      c.addEventListener('wheel', (e) => {
+        if (!this.globe) return;
+        e.preventDefault();
+        this.zoom = Math.max(0.8, Math.min(4, this.zoom * Math.exp(-e.deltaY * 0.0015)));
+        this.turning = performance.now();
+        this.last = -Infinity;
+      }, { passive: false });
+      c.addEventListener('dblclick', () => { this.view.free = false; this.zoom = 1; this.last = -Infinity; });
+    }
     this.label();
+  }
+
+  private globe = false;
+  private readonly modeButton: HTMLElement | null;
+  /** Where the globe looks (rad); `free` once dragged (else it follows the craft). */
+  private readonly view = { lon: 0, lat: 0, free: false };
+  private zoom = 1;
+  private turning = 0;
+  private sphere: { canvas: HTMLCanvasElement; key: string } | null = null;
+  private texels: { base: Uint8ClampedArray; n: number } | null = null;
+
+  setGlobe(on: boolean): void {
+    this.globe = on;
+    if (this.modeButton) this.modeButton.textContent = on ? 'Flat' : 'Globe';
+    try { localStorage.setItem('mapGlobe', on ? '1' : '0'); } catch { /* not remembered */ }
+    this.last = -Infinity;
   }
 
   get range(): number {
@@ -94,7 +145,7 @@ export class RadarMap {
     if (now - this.last < 1 / 15) return;
     this.last = now;
     if (this.scope) this.drawScope(this.scope, s);
-    if (this.open && this.map) this.drawMap(this.map, s);
+    if (this.open && this.map) (this.globe ? this.drawGlobe(this.map, s) : this.drawMap(this.map, s));
   }
 
   /** Size a canvas's backing store to its CSS box; returns its side in pixels and the scale. */
@@ -276,6 +327,119 @@ export class RadarMap {
       g.fillRect(i, j, 1, 1);
     }
     this.washVersion = t.version;
+    return c;
+  }
+
+  /**
+   * The globe: the same map on a sphere, lit from the upper left with a thin glowing limb. The
+   * surface is drawn pixel by pixel into a smaller canvas (half size while it turns) and cached
+   * until the view or the territory changes; the vehicles, sites and the radar's reach go on top.
+   */
+  private drawGlobe(c: HTMLCanvasElement, s: RadarState): void {
+    const { size, k } = this.fit(c);
+    const g = c.getContext('2d');
+    if (!g) return;
+    const C = PLANET.circumference;
+    const uv = (x: number, z: number) => ({ u: mod(x - GRID.x0, C) / C, v: mod(z - GRID.z0, C) / C });
+    const me = uv(s.x, s.z);
+    if (!this.view.free) {
+      const a = globeAngles(me.u, me.v);
+      this.view.lon = a.lon;
+      this.view.lat = Math.max(-1.45, Math.min(1.45, a.lat));
+    }
+    const R = (size / 2 - 14 * k) * this.zoom, cx = size / 2, cy = size / 2;
+    // The surface.
+    const moving = performance.now() - this.turning < 250;
+    const res = Math.max(96, Math.round(Math.min(size, 2 * R + 4) * (moving ? 0.4 : 0.75)));
+    const key = `${this.view.lon.toFixed(4)},${this.view.lat.toFixed(4)},${this.zoom.toFixed(3)},${res},${s.territory?.version ?? 0}`;
+    if (!this.sphere || this.sphere.key !== key) this.sphere = { canvas: this.paintSphere(res, s), key };
+    g.fillStyle = '#02050c';
+    g.fillRect(0, 0, size, size);
+    g.imageSmoothingEnabled = true;
+    g.drawImage(this.sphere.canvas, cx - R, cy - R, 2 * R, 2 * R);
+    // The limb: a thin line of light round the edge.
+    g.strokeStyle = 'rgba(0, 212, 255, 0.55)';
+    g.lineWidth = 1.5 * k;
+    g.beginPath();
+    g.arc(cx, cy, R, 0, Math.PI * 2);
+    g.stroke();
+    const at = (x: number, z: number) => {
+      const p = uv(x, z);
+      const a = globeAngles(p.u, p.v);
+      const q = globeProject(a.lon, a.lat, this.view.lon, this.view.lat);
+      return { x: cx + q.x * R, y: cy - q.y * R, front: q.z > 0.02 };
+    };
+    g.font = `${9 * k}px ui-monospace, monospace`;
+    g.textBaseline = 'middle';
+    g.textAlign = 'left';
+    for (const site of s.sites) {
+      if (site.kind !== 'runway') continue;
+      const p = at(site.x, site.z);
+      if (!p.front) continue;
+      g.fillStyle = PALE;
+      g.fillRect(p.x - 1.5 * k, p.y - 1.5 * k, 3 * k, 3 * k);
+      g.fillStyle = 'rgba(223, 246, 255, 0.7)';
+      g.fillText(site.name, p.x + 5 * k, p.y - 5 * k);
+    }
+    // The radar's reach round the craft (a small circle on the surface).
+    const reach = (this.range / C) * Math.PI * 2 * R;
+    const own = at(s.x, s.z);
+    if (own.front) {
+      g.strokeStyle = 'rgba(0, 212, 255, 0.35)';
+      g.lineWidth = k;
+      g.beginPath();
+      g.arc(own.x, own.y, Math.max(3 * k, reach), 0, Math.PI * 2);
+      g.stroke();
+    }
+    const order = { rider: 0, aircraft: 1, player: 2, turret: 3, hostile: 4 } as const;
+    for (const ct of [...s.contacts].sort((a, b) => order[a.kind] - order[b.kind])) {
+      const p = at(ct.x, ct.z);
+      if (!p.front) continue;
+      this.mark(g, ct, p.x, p.y, ct.heading, k * 0.85);
+      if (ct.id === s.lockedId) this.ring(g, p.x, p.y, k);
+    }
+    if (own.front) this.own(g, own.x, own.y, s.heading, k * 1.2);
+    g.fillStyle = DIM;
+    g.textAlign = 'center';
+    g.fillText('drag to turn · wheel to zoom · double-click to recentre', size / 2, size - 8 * k);
+    if (this.info) this.info.textContent = `${s.contacts.filter((x) => x.kind === 'hostile' && x.foe).length} enemy aircraft · ${s.contacts.filter((x) => x.kind === 'turret').length} turrets`;
+  }
+
+  /** Paint the globe's lit surface (base map and territory) into a res × res canvas. */
+  private paintSphere(res: number, s: RadarState): HTMLCanvasElement {
+    if (!this.texels) {
+      const b = this.baseMap();
+      const n = b.width;
+      this.texels = { base: b.getContext('2d')!.getImageData(0, 0, n, n).data, n };
+    }
+    const { base, n } = this.texels;
+    const wash = s.territory && s.teamColors ? this.washMap(s) : null;
+    const washPx = wash ? wash.getContext('2d')!.getImageData(0, 0, wash.width, wash.height).data : null;
+    const wn = wash?.width ?? 1;
+    const c = document.createElement('canvas');
+    c.width = c.height = res;
+    const g = c.getContext('2d')!;
+    const img = g.createImageData(res, res);
+    const L = { x: -0.45, y: 0.55, z: 0.7 }; // light from the upper left
+    for (let j = 0; j < res; j++) for (let i = 0; i < res; i++) {
+      const x = (i + 0.5) / res * 2 - 1, y = 1 - (j + 0.5) / res * 2;
+      const a = globeUnproject(x, y, this.view.lon, this.view.lat);
+      if (!a) continue;
+      const u = mod(a.lon / (Math.PI * 2), 1), v = Math.min(0.9999, Math.max(0, 0.5 - a.lat / Math.PI));
+      const bi = (Math.floor(v * n) * n + Math.floor(u * n)) * 4;
+      let r = base[bi], gg = base[bi + 1], bb = base[bi + 2];
+      if (washPx) {
+        const wi = (Math.floor(v * wn) * wn + Math.floor(u * wn)) * 4;
+        if (washPx[wi + 3]) {
+          r += (washPx[wi] - r) * 0.28; gg += (washPx[wi + 1] - gg) * 0.28; bb += (washPx[wi + 2] - bb) * 0.28;
+        }
+      }
+      const z = Math.sqrt(Math.max(0, 1 - x * x - y * y));
+      const lit = 0.45 + 0.75 * Math.max(0, x * L.x + y * L.y + z * L.z);
+      const o = (j * res + i) * 4;
+      img.data[o] = Math.min(255, r * lit); img.data[o + 1] = Math.min(255, gg * lit); img.data[o + 2] = Math.min(255, bb * lit); img.data[o + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
     return c;
   }
 

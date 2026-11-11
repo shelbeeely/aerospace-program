@@ -236,7 +236,7 @@ export interface WeaponModuleDef {
   type: 'weapon';
   offset?: Vec3Tuple;
   /** gun, cannon, missile (rail), bomb (bay), laser (beam), disc (identity disc launcher), pulse (bolt emitter). */
-  kind: 'gun' | 'cannon' | 'bomb' | 'missile' | 'laser' | 'disc' | 'pulse';
+  kind: 'gun' | 'cannon' | 'bomb' | 'missile' | 'laser' | 'disc' | 'pulse' | 'rail';
   /** Rounds (bombs, missiles, discs...) it carries. Default per kind. */
   ammo?: number;
 }

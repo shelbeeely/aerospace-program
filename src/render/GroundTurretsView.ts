@@ -12,6 +12,8 @@ export class GroundTurretsView {
   private readonly views = new Map<number, RemoteCraftView>();
   private readonly level = new THREE.Quaternion();
   private time = 0;
+  /** The simulation's clock (EMP timers are in it). */
+  simTime = 0;
 
   constructor(private readonly scene: THREE.Scene, private readonly turrets: GroundTurretSystem) {}
 
@@ -29,7 +31,7 @@ export class GroundTurretsView {
       }
       v.update(t.pos, this.level, 0, 0, dt);
       v.setTurret(t.pose);
-      v.setLightState({ activity: t.state === 'idle' ? 0 : 1, integrity: t.hp / t.maxHp, time: this.time });
+      v.setLightState({ activity: t.state === 'idle' ? 0 : 1, integrity: t.hp / t.maxHp, time: this.time, inactive: t.disabledUntil > this.simTime });
     }
     for (const [id, v] of this.views) {
       if (live.has(id)) continue;

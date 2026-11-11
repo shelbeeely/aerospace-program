@@ -162,7 +162,7 @@ export const TUNING = {
    * A hostile round that strikes the player's craft takes this share of the struck part's full
    * hit points (a part at zero breaks off; the heaviest part at zero derezzes the craft).
    */
-  weaponHitShare: { gun: 0.12, laser: 0.12, disc: 0.5, pulse: 0.5, cannon: 1, missile: 1, bomb: 1 },
+  weaponHitShare: { gun: 0.12, laser: 0.12, disc: 0.5, pulse: 0.5, cannon: 1, missile: 1, bomb: 1, rail: 0.6, nuke: 1, emp: 0 },
   /** Seconds after an explosion before a new plane appears on the runway (browser). */
   respawnDelay: 4,
   /** A part whose voxels drop below this fraction breaks off. */

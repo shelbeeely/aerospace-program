@@ -64,6 +64,7 @@ export class MultiplayerPanel {
       if (n.kind === 'join') toast(`${n.name} entered the Grid`);
       else if (n.kind === 'leave') toast(`${n.name} derezzed from the Grid`);
       else if (n.kind === 'chat' && this.root.classList.contains('hidden')) toast(`${n.name}: ${n.text}`, 4000);
+      else if (n.kind === 'kill') toast(n.text, 4000);
     };
     this.render();
   }

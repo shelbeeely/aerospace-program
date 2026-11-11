@@ -36,7 +36,7 @@ export function moduleMinMass(m: ModuleDef): { kg: number; why: string } | null 
       // The weapon plus its rounds (a bomb bay is mostly bombs).
       const per: Record<WeaponModuleDef['kind'], [number, number, number]> = {
         // [weapon kg, kg per round, default rounds]
-        gun: [40, 0.05, 600], cannon: [150, 12, 40], missile: [30, 60, 6], bomb: [60, 250, 8], laser: [60, 0, 240], disc: [25, 4, 12], pulse: [80, 1, 60],
+        gun: [40, 0.05, 600], cannon: [150, 12, 40], missile: [30, 60, 6], bomb: [60, 250, 8], laser: [60, 0, 240], disc: [25, 4, 12], pulse: [80, 1, 60], rail: [220, 2, 20],
       };
       const [w, r, n] = per[m.kind];
       const rounds = m.ammo ?? n;

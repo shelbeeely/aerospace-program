@@ -10,7 +10,7 @@
  */
 import { BUILTINS } from '../src/craft/builtins.ts';
 import { JET } from '../src/craft/jet.ts';
-import { mapPoint, radarPoint, simContacts, wrapDelta } from '../src/sim/contacts.ts';
+import { globeAngles, globeProject, globeUnproject, mapPoint, radarPoint, simContacts, wrapDelta } from '../src/sim/contacts.ts';
 import { PLANET } from '../src/sim/layout.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 
@@ -75,6 +75,30 @@ console.log('--- planet map');
     if (q.u < 0 || q.u > 1 || q.v < 0 || q.v > 1) inside = false;
   }
   check(inside, 'every point on the planet falls on the map');
+}
+
+console.log('--- globe');
+{
+  const lon0 = 1.2, lat0 = 0.4;
+  let q = globeProject(lon0, lat0, lon0, lat0);
+  check(near(q.x, 0) && near(q.y, 0) && near(q.z, 1), 'the point looked at is the centre of the globe');
+  q = globeProject(lon0 + Math.PI / 2, 0, lon0, 0);
+  check(near(q.x, 1) && near(q.y, 0) && near(q.z, 0), '90° east sits on the right-hand limb');
+  q = globeProject(lon0 + Math.PI, 0.2, lon0, lat0);
+  check(q.z < 0, 'the far side is hidden');
+  q = globeProject(lon0, lat0 + 0.3, lon0, lat0);
+  check(q.y > 0 && near(q.x, 0), 'north is up');
+  let worst = 0;
+  for (let i = 0; i < 200; i++) {
+    const lon = lon0 + ((i * 37) % 100) / 100 * 2.6 - 1.3, lat = ((i * 53) % 100) / 100 * 2 - 1;
+    const p = globeProject(lon, lat, lon0, lat0);
+    if (p.z <= 0) continue;
+    const back = globeUnproject(p.x, p.y, lon0, lat0)!;
+    worst = Math.max(worst, Math.abs(back.lat - lat), Math.abs(Math.atan2(Math.sin(back.lon - lon), Math.cos(back.lon - lon))));
+  }
+  check(worst < 1e-9, 'a point on the globe maps back to where it came from', `error ${worst.toExponential(1)}`);
+  const a = globeAngles(0.25, 0.5);
+  check(near(a.lon, Math.PI / 2) && near(a.lat, 0), 'a quarter of the way east on the equator is 90° east');
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');

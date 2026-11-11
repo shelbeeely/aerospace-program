@@ -47,6 +47,7 @@ import { CraterView } from './render/CraterView.ts';
 import { BoomView } from './render/BoomView.ts';
 import { AiTrafficView } from './render/AiTrafficView.ts';
 import { GroundTurretsView } from './render/GroundTurretsView.ts';
+import { StrategicView } from './render/StrategicView.ts';
 import type { TurretDensity } from './sim/groundTurrets.ts';
 import { hostile, isTeam, TEAMS, type Team } from './sim/teams.ts';
 import { MercPanel } from './ui/MercPanel.ts';
@@ -207,6 +208,8 @@ async function start() {
   const boomView = new BoomView(scene);
   const aiTrafficView = new AiTrafficView(scene, sim.airTraffic);
   const turretsView = new GroundTurretsView(scene, sim.groundTurrets);
+  const strategicView = new StrategicView(scene);
+  let blastSeen = -Infinity;
   let boomHeardAt = -Infinity;
   let wasSupersonic = false;
   let explosionHeardAt = -Infinity;
@@ -468,6 +471,10 @@ async function start() {
   const CREDIT_STORAGE = 'credits';
   sim.credits = Math.max(0, Math.floor(Number(stored(CREDIT_STORAGE)) || 0));
   let savedCredits = sim.credits;
+  const STRATEGIC_STORAGE = 'strategic';
+  const carried = stored(STRATEGIC_STORAGE);
+  sim.strategic = carried === 'nuke' || carried === 'emp' ? carried : null;
+  let savedStrategic = sim.strategic;
   const mercPanel = new MercPanel(sim, () => sim.airTraffic.pool.filter((d) => flyerKind(d) !== 'ground'), (t) => toast(t));
   let noticeAt = -Infinity;
   aiCount?.addEventListener('input', updateAirPool);
@@ -1087,6 +1094,7 @@ async function start() {
       else if (a === 'camera') rig.toggle(renderPos);
       else if (a === 'apPanel') apPanel.toggle();
       else if (a === 'mercs') mercPanel.toggle();
+      else if (a === 'strategic') toast(sim.launchStrategic() ?? 'Launched');
       else if (a === 'help') {
         controlsPanel.render(); // reflect the current profile / devices
         hud.toggleHelp();
@@ -1175,7 +1183,21 @@ async function start() {
     explosionView.update(sim.time, sim.explosions);
     weaponsView.update(sim.time);
     aiTrafficView.update(dt);
+    aiTrafficView.simTime = turretsView.simTime = sim.time;
     turretsView.update(dt);
+    strategicView.update(sim.time, sim.blasts);
+    // A nuke: the boom, a rumble and a white flash that fades (stronger the nearer it is).
+    for (const b of sim.blasts) {
+      if (b.time <= blastSeen) continue;
+      blastSeen = b.time;
+      const d = Math.hypot(b.x - sim.position.x, b.y - sim.position.y, b.z - sim.position.z);
+      audio.explosion(d * (b.kind === 'nuke' ? 0.15 : 0.6));
+      player.rumble(1, b.kind === 'nuke' ? 2000 : 600);
+      if (b.kind === 'nuke') {
+        const flash = document.getElementById('nuke-flash');
+        flash?.animate([{ opacity: Math.max(0.15, 1 - d / 8000) }, { opacity: 0 }], { duration: 2500, easing: 'ease-out' });
+      }
+    }
     craterView.update(sim.time, sim.craters);
     {
       // Sonic booms: the Mach cone and vapour, ground shock rings, and the double crack when the
@@ -1348,6 +1370,16 @@ async function start() {
       } catch { /* not remembered */ }
     }
     const mercs = sim.airTraffic.mercs();
+    {
+      const inFlight = sim.weapons.projectiles.find((p) => p.kind === 'nuke' || p.kind === 'emp');
+      hud.setStrategic({ carried: sim.strategic, flight: inFlight ? inFlight.kind : null, emp: Math.max(0, sim.empUntil - sim.time) });
+    }
+    if (sim.strategic !== savedStrategic) {
+      savedStrategic = sim.strategic;
+      try {
+        localStorage.setItem(STRATEGIC_STORAGE, sim.strategic ?? '');
+      } catch { /* not remembered */ }
+    }
     hud.setMercs(sim.credits > 0 || mercs.length ? { credits: sim.credits, hired: mercs.length, soonest: Math.min(...mercs.map((f) => f.mercUntil - sim.time)) } : null);
     fpsFrames++;
     fpsTime += dt;

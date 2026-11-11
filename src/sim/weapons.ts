@@ -16,7 +16,9 @@ import { TUNING } from '../tuning.ts';
  * unsynchronised physics world for no feature Rapier lacks.
  */
 
-export type WeaponKind = WeaponModuleDef['kind'];
+/** Every weapon: those a craft can fit, and the strategic ones (bought with credits, never fitted). */
+export type WeaponKind = WeaponModuleDef['kind'] | StrategicKind;
+export type StrategicKind = 'nuke' | 'emp';
 
 export interface WeaponSpec {
   label: string;
@@ -45,6 +47,10 @@ export interface WeaponSpec {
   turn?: number;
   seeker?: number;
   fuse?: number;
+  /** Railgun: how many things one shot punches through before it stops. */
+  pierce?: number;
+  /** Strategic weapons: seconds after launch before the warhead is live (an earlier impact is a dud). */
+  armTime?: number;
   /** Trigger group: primary (guns, cannon) or secondary (bombs, missiles). */
   group: 'primary' | 'secondary';
   /** Bounces off structures before it detonates (identity discs, pulse bolts). */
@@ -63,10 +69,15 @@ export const WEAPONS: Record<WeaponKind, WeaponSpec> = {
   laser: { label: 'Laser', speed: 0, rate: 5, ammo: 240, mass: 0.02, blast: 1.2, life: 0, gravity: 0, group: 'primary', beam: 1500 },
   disc: { label: 'Disc', speed: 140, rate: 1.5, ammo: 12, mass: 4, blast: 2.5, life: 7, gravity: 0, group: 'primary', ricochet: 3 },
   pulse: { label: 'Pulse', speed: 210, rate: 2, ammo: 60, mass: 6, blast: 4, life: 6, gravity: 0, group: 'primary', ricochet: 1 },
+  // The railgun: an instant slug out to 4 km that punches through three things before it stops.
+  rail: { label: 'Railgun', speed: 0, rate: 0.4, ammo: 20, mass: 8, blast: 2.5, life: 0, gravity: 0, group: 'primary', beam: 4000, pierce: 3 },
+  // Strategic weapons, launched one at a time (bought with credits): heavy, slow, homing.
+  nuke: { label: 'Nuke', speed: 40, rate: 0.2, ammo: 1, mass: 400, blast: 400, life: 30, thrust: 60, maxSpeed: 220, gravity: 0.1, group: 'secondary', turn: 20 * Math.PI / 180, seeker: 70 * Math.PI / 180, fuse: 25, armTime: 3 },
+  emp: { label: 'EMP', speed: 40, rate: 0.2, ammo: 1, mass: 200, blast: 800, life: 30, thrust: 80, maxSpeed: 260, gravity: 0.1, group: 'secondary', turn: 25 * Math.PI / 180, seeker: 70 * Math.PI / 180, fuse: 30, armTime: 1.5 },
 };
 
 /** Hit points a round takes off an AI aircraft (a peaceful flyer has 1, a hostile several). */
-export const WEAPON_DAMAGE: Record<WeaponKind, number> = { gun: 1, laser: 1, disc: 3, pulse: 3, cannon: 8, missile: 8, bomb: 20 };
+export const WEAPON_DAMAGE: Record<WeaponKind, number> = { gun: 1, laser: 1, disc: 3, pulse: 3, cannon: 8, missile: 8, bomb: 20, rail: 6, nuke: 999, emp: 0 };
 
 /** Loadouts a vehicle can carry: which weapons, chosen in the hangar or cycled with I. */
 export const LOADOUTS = {
@@ -77,6 +88,7 @@ export const LOADOUTS = {
   missiles: { label: 'Guns + missiles', kinds: ['gun', 'missile'] },
   tank: { label: 'Cannon + coax gun', kinds: ['cannon', 'gun'] },
   light: { label: 'Laser + discs', kinds: ['laser', 'disc'] },
+  rail: { label: 'Railgun + missiles', kinds: ['rail', 'missile'] },
   pulse: { label: 'Pulse bolts + missiles', kinds: ['pulse', 'missile'] },
   full: { label: 'Full', kinds: ['gun', 'cannon', 'bomb', 'missile', 'laser', 'disc'] },
   /** The weapons fitted as parts of the craft (weapon modules), where they are. */
@@ -124,6 +136,8 @@ export interface WeaponImpact {
   /** What it struck, if a collider (null: the ground plane fallback or a timed-out round). */
   collider: RAPIER.Collider | null;
   time: number;
+  /** A strategic warhead that went off before it was armed (a small blast only). */
+  dud?: boolean;
 }
 
 /** What the weapon system needs to know about the craft that carries it. */
@@ -185,6 +199,9 @@ const MUZZLE: Record<WeaponKind, THREE.Vector3> = {
   pulse: new THREE.Vector3(0, 0, -0.85),
   missile: new THREE.Vector3(0, -0.12, -1.1),
   bomb: new THREE.Vector3(0, -0.35, 0),
+  rail: new THREE.Vector3(0, 0, -1.9),
+  nuke: new THREE.Vector3(0, -0.5, -1),
+  emp: new THREE.Vector3(0, -0.5, -1),
 };
 
 /** Weapons fitted as weapon modules on the craft's parts: one mount each, where it is. */
@@ -309,7 +326,23 @@ export class WeaponSystem {
   }
 
   /** Recent laser beams (start, end, time, colour), for the renderer. */
-  readonly beams: Array<{ a: THREE.Vector3; b: THREE.Vector3; time: number; color: string }> = [];
+  readonly beams: Array<{ a: THREE.Vector3; b: THREE.Vector3; time: number; color: string; kind?: WeaponKind }> = [];
+
+  /**
+   * Launch a strategic weapon (nuke, EMP) from under the craft's nose, outside the trigger groups
+   * and the mounts: it homes on the lock like a missile.
+   */
+  launch(host: WeaponHost, kind: StrategicKind): Projectile {
+    const spec = WEAPONS[kind];
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(host.rotation).normalize();
+    const pos = MUZZLE[kind].clone().applyQuaternion(host.rotation).add(host.position);
+    const vel = host.linvel.clone().addScaledVector(dir, spec.speed);
+    const target = this.lock?.alive() ? this.lock : null;
+    const p: Projectile = { id: nextProjectileId++, kind, pos, vel, heading: dir.clone(), age: 0, color: host.color, bounces: 0, target };
+    this.projectiles.push(p);
+    this.fired++;
+    return p;
+  }
 
   reset(): void {
     this.projectiles.length = 0;
@@ -368,20 +401,29 @@ export class WeaponSystem {
     const pos = local.applyQuaternion(host.rotation).add(host.position);
     this.fired++;
     if (spec.beam) {
-      // A beam of light: instant, straight, out to its range.
-      _ray.origin = { x: pos.x, y: pos.y, z: pos.z };
-      _ray.dir = { x: dir.x, y: dir.y, z: dir.z };
-      const h = host.world.castRayAndGetNormal(_ray, spec.beam, true, undefined, undefined, undefined, host.body);
-      const end = pos.clone().addScaledVector(dir, h ? h.timeOfImpact : spec.beam);
-      this.beams.push({ a: pos, b: end, time, color: host.color });
-      if (this.beams.length > 32) this.beams.splice(0, this.beams.length - 32);
-      if (h) {
-        const hit: WeaponImpact = { kind, point: end, normal: new THREE.Vector3(h.normal.x, h.normal.y, h.normal.z), vel: dir.clone().multiplyScalar(800), mass: spec.mass, blast: spec.blast, color: host.color, collider: h.collider, time };
+      // A beam of light (or a railgun slug): instant, straight, out to its range. A railgun
+      // punches through what it hits, up to `pierce` things, each one hit in turn.
+      const struck = new Set<number>();
+      let from = 0, end = pos.clone().addScaledVector(dir, spec.beam);
+      for (let n = 0; n < (spec.pierce ?? 1); n++) {
+        _ray.origin = { x: pos.x + dir.x * from, y: pos.y + dir.y * from, z: pos.z + dir.z * from };
+        _ray.dir = { x: dir.x, y: dir.y, z: dir.z };
+        const h = host.world.castRayAndGetNormal(_ray, spec.beam - from, true, undefined, undefined, undefined, host.body, (c) => !struck.has(c.handle));
+        if (!h) { end = pos.clone().addScaledVector(dir, spec.beam); break; }
+        struck.add(h.collider.handle);
+        from += h.timeOfImpact;
+        end = pos.clone().addScaledVector(dir, from);
+        const hit: WeaponImpact = { kind, point: end.clone(), normal: new THREE.Vector3(h.normal.x, h.normal.y, h.normal.z), vel: dir.clone().multiplyScalar(spec.pierce ? 2500 : 800), mass: spec.mass, blast: spec.blast, color: host.color, collider: h.collider, time };
         this.hits++;
         this.impacts.push(hit);
         if (this.impacts.length > 64) this.impacts.splice(0, this.impacts.length - 64);
         this.onImpact?.(hit);
+        from += 0.05;
       }
+      this.beams.push({ a: pos, b: end, time, color: host.color, kind });
+      if (this.beams.length > 32) this.beams.splice(0, this.beams.length - 32);
+      // A railgun's recoil (a beam of light has none).
+      if (spec.pierce) host.body.applyImpulse({ x: -dir.x * 4000, y: -dir.y * 4000, z: -dir.z * 4000 }, true);
       return true;
     }
     const vel = host.linvel.clone();
@@ -416,7 +458,7 @@ export class WeaponSystem {
       }
       // Ballistics: gravity (missiles barely feel it while burning), thrust, light drag on bombs.
       _g.set(0, -TUNING.gravity * spec.gravity, 0);
-      if (p.kind === 'missile' && spec.thrust && spec.maxSpeed) {
+      if (spec.thrust && spec.maxSpeed) {
         const along = p.vel.dot(p.heading);
         if (along < spec.maxSpeed) _g.addScaledVector(p.heading, spec.thrust);
       }
@@ -508,6 +550,8 @@ export class WeaponSystem {
 
   private impact(p: Projectile, point: THREE.Vector3, normal: THREE.Vector3, collider: RAPIER.Collider | null, time: number): WeaponImpact {
     const spec = WEAPONS[p.kind];
+    // A strategic warhead that strikes before it is armed is a dud: a missile-sized blast.
+    if (spec.armTime && p.age < spec.armTime) return { kind: p.kind, point, normal, vel: p.vel.clone(), mass: spec.mass, blast: 6, color: p.color, collider, time, dud: true };
     return { kind: p.kind, point, normal, vel: p.vel.clone(), mass: spec.mass, blast: spec.blast, color: p.color, collider, time };
   }
 }

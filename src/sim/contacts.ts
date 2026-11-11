@@ -82,3 +82,30 @@ export function mapPoint(px: number, pz: number, cx: number, cz: number): { u: n
   const C = PLANET.circumference;
   return { u: 0.5 + wrapDelta(px, cx) / C, v: 0.5 + wrapDelta(pz, cz) / C };
 }
+
+/**
+ * The globe view of the planet map: the map's east-west becomes longitude and north-south
+ * latitude (`u`, `v` as from mapPoint's frame: 0..1 across the whole planet), seen in an
+ * orthographic projection looking at (`lon0`, `lat0`). x is to the right (east), y up (north), z
+ * toward the viewer: a point with z < 0 is on the far side.
+ */
+export function globeAngles(u: number, v: number): { lon: number; lat: number } {
+  return { lon: u * Math.PI * 2, lat: (0.5 - v) * Math.PI };
+}
+
+export function globeProject(lon: number, lat: number, lon0: number, lat0: number): { x: number; y: number; z: number } {
+  const dl = lon - lon0;
+  const cl = Math.cos(lat);
+  const x = cl * Math.sin(dl), y0 = Math.sin(lat), z0 = cl * Math.cos(dl);
+  return { x, y: y0 * Math.cos(lat0) - z0 * Math.sin(lat0), z: y0 * Math.sin(lat0) + z0 * Math.cos(lat0) };
+}
+
+/** The inverse: which longitude and latitude a point (x, y) on the disc shows (null: off the globe). */
+export function globeUnproject(x: number, y: number, lon0: number, lat0: number): { lon: number; lat: number } | null {
+  const r2 = x * x + y * y;
+  if (r2 > 1) return null;
+  const z = Math.sqrt(1 - r2);
+  const y0 = y * Math.cos(lat0) + z * Math.sin(lat0);
+  const z0 = -y * Math.sin(lat0) + z * Math.cos(lat0);
+  return { lon: lon0 + Math.atan2(x, z0), lat: Math.asin(Math.max(-1, Math.min(1, y0))) };
+}

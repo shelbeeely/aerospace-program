@@ -36,6 +36,7 @@ export class WeaponsView {
   private readonly _s = new THREE.Vector3();
   private readonly _d = new THREE.Vector3();
   private readonly _c = new THREE.Color();
+  private readonly _white = new THREE.Color('#e8f6ff');
   private readonly fwd = new THREE.Vector3(0, 0, 1);
   private readonly zero = new THREE.Matrix4().makeScale(0, 0, 0);
   private shown = { light: 0, solid: 0, ring: 0 };
@@ -129,6 +130,20 @@ export class WeaponsView {
           put(this.solid, ns++, pr.pos, dir, 0.7, 0.03, 0.26, 0.85, pr.color, 1, Math.PI / 2);
           this.trail(pr, time, live);
           break;
+        case 'nuke':
+        case 'emp': {
+          // A strategic warhead: a fat dark body, a lit band in its colour (white for a nuke,
+          // blue-white for an EMP), fins, a long flickering plume and a light trail.
+          const band = pr.kind === 'nuke' ? '#dff6ff' : '#9fd8ff';
+          put(this.solid, ns++, pr.pos, dir, 0.6, 0.6, 3.2, 0, pr.color, 1);
+          put(this.light, nl++, pr.pos, dir, 0.62, 0.62, 0.15, -0.6, band, 1.8);
+          put(this.solid, ns++, pr.pos, dir, 1.4, 0.05, 0.6, 1.3, pr.color, 1);
+          put(this.solid, ns++, pr.pos, dir, 1.4, 0.05, 0.6, 1.3, pr.color, 1, Math.PI / 2);
+          const fl = 0.85 + 0.3 * Math.sin(pr.age * 70 + pr.id);
+          put(this.light, nl++, pr.pos, dir, 0.7, 0.7, 7 * fl, 5.2, '#fff4d8', 1.3);
+          this.trail(pr, time, live);
+          break;
+        }
         case 'missile': {
           put(this.solid, ns++, pr.pos, dir, 0.24, 0.24, 2.0, 0, pr.color, 1);
           put(this.light, nl++, pr.pos, dir, 0.16, 0.16, 0.3, -1.1, pr.color, 1.4); // lit seeker nose
@@ -202,9 +217,13 @@ export class WeaponsView {
     for (const weapons of this.systems()) for (const b of weapons.beams) {
       if (o >= 64) break;
       const age = time - b.time;
-      if (age < 0 || age > BEAM_LIFE) continue;
-      const k = 1.6 * (1 - age / BEAM_LIFE);
+      // A railgun's streak lingers, white-hot, fading to its shooter's colour.
+      const rail = b.kind === 'rail';
+      const life = rail ? 0.5 : BEAM_LIFE;
+      if (age < 0 || age > life) continue;
+      const k = (rail ? 2.4 : 1.6) * (1 - age / life);
       this._c.set(b.color);
+      if (rail) this._c.lerp(this._white, Math.max(0, 1 - age * 4));
       this.beamPos.set([b.a.x, b.a.y, b.a.z, b.b.x, b.b.y, b.b.z], o * 3);
       this.beamCol.set([this._c.r * k, this._c.g * k, this._c.b * k, this._c.r * k, this._c.g * k, this._c.b * k], o * 3);
       o += 2;

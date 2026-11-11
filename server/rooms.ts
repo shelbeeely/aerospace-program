@@ -192,6 +192,12 @@ export class Lobby {
     } else {
       const bucket = m.e.k === 'chat' ? s.limits.chat : s.limits.event;
       if (!bucket.take(now)) return this.limited(s, now);
+      // No friendly fire: a hit on a team-mate (or on no one here) goes nowhere.
+      if (m.e.k === 'hit') {
+        const target = m.e.target;
+        const victim = [...(this.rooms.get(s.room!) ?? [])].find((x) => x.id === target);
+        if (!victim || victim.team === s.team) return;
+      }
       out = { t: 'event', id: s.id, e: m.e.k === 'chat' ? { k: 'chat', text: m.e.text.trim() } : m.e };
     }
     s.peer.publish(room, JSON.stringify(out));

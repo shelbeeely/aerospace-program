@@ -15,6 +15,9 @@ export class AiTrafficView {
 
   private time = 0;
 
+  /** The simulation's clock (EMP timers are in it). */
+  simTime = 0;
+
   update(dt: number): void {
     this.time += dt;
     const live = new Set<number>();
@@ -28,7 +31,10 @@ export class AiTrafficView {
         this.scene.add(v.root);
       }
       v.update(f.pos, this.traffic.rotation(f, this._q), f.speed, 0.8, dt);
-      if (f.hostile) v.setLightState({ activity: f.combat === 'patrol' ? 0 : 1, integrity: f.hp / f.maxHp, time: this.time });
+      // Lights (§5): an EMP'd aircraft is dark; a combat aircraft dim on patrol, full in a fight.
+      const dark = this.time >= 0 && f.disabledUntil > this.simTime;
+      if (f.hostile || dark || v.dark) v.setLightState({ activity: f.hostile && f.combat !== 'patrol' ? 1 : 0, integrity: f.hp / f.maxHp, time: this.time, inactive: dark });
+      v.dark = dark;
     }
     for (const [id, v] of this.views) {
       if (live.has(id)) continue;

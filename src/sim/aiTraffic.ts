@@ -109,6 +109,8 @@ export interface AiFlyer {
   /** It, as a lock target and as a foe to others. */
   handle: LockTarget;
   foe: Foe | null;
+  /** An EMP has knocked its engines and lights out until then (s): it glides and holds fire. */
+  disabledUntil: number;
   hp: number;
   maxHp: number;
   /** Time it was last hit (its lights flicker; a hostile breaks away). */
@@ -239,6 +241,13 @@ export class AiAirTraffic {
     return false;
   }
 
+  /** An EMP: engines and lights out until `until`, it glides and holds fire. */
+  disable(f: AiFlyer, until: number): void {
+    f.disabledUntil = Math.max(f.disabledUntil, until);
+    f.target = null;
+    if (f.weapons) f.weapons.trigger.primary = f.weapons.trigger.secondary = false;
+  }
+
   /** Live aircraft that fight the player's side (enemy teams and freelancers). */
   hostileFlyers(): AiFlyer[] {
     return this.flyers.filter((f) => f.side !== null && f.derezAt === null && sidesHostile(f.side, this.playerTeam));
@@ -361,7 +370,7 @@ export class AiAirTraffic {
       combat: 'patrol', combatUntil: 0, breakHeading: 0, aimError: { h: 0, p: 0 }, missileAt: time + 4,
       vel: new THREE.Vector3(), rot: new THREE.Quaternion(), weapons: null, host: null,
       side, role, mercUntil: role === 'merc' ? time + MERC_CONTRACT : Infinity, leaving: false, target: null, targetAt: -Infinity,
-      handle: null as unknown as LockTarget, foe: null,
+      handle: null as unknown as LockTarget, foe: null, disabledUntil: -Infinity,
     };
     const air = this;
     f.handle = {
@@ -547,6 +556,14 @@ export class AiAirTraffic {
   }
 
   private fly(f: AiFlyer, dt: number, time: number, player: THREE.Vector3, target?: AirTarget): void {
+    if (time < f.disabledUntil) {
+      // EMP: no engines, no guns; it glides on, losing speed and height (never into the ground).
+      if (f.weapons) f.weapons.trigger.primary = f.weapons.trigger.secondary = false;
+      f.target = null;
+      const glide = Math.max(f.cruise * 0.6, f.speed - 4 * dt);
+      this.combatFly(f, dt, { want: f.heading, vs: -Math.max(6, glide * 0.12), speed: glide });
+      return;
+    }
     if (f.role === 'merc' && time > f.mercUntil && !f.leaving) {
       // The contract is up: it peels away and leaves.
       f.leaving = true;

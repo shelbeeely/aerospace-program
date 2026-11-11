@@ -2,13 +2,15 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three/webgpu';
 import type { CraftDef } from '../craft/types.ts';
 import { RemoteCraftView } from '../render/RemoteCraftView.ts';
+import { ShotScanner, type NetTarget } from './hits.ts';
+import type { WeaponKind } from '../sim/weapons.ts';
 import { TrailView } from '../render/TrailView.ts';
 import { PLANET } from '../sim/layout.ts';
 import type { Simulation } from '../sim/Simulation.ts';
 import { DEREZ_TIME, type Trail, type TrailMode, type TrailPoint, type TrailSystem } from '../sim/trails.ts';
 import {
   MAX_TRAIL_POINTS, PROTOCOL_VERSION, STATE_HZ, normalizeRoom, r2, r4, splitGroupName, validCraftShape, validEvent, validState,
-  type ClientMessage, type NetEvent, type NetState, type NetTrail, type NetTrailPoint, type PlayerInfo, type ServerMessage, asTeam, type NetTeam,
+  type ClientMessage, type NetEvent, type NetState, type NetTrail, type NetTrailPoint, type PlayerInfo, type ServerMessage, asTeam, type NetTeam, HIT_KINDS,
 } from './protocol.ts';
 
 /**
@@ -97,7 +99,9 @@ export interface NetGame {
 export type NetNotice =
   | { kind: 'join' | 'leave'; name: string; color: string }
   | { kind: 'chat'; name: string; color: string; text: string }
-  | { kind: 'status'; text: string };
+  | { kind: 'status'; text: string }
+  /** The kill feed: someone shot someone down. */
+  | { kind: 'kill'; text: string };
 
 export class NetClient {
   status: NetStatus = 'offline';
@@ -111,7 +115,11 @@ export class NetClient {
   onChange: (() => void) | null = null;
   onNotice: ((n: NetNotice) => void) | null = null;
   /** Counters for tests and the debug overlay. */
-  readonly stats = { sent: 0, received: 0, fracturesSent: 0, fracturesApplied: 0, explosionsShown: 0 };
+  readonly stats = { sent: 0, received: 0, fracturesSent: 0, fracturesApplied: 0, explosionsShown: 0, hitsSent: 0, hitsTaken: 0, hitsRefused: 0 };
+  /** The player's rounds against the other players as drawn here (networked damage). */
+  private readonly scanner = new ShotScanner();
+  private wasExploded = false;
+  private readonly blastsSent = new Set<object>();
 
   private ws: WebSocket | null = null;
   private opts: ConnectOptions | null = null;
@@ -484,6 +492,39 @@ export class NetClient {
         for (const t of p.trails.values()) if (t.derezAt === null) this.derezTrail(t, sim.time);
         this.syncTrailList();
         break;
+      case 'hit': {
+        // Someone's round struck someone: ours to apply only if it struck us.
+        if (e.target !== this.selfId || !HIT_KINDS.includes(e.kind)) break;
+        const ref = sim.position;
+        const point = new THREE.Vector3(e.x + imageShift(e.x, ref.x), e.y, e.z + imageShift(e.z, ref.z));
+        const r = sim.applyRemoteHit({ id: p.id, team: p.team }, e.kind as WeaponKind, point);
+        if (r === 'applied') this.stats.hitsTaken++;
+        else this.stats.hitsRefused++;
+        break;
+      }
+      case 'kill': {
+        const killer = e.by === this.selfId ? 'You' : this.players.get(e.by)?.name ?? 'Someone';
+        this.onNotice?.({ kind: 'kill', text: `${killer} shot down ${p.name}` });
+        if (e.by === this.selfId) sim.creditRemoteKill(p.name);
+        break;
+      }
+      case 'nuke':
+      case 'emp': {
+        // Another player's strategic weapon: it plays out here too (its fractures aren't sent on).
+        const ref = sim.position;
+        const x = e.x + imageShift(e.x, ref.x), z = e.z + imageShift(e.z, ref.z);
+        const hitsBefore = sim.hitsTaken, wasDown = sim.exploded, empBefore = sim.empUntil;
+        this.applyingRemote = true;
+        try {
+          if (e.k === 'nuke') sim.detonateNuke(x, e.y, z, p.team, false);
+          else sim.detonateEmp(x, e.y, z, false);
+        } finally {
+          this.applyingRemote = false;
+        }
+        for (const x of sim.explosions) this.seenExplosions.add(x); // its derezzes aren't sent back out
+        if (sim.hitsTaken !== hitsBefore || (!wasDown && sim.exploded) || sim.empUntil !== empBefore) sim.lastRemoteHit = { id: p.id, time: sim.time };
+        break;
+      }
       case 'chat':
         this.addChat(p.name, p.color, e.text);
         this.onNotice?.({ kind: 'chat', name: p.name, color: p.color, text: e.text });
@@ -573,6 +614,7 @@ export class NetClient {
   update(dt: number): void {
     const sim = this.game.sim;
     if (this.connected) {
+      this.combat();
       // Local explosions out.
       for (const e of sim.explosions) {
         if (this.seenExplosions.has(e)) continue;
@@ -605,6 +647,40 @@ export class NetClient {
     this.updateRemote(dt);
   }
   private pendingSize = -1;
+
+  /**
+   * Networked damage, our side: our rounds against the other players of other teams as they are
+   * drawn here (each hit goes to its victim's game, which applies it); our strategic
+   * detonations out; and when we go down to someone's fire, the kill to the room.
+   */
+  private combat(): void {
+    const sim = this.game.sim;
+    if (this.game.mode() === 'flight') {
+      const targets: NetTarget[] = [];
+      for (const p of this.players.values()) {
+        if (!p.pose.visible || p.team === asTeam(sim.team)) continue;
+        targets.push({ id: p.id, pos: p.pose.position, radius: Math.max(3, p.view?.radius ?? 4) + 1 });
+      }
+      for (const h of this.scanner.scan(sim.weapons, targets)) {
+        this.sendEvent({ k: 'hit', target: h.target, kind: h.kind, x: r2(h.point.x), y: r2(h.point.y), z: r2(h.point.z) });
+        this.stats.hitsSent++;
+      }
+    }
+    for (const b of sim.blasts) {
+      if (b.remote || this.blastsSent.has(b)) continue;
+      this.blastsSent.add(b);
+      this.sendEvent({ k: b.kind, x: r2(b.x), y: r2(b.y), z: r2(b.z) });
+    }
+    if (this.blastsSent.size > 64) for (const b of [...this.blastsSent]) if (!sim.blasts.includes(b as never)) this.blastsSent.delete(b);
+    if (sim.exploded && !this.wasExploded) {
+      const by = sim.lastRemoteHit;
+      if (by && sim.time - by.time < 12 && this.players.has(by.id)) {
+        this.sendEvent({ k: 'kill', by: by.id });
+        this.onNotice?.({ kind: 'kill', text: `${this.players.get(by.id)!.name} shot you down` });
+      }
+    }
+    this.wasExploded = sim.exploded;
+  }
 
   private localState(flight: boolean): NetState {
     const sim = this.game.sim;

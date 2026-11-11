@@ -13,7 +13,7 @@
  */
 import type { CraftDef } from '../craft/types.ts';
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** A player's team: 0 Cyan, 1 Red, 2 Amber (sim/teams.ts). Anything else reads as Cyan. */
 export type NetTeam = 0 | 1 | 2;
@@ -79,6 +79,12 @@ export type NetEvent =
   | { k: 'explosion'; x: number; y: number; z: number; radius: number }
   /** The sender's vehicle derezzed (crash or respawn): its trails go with it. */
   | { k: 'derez' }
+  /** The sender's round struck `target` (that player's game applies the damage). */
+  | { k: 'hit'; target: string; kind: string; x: number; y: number; z: number }
+  /** The sender was shot down by `by` (the kill feed; the shooter is paid). */
+  | { k: 'kill'; by: string }
+  /** A strategic weapon of the sender's went off (every game plays it out). */
+  | { k: 'nuke' | 'emp'; x: number; y: number; z: number }
   | { k: 'chat'; text: string };
 
 export interface PlayerInfo {
@@ -164,6 +170,9 @@ export function validCraftShape(v: unknown): v is CraftDef {
     v.parts.every((p) => isObj(p) && isObj(p.shape) && Array.isArray(p.position));
 }
 
+/** The weapons a hit can be reported for. */
+export const HIT_KINDS = ['gun', 'cannon', 'bomb', 'missile', 'laser', 'disc', 'pulse', 'rail'];
+
 export function validEvent(v: unknown): v is NetEvent {
   if (!isObj(v)) return false;
   switch (v.k) {
@@ -174,6 +183,13 @@ export function validEvent(v: unknown): v is NetEvent {
       return isNum(v.x) && isNum(v.y) && isNum(v.z) && isNum(v.radius, 500) && v.radius > 0;
     case 'derez':
       return true;
+    case 'hit':
+      return typeof v.target === 'string' && v.target.length > 0 && v.target.length <= 64 && typeof v.kind === 'string' && HIT_KINDS.includes(v.kind) && isNum(v.x) && isNum(v.y) && isNum(v.z);
+    case 'kill':
+      return typeof v.by === 'string' && v.by.length > 0 && v.by.length <= 64;
+    case 'nuke':
+    case 'emp':
+      return isNum(v.x) && isNum(v.y) && isNum(v.z);
     case 'chat':
       return typeof v.text === 'string' && v.text.trim().length > 0 && v.text.length <= MAX_CHAT;
     default:

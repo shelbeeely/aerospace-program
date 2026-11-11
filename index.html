@@ -18,7 +18,7 @@
       <button type="button" id="radar-range" title="Radar range (\)">5 KM</button>
     </div>
     <div id="planet-map" class="panel hidden">
-      <div class="map-head"><b>PLANET MAP</b><span id="planet-map-info"></span><button type="button" id="planet-map-close" title="Close (Tab)">Close</button></div>
+      <div class="map-head"><b>PLANET MAP</b><span id="planet-map-info"></span><button type="button" id="planet-map-mode" title="Flat map or globe (drag the globe to turn it, wheel to zoom)">Globe</button><button type="button" id="planet-map-close" title="Close (Tab)">Close</button></div>
       <canvas id="planet-map-canvas"></canvas>
       <div class="map-legend">
         <span><i class="lg-own"></i>you</span><span><i class="lg-air"></i>aircraft</span><span><i class="lg-hostile"></i>hostile</span><span><i class="lg-turret"></i>turret</span><span><i class="lg-team" style="background:#00d4ff"></i>Cyan</span><span><i class="lg-team" style="background:#ff2a12"></i>Red</span><span><i class="lg-team" style="background:#ffb000"></i>Amber</span><span><i class="lg-team" style="background:#dff6ff"></i>freelancer</span><span><i class="lg-team" style="background:#3d7cff"></i>mercenary</span>
@@ -56,6 +56,7 @@
       <div class="row" id="h-arm-row" style="display:none"><span>ARM</span><b id="h-arm">--</b><small></small></div>
       <div class="row" id="h-lock-row" style="display:none"><span title="Target lock: the vehicle on your aim line. Locked missiles home on it, the turret aims at it, Enter chases it">LOCK</span><b id="h-lock">--</b><small id="h-lock-r"></small></div>
       <div class="row" id="h-turret-row" style="display:none"><span title="Turret: traverse (arrows ← →) and elevation (↑ ↓); / recentres">TURRET</span><b id="h-turret">--</b><small id="h-turret-m"></small></div>
+      <div class="row" id="h-strat-row" style="display:none"><span title="Strategic weapon carried (` launches it)">STRAT</span><b id="h-strat">--</b><small id="h-strat-t"></small></div>
       <div class="row" id="h-merc-row" style="display:none"><span title="Credits, and hired mercenaries with the soonest contract end (' to hire)">CREDITS</span><b id="h-merc">--</b><small id="h-merc-t"></small></div>
       <div class="row" id="h-hostile-row" style="display:none"><span title="Hostile aircraft: how many, the nearest one's range and bearing, and your kills">HOSTILE</span><b id="h-hostile">--</b><small id="h-hostile-k"></small></div>
       <div class="row" id="h-fuel-row"><span>FUEL</span><b id="h-fuel">--</b><small>%</small></div>
@@ -66,6 +67,7 @@
 
     <div id="stall" class="hidden">STALL</div>
     <div id="missile-warn" class="hidden">MISSILE</div>
+    <div id="nuke-flash"></div>
     <div id="destroyed" class="hidden"><b>DESTROYED</b><small>New plane in 4… · Backspace resets the world</small></div>
 
     <!-- Hangar mode: craft card and launch button (Studio sits alongside). -->

@@ -31,6 +31,9 @@ export class Hud {
     hostileRow: $('h-hostile-row'),
     lockRow: $('h-lock-row'),
     mercRow: $('h-merc-row'),
+    stratRow: $('h-strat-row'),
+    strat: $('h-strat'),
+    stratT: $('h-strat-t'),
     merc: $('h-merc'),
     mercT: $('h-merc-t'),
     lock: $('h-lock'),
@@ -156,6 +159,18 @@ export class Hud {
     const range = s.range >= 1000 ? `${(s.range / 1000).toFixed(1)}km` : `${Math.round(s.range / 10) * 10}m`;
     this.set(hostile, `${s.count} · ${range} ${String(Math.round(s.bearing) % 360).padStart(3, '0')}°`);
     this.set(hostileKills, s.underFire ? 'UNDER FIRE' : s.kills ? `${s.kills} down` : '');
+  }
+
+  /** STRAT row: the strategic weapon carried, or in flight; and the EMP's hold on the engines. */
+  setStrategic(s: { carried: string | null; flight: string | null; emp: number }): void {
+    const { stratRow: row, strat, stratT } = this.el;
+    if (!row || !strat || !stratT) return;
+    const show = !!(s.carried || s.flight || s.emp > 0);
+    row.style.display = show ? '' : 'none';
+    document.body.classList.toggle('emp', s.emp > 0);
+    if (!show) return;
+    this.set(strat, s.emp > 0 ? 'EMP HIT' : s.carried ? s.carried.toUpperCase() : (s.flight ?? '').toUpperCase());
+    this.set(stratT, s.emp > 0 ? `engines out ${s.emp.toFixed(0)} s` : s.carried ? '` launches' : 'in flight');
   }
 
   /** CREDITS row: credits held, and hired mercenaries with the soonest contract end. */
