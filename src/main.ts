@@ -46,6 +46,15 @@ import { WeaponsView } from './render/WeaponsView.ts';
 import { CraterView } from './render/CraterView.ts';
 import { BoomView } from './render/BoomView.ts';
 import { AiTrafficView } from './render/AiTrafficView.ts';
+import { GroundTurretsView } from './render/GroundTurretsView.ts';
+import type { TurretDensity } from './sim/groundTurrets.ts';
+import { hostile, isTeam, TEAMS, type Team } from './sim/teams.ts';
+import { MercPanel } from './ui/MercPanel.ts';
+import { flyerKind, type Foe } from './sim/aiTraffic.ts';
+import { HostileMarkers, LockMarker, type HostileMark } from './hud/HostileMarkers.ts';
+import type { LockTarget } from './sim/lock.ts';
+import { RadarMap } from './hud/RadarMap.ts';
+import { simContacts, wrapDelta, type Contact } from './sim/contacts.ts';
 import { terrainHeight } from './sim/terrain.ts';
 import { craftBounds } from './sim/weapons.ts';
 import { LOADOUT_ORDER, LOADOUTS, WEAPONS, type Loadout, type WeaponKind } from './sim/weapons.ts';
@@ -193,10 +202,11 @@ async function start() {
   const trafficView = new TrafficView(scene, sim.traffic);
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
-  const weaponsView = new WeaponsView(scene, sim.weapons);
+  const weaponsView = new WeaponsView(scene, () => sim.allWeapons());
   const craterView = new CraterView(scene);
   const boomView = new BoomView(scene);
   const aiTrafficView = new AiTrafficView(scene, sim.airTraffic);
+  const turretsView = new GroundTurretsView(scene, sim.groundTurrets);
   let boomHeardAt = -Infinity;
   let wasSupersonic = false;
   let explosionHeardAt = -Infinity;
@@ -266,7 +276,8 @@ async function start() {
     engage: (opts) => {
       const kind = autopilotKind();
       if (!kind) return;
-      autopilot.engage(telemetry, kind, autopilotPerf(), opts);
+      autopilot.engage(telemetry, kind, autopilotPerf(), opts.mode === 'chase' ? { ...opts, target: sim.lock.target } : opts);
+      if (autopilot.state.notice) toast(autopilot.state.notice);
     },
     disengage: () => autopilot.disengage(),
   });
@@ -387,12 +398,78 @@ async function start() {
   const aiCount = document.getElementById('w-ai-count') as HTMLInputElement | null;
   const aiMine = document.getElementById('w-ai-mine') as HTMLInputElement | null;
   const aiCountLabel = document.getElementById('w-ai-count-v');
+  const hostileMarkers = new HostileMarkers(document.getElementById('hostile-marks'));
+  const radarMap = new RadarMap();
+  const lockMarker = new LockMarker(document.getElementById('hostile-marks'));
+  const _lockPos = new THREE.Vector3();
+  const playerTargets = new Map<string, LockTarget>();
+  const playerFoes = new Map<string, Foe>();
+  const _nose = new THREE.Vector3();
+  /** A war slider's value, shown beside it. */
+  const sideSlider = (id: string): number => {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    const v = Number(input?.value ?? 0);
+    const label = document.getElementById(`${id}-v`);
+    if (label) label.textContent = String(v);
+    return v;
+  };
   const updateAirPool = () => {
     const own = aiMine?.checked !== false && !net.connected ? library.list().map((e) => e.craft) : [];
     sim.airTraffic.pool = [...BUILTINS.map((b) => b.craft), ...own];
     sim.airTraffic.count = Number(aiCount?.value ?? 8);
     if (aiCountLabel) aiCountLabel.textContent = String(sim.airTraffic.count);
+    sim.airTraffic.friendlies = sideSlider('w-friends');
+    sim.airTraffic.enemies = sideSlider('w-enemies');
+    sim.airTraffic.freelancers = sideSlider('w-free');
+    sim.groundTurrets.density = Math.max(0, Math.min(2, Number(turretInput?.value ?? 1))) as TurretDensity;
+    if (turretLabel) turretLabel.textContent = ['Off', 'Sparse', 'Dense'][sim.groundTurrets.density];
   };
+  // Tower turrets: off / sparse / dense (remembered).
+  const turretInput = document.getElementById('w-turrets') as HTMLInputElement | null;
+  const turretLabel = document.getElementById('w-turrets-v');
+  const TURRET_STORAGE = 'turretDensity';
+  if (turretInput && stored(TURRET_STORAGE) !== null) turretInput.value = String(Math.max(0, Math.min(2, Number(stored(TURRET_STORAGE)) || 0)));
+  turretInput?.addEventListener('input', () => {
+    try {
+      localStorage.setItem(TURRET_STORAGE, turretInput.value);
+    } catch { /* private mode: not remembered */ }
+    updateAirPool();
+  });
+  // The war's aircraft: friendly, enemy (split between the other two teams), freelancers. Remembered.
+  for (const id of ['w-friends', 'w-enemies', 'w-free']) {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    if (!input) continue;
+    const saved = stored(`slider:${id}`);
+    if (saved !== null) input.value = String(Math.max(Number(input.min), Math.min(Number(input.max), Number(saved) || 0)));
+    input.addEventListener('input', () => {
+      try {
+        localStorage.setItem(`slider:${id}`, input.value);
+      } catch { /* private mode: not remembered */ }
+      updateAirPool();
+    });
+  }
+  // Your team (remembered): your craft wears its colours; its turrets and aircraft are on your side.
+  const TEAM_STORAGE = 'team';
+  const savedTeam = Number(stored(TEAM_STORAGE));
+  if (isTeam(savedTeam) && savedTeam !== sim.team) {
+    sim.setTeam(savedTeam);
+    replaceCraftView();
+  }
+  const chooseTeam = (team: Team) => {
+    sim.setTeam(team);
+    try {
+      localStorage.setItem(TEAM_STORAGE, String(team));
+    } catch { /* not remembered */ }
+    replaceCraftView();
+    net.setTeam(team);
+    toast(`You fly for ${TEAMS[team].name}`);
+  };
+  // Credits (remembered) and the mercenaries they hire.
+  const CREDIT_STORAGE = 'credits';
+  sim.credits = Math.max(0, Math.floor(Number(stored(CREDIT_STORAGE)) || 0));
+  let savedCredits = sim.credits;
+  const mercPanel = new MercPanel(sim, () => sim.airTraffic.pool.filter((d) => flyerKind(d) !== 'ground'), (t) => toast(t));
+  let noticeAt = -Infinity;
   aiCount?.addEventListener('input', updateAirPool);
   aiMine?.addEventListener('change', updateAirPool);
   updateAirPool();
@@ -461,7 +538,7 @@ async function start() {
         row('SPAN', `${(span * 2).toFixed(1)} m`) +
         row('T/W', tw),
     );
-    craftCard.append(spawnPicker(), loadoutPicker(), reinforcePanel());
+    craftCard.append(teamPicker(), spawnPicker(), loadoutPicker(), reinforcePanel());
   };
   /**
    * Choose the craft on the main (hangar) screen: every built-in and saved design in one list,
@@ -570,6 +647,31 @@ async function start() {
   };
   // The street search reads the city's obstacle height map: build it while idle, not mid-respawn.
   setTimeout(() => obstacleTop(0, 0), 4000);
+  /** TEAM: which side you fly for (your livery, your turrets, your wingmen). */
+  const teamPicker = () => {
+    const label = document.createElement('label');
+    label.className = 'spawn-pick team-pick';
+    const name = document.createElement('span');
+    name.textContent = 'TEAM';
+    const sel = document.createElement('select');
+    sel.setAttribute('aria-label', 'Team');
+    for (const t of TEAMS) {
+      const o = document.createElement('option');
+      o.value = String(t.id);
+      o.textContent = t.name;
+      o.style.color = t.light;
+      sel.append(o);
+    }
+    sel.value = String(sim.team);
+    sel.style.color = TEAMS[sim.team].light;
+    sel.addEventListener('change', () => {
+      chooseTeam(Number(sel.value) as Team);
+      sel.style.color = TEAMS[sim.team].light;
+      sel.blur();
+    });
+    label.append(name, sel);
+    return label;
+  };
   const spawnPicker = () => {
     const label = document.createElement('label');
     label.className = 'spawn-at';
@@ -583,7 +685,10 @@ async function start() {
       for (const s of sites) {
         const o = document.createElement('option');
         o.value = s.id;
-        o.textContent = s.name;
+        // Where the sites are in enemy hands, say so.
+        const at = s as unknown as { x?: number; z?: number };
+        const owner = at.x !== undefined && at.z !== undefined ? sim.groundTurrets.territory.ownerAt(at.x, at.z) : null;
+        o.textContent = owner !== null && owner !== sim.team ? `${s.name} (${TEAMS[owner].name} territory)` : s.name;
         g.append(o);
       }
       sel.append(g);
@@ -608,7 +713,7 @@ async function start() {
    */
   let reinforceOpen = false;
   const reinforcePanel = () => {
-    const def = sim.craft.def;
+    const def = sim.designDef;
     const details = document.createElement('details');
     details.className = 'reinforce';
     details.open = reinforceOpen;
@@ -710,7 +815,7 @@ async function start() {
   const studio = new Studio({
     client,
     library,
-    current: () => ({ craft: sim.craft.def, entryId: currentEntry?.id ?? null }),
+    current: () => ({ craft: sim.designDef, entryId: currentEntry?.id ?? null }),
     flightNotes: () => flightLog.summary(),
     // Async results (a design finishing) must not swap the craft out from under a flight.
     select: (entry) => {
@@ -730,7 +835,7 @@ async function start() {
         }
         return;
       }
-      previewSaved ??= sim.craft.def;
+      previewSaved ??= sim.designDef;
       showDef(def);
     },
   });
@@ -954,6 +1059,21 @@ async function start() {
         const m = sim.trails.cycleMode(sim.craft, sim.isAirplane(), sim.time);
         toast(m === 'wall' ? 'Jetwall: solid light' : m === 'ribbon' ? 'Light ribbon: fades behind you' : 'Trail off');
       }
+      else if (a === 'map') radarMap.toggleMap();
+      else if (a === 'radarRange') toast(`Radar ${radarMap.cycleRange() / 1000} km`);
+      else if (a === 'recentre') {
+        if (sim.craft.turretRig) { sim.recentreTurret(); toast('Turret: back to the nose'); }
+      } else if (a === 'chase') {
+        const kind = autopilotKind();
+        if (autopilot.state.engaged && autopilot.state.mode === 'chase') {
+          autopilot.disengage();
+          toast('Chase off');
+        } else if (kind !== 'airplane' && kind !== 'rotorcraft') toast('Chase: aircraft only');
+        else {
+          autopilot.engage(telemetry, kind, autopilotPerf(), { mode: 'chase', target: sim.lock.target });
+          toast(autopilot.state.mode === 'chase' ? `Chasing ${sim.lock.target?.name} — the stick takes over` : autopilot.state.notice);
+        }
+      }
       else if (a === 'loadout') {
         const l = sim.weapons.cycle();
         toast(l === 'none' ? 'Weapons: unarmed' : `Weapons: ${LOADOUTS[l].label} · V fires guns/cannon, O bombs/missiles`);
@@ -966,6 +1086,7 @@ async function start() {
       else if (a === 'resetWorld') { reset(true); toast('World reset'); }
       else if (a === 'camera') rig.toggle(renderPos);
       else if (a === 'apPanel') apPanel.toggle();
+      else if (a === 'mercs') mercPanel.toggle();
       else if (a === 'help') {
         controlsPanel.render(); // reflect the current profile / devices
         hud.toggleHelp();
@@ -992,6 +1113,37 @@ async function start() {
     const trig = player.firing();
     sim.weapons.trigger.primary = trig.primary;
     sim.weapons.trigger.secondary = trig.secondary;
+    const aim = player.aim();
+    sim.turretInput.yaw = aim.yaw;
+    sim.turretInput.pitch = aim.pitch;
+    // Other players can be locked too (missiles home on them; the radar rings them).
+    sim.extraLockTargets = [];
+    sim.extraFoes = [];
+    for (const p of net.players.values()) {
+      let h = playerTargets.get(p.id);
+      if (!h) {
+        const id = p.id;
+        h = {
+          id: `player:${id}`, kind: 'player', name: p.name, radius: 4,
+          alive: () => !!net.players.get(id)?.pose.visible,
+          position: (o) => o.copy(net.players.get(id)?.pose.position ?? o),
+          velocity: (o) => {
+            const q = net.players.get(id);
+            return q ? o.set(0, 0, -q.pose.speed).applyQuaternion(q.pose.rotation) : o.set(0, 0, 0);
+          },
+        };
+        playerTargets.set(p.id, h);
+      }
+      if (!p.pose.visible) continue;
+      // Team-mates are never locked; players of other teams are foes to your aircraft and turrets.
+      if (p.team !== sim.team) {
+        sim.extraLockTargets.push(h);
+        let foe = playerFoes.get(p.id);
+        if (!foe) playerFoes.set(p.id, (foe = { side: p.team, lock: h, kind: 'remote', engage: true, ground: false }));
+        foe.side = p.team;
+        sim.extraFoes.push(foe);
+      }
+    }
     accumulator += dt;
     stepsThisFrame = 0;
     let stepMs = 0;
@@ -1023,6 +1175,7 @@ async function start() {
     explosionView.update(sim.time, sim.explosions);
     weaponsView.update(sim.time);
     aiTrafficView.update(dt);
+    turretsView.update(dt);
     craterView.update(sim.time, sim.craters);
     {
       // Sonic booms: the Mach cone and vapour, ground shock rings, and the double crack when the
@@ -1046,6 +1199,67 @@ async function start() {
       document.body.classList.toggle('armed', kinds.length > 0);
       hud.setWeapons(kinds.length ? kinds.map((k) => `${WEAPONS[k].label.slice(0, 3).toUpperCase()} ${ammo[k]}`).join(' ') : null);
     }
+    {
+      // Hostile aircraft within 6 km: brackets over them, and the HOSTILE row (nearest first).
+      const marks: HostileMark[] = [];
+      for (const f of sim.airTraffic.hostileFlyers()) {
+        const range = f.pos.distanceTo(sim.position);
+        if (range < 6000) marks.push({ pos: f.pos, range, attacking: f.combat !== 'patrol', color: f.color });
+      }
+      for (const t of sim.groundTurrets.live()) {
+        if (!hostile(sim.team, t.side)) continue;
+        const pos = new THREE.Vector3(t.pos.x, t.pos.y + 3, t.pos.z);
+        const range = pos.distanceTo(sim.position);
+        if (range < 6000) marks.push({ pos, range, attacking: t.state === 'firing', color: t.color });
+      }
+      marks.sort((a, b) => a.range - b.range);
+      const near = marks[0];
+      // Friendly aircraft and mercenaries: a small caret each, after the enemies.
+      const friends: HostileMark[] = [];
+      for (const f of sim.airTraffic.combatFlyers()) {
+        if (f.side === null || hostile(sim.team, f.side)) continue;
+        const range = f.pos.distanceTo(sim.position);
+        if (range < 4000) friends.push({ pos: f.pos, range, attacking: false, color: f.color, friend: true });
+      }
+      friends.sort((a, b) => a.range - b.range);
+      marks.push(...friends);
+      const underFire = sim.time - sim.lastHitAt < 2;
+      hud.setHostiles(near ? {
+        count: marks.length, range: near.range, kills: sim.airTraffic.kills, underFire,
+        bearing: (Math.atan2(near.pos.x - sim.position.x, -(near.pos.z - sim.position.z)) * 180 / Math.PI + 360) % 360,
+      } : null);
+      if (mode === 'flight') hostileMarkers.update(camera, marks, window.innerWidth, window.innerHeight);
+      else hostileMarkers.hide();
+    }
+    if (mode === 'flight') {
+      // Radar and planet map: the simulation's vehicles, and the other players on the Grid.
+      const contacts: Contact[] = simContacts(sim);
+      for (const p of net.players.values()) {
+        if (!p.pose.visible) continue;
+        _nose.set(0, 0, -1).applyQuaternion(p.pose.rotation);
+        contacts.push({ id: `player:${p.id}`, kind: 'player', foe: p.team !== sim.team, x: p.pose.position.x, z: p.pose.position.z, y: p.pose.position.y, heading: Math.atan2(_nose.x, -_nose.z), color: p.color, name: p.name });
+      }
+      _nose.set(0, 0, -1).applyQuaternion(sim.rotation);
+      radarMap.update(now / 1000, { x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites(), lockedId: sim.lock.target?.id ?? null, territory: sim.groundTurrets.territory, teamColors: TEAMS.map((t) => t.light) });
+      // The lock: the marker in the view and the LOCK row; the turret row; incoming missiles.
+      const tracked = sim.lock.tracked;
+      if (tracked) {
+        tracked.position(_lockPos);
+        const range = Math.hypot(wrapDelta(sim.position.x, _lockPos.x), _lockPos.y - sim.position.y, wrapDelta(sim.position.z, _lockPos.z));
+        _lockPos.set(sim.position.x + wrapDelta(sim.position.x, _lockPos.x), _lockPos.y, sim.position.z + wrapDelta(sim.position.z, _lockPos.z));
+        lockMarker.update(camera, { pos: _lockPos, range, name: tracked.name, locked: sim.lock.locked }, window.innerWidth, window.innerHeight);
+        hud.setLock({ name: tracked.name, range, locked: sim.lock.locked });
+      } else {
+        lockMarker.update(camera, null, window.innerWidth, window.innerHeight);
+        hud.setLock(null);
+      }
+      const t = sim.craft.turret;
+      hud.setTurret(sim.craft.turretRig ? { yaw: t.yaw * 180 / Math.PI, pitch: t.pitch * 180 / Math.PI, auto: sim.turretAuto } : null);
+      hud.setMissileWarning(sim.incomingMissiles());
+    } else {
+      lockMarker.update(camera, null, window.innerWidth, window.innerHeight);
+      hud.setMissileWarning(0);
+    }
     if (!sim.explosions.length) explosionHeardAt = -Infinity;
     for (const e of sim.explosions) {
       if (e.time <= explosionHeardAt) continue;
@@ -1057,7 +1271,7 @@ async function start() {
     if (sim.exploded && explodedAt === null) explodedAt = sim.time;
     if (!sim.exploded) explodedAt = null;
     const respawnLeft = explodedAt === null ? 0 : TUNING.respawnDelay - (sim.time - explodedAt);
-    hud.setDestroyed(sim.exploded, Math.max(0, respawnLeft));
+    hud.setDestroyed(sim.exploded, Math.max(0, respawnLeft), sim.derezCause === 'shot');
     if (explodedAt !== null && respawnLeft <= 0) {
       explodedAt = null;
       reset(false);
@@ -1124,6 +1338,17 @@ async function start() {
     hud.update(telemetry, player.trim, telemetry.controls.brake > 0);
     hud.setAutopilot(autopilot.state.engaged ? autopilot.state : null);
     apPanel.refresh();
+    mercPanel.refresh();
+    // Notices from the war (credits earned, districts changing hands), and credits kept.
+    for (const n of sim.notices) if (n.time > noticeAt) { noticeAt = n.time; toast(n.text); }
+    if (sim.credits !== savedCredits) {
+      savedCredits = sim.credits;
+      try {
+        localStorage.setItem(CREDIT_STORAGE, String(sim.credits));
+      } catch { /* not remembered */ }
+    }
+    const mercs = sim.airTraffic.mercs();
+    hud.setMercs(sim.credits > 0 || mercs.length ? { credits: sim.credits, hired: mercs.length, soonest: Math.min(...mercs.map((f) => f.mercUntil - sim.time)) } : null);
     fpsFrames++;
     fpsTime += dt;
     if (fpsTime > 0.5) {

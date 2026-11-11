@@ -13,7 +13,11 @@
  */
 import type { CraftDef } from '../craft/types.ts';
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
+
+/** A player's team: 0 Cyan, 1 Red, 2 Amber (sim/teams.ts). Anything else reads as Cyan. */
+export type NetTeam = 0 | 1 | 2;
+export const asTeam = (v: unknown): NetTeam => (v === 1 || v === 2 ? v : 0);
 export const MAX_PLAYERS = 16;
 export const ROOM_CODE_LENGTH = 5;
 /** How often clients send their state (Hz). */
@@ -81,12 +85,14 @@ export interface PlayerInfo {
   id: string;
   name: string;
   color: string;
+  team: NetTeam;
   craft: CraftDef;
   state: NetState | null;
 }
 
 export type ClientMessage =
-  | { t: 'hello'; v: number; room: string; name: string; color: string; craft: CraftDef }
+  | { t: 'hello'; v: number; room: string; name: string; color: string; craft: CraftDef; team?: NetTeam }
+  | { t: 'team'; team: NetTeam }
   | { t: 'state'; s: NetState }
   | { t: 'craft'; craft: CraftDef }
   | { t: 'event'; e: NetEvent }
@@ -98,6 +104,7 @@ export type ServerMessage =
   | { t: 'leave'; id: string; reason: string }
   | { t: 'state'; id: string; s: NetState }
   | { t: 'craft'; id: string; craft: CraftDef }
+  | { t: 'team'; id: string; team: NetTeam }
   | { t: 'event'; id: string; e: NetEvent }
   | { t: 'error'; code: ErrorCode; message: string }
   | { t: 'pong' };
@@ -189,7 +196,9 @@ export function parseClientMessage(raw: string, bytes = raw.length): ClientMessa
       if (m.v !== PROTOCOL_VERSION) return { error: 'version', message: `protocol ${String(m.v)} (server speaks ${PROTOCOL_VERSION})` };
       if (typeof m.room !== 'string') return bad('room must be a string');
       if (!validCraftShape(m.craft)) return bad('invalid craft');
-      return { t: 'hello', v: m.v, room: normalizeRoom(m.room), name: sanitizeName(m.name), color: isColor(m.color) ? m.color : '#00eaff', craft: m.craft };
+      return { t: 'hello', v: m.v, room: normalizeRoom(m.room), name: sanitizeName(m.name), color: isColor(m.color) ? m.color : '#00eaff', craft: m.craft, team: asTeam(m.team) };
+    case 'team':
+      return m.team === 0 || m.team === 1 || m.team === 2 ? { t: 'team', team: m.team } : bad('team must be 0, 1 or 2');
     case 'state':
       return validState(m.s) ? { t: 'state', s: m.s } : bad('invalid state');
     case 'craft':

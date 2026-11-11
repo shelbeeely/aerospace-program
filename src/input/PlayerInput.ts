@@ -38,7 +38,7 @@ export class PlayerInput implements ControlSource {
   }
 
   static emptyRaw(): RawInput {
-    return { pitch: 0, roll: 0, yaw: 0, throttleRate: 0, throttleSet: null, brake: 0, trimRate: 0, flapSteps: 0, flapCycle: false, fire: false, fireAlt: false };
+    return { pitch: 0, roll: 0, yaw: 0, throttleRate: 0, throttleSet: null, brake: 0, trimRate: 0, flapSteps: 0, flapCycle: false, fire: false, fireAlt: false, aimYaw: 0, aimPitch: 0 };
   }
 
   updateSettings(patch: Partial<InputSettings>): void {
@@ -63,6 +63,12 @@ export class PlayerInput implements ControlSource {
   /** Weapon triggers held (from the last poll). */
   firing(): { primary: boolean; secondary: boolean } {
     return { primary: this.raw.fire, secondary: this.raw.fireAlt };
+  }
+
+  /** Turret aim inputs (from the last poll), each -1..1. */
+  aim(): { yaw: number; pitch: number } {
+    const c = (v: number) => Math.max(-1, Math.min(1, v));
+    return { yaw: c(this.raw.aimYaw), pitch: c(this.raw.aimPitch) };
   }
 
   /** Haptic feedback on every device that supports it (gamepad rumble, phone vibration). */

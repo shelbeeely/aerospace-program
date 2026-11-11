@@ -28,6 +28,19 @@ export class Hud {
     fuelRow: $('h-fuel-row'),
     armRow: $('h-arm-row'),
     arm: $('h-arm'),
+    hostileRow: $('h-hostile-row'),
+    lockRow: $('h-lock-row'),
+    mercRow: $('h-merc-row'),
+    merc: $('h-merc'),
+    mercT: $('h-merc-t'),
+    lock: $('h-lock'),
+    lockRange: $('h-lock-r'),
+    turretRow: $('h-turret-row'),
+    turret: $('h-turret'),
+    turretMode: $('h-turret-m'),
+    missile: $('missile-warn'),
+    hostile: $('h-hostile'),
+    hostileKills: $('h-hostile-k'),
     batt: $('h-batt'),
     battRow: $('h-batt-row'),
     volts: $('h-volts'),
@@ -130,6 +143,60 @@ export class Hud {
     if (text) this.set(this.el.arm, text);
   }
 
+  /**
+   * HOSTILE row: how many hostile aircraft are about, the nearest one's range and bearing, and
+   * the kills so far (hidden when there are none near). It flashes while the craft is under fire.
+   */
+  setHostiles(s: { count: number; range: number; bearing: number; kills: number; underFire: boolean } | null): void {
+    const { hostileRow: row, hostile, hostileKills } = this.el;
+    if (!row || !hostile || !hostileKills) return;
+    row.style.display = s ? '' : 'none';
+    if (!s) return;
+    row.classList.toggle('under-fire', s.underFire);
+    const range = s.range >= 1000 ? `${(s.range / 1000).toFixed(1)}km` : `${Math.round(s.range / 10) * 10}m`;
+    this.set(hostile, `${s.count} · ${range} ${String(Math.round(s.bearing) % 360).padStart(3, '0')}°`);
+    this.set(hostileKills, s.underFire ? 'UNDER FIRE' : s.kills ? `${s.kills} down` : '');
+  }
+
+  /** CREDITS row: credits held, and hired mercenaries with the soonest contract end. */
+  setMercs(s: { credits: number; hired: number; soonest: number } | null): void {
+    const { mercRow: row, merc, mercT } = this.el;
+    if (!row || !merc || !mercT) return;
+    row.style.display = s ? '' : 'none';
+    if (!s) return;
+    this.set(merc, `${s.credits}`);
+    const t = Math.max(0, s.soonest);
+    this.set(mercT, s.hired ? `MERC ${s.hired} · ${Math.floor(t / 60)}:${Math.floor(t % 60).toString().padStart(2, '0')}` : 'cr');
+  }
+
+  /** LOCK row: the vehicle tracked or locked, and its range (hidden with none). */
+  setLock(s: { name: string; range: number; locked: boolean } | null): void {
+    const { lockRow: row, lock, lockRange } = this.el;
+    if (!row || !lock || !lockRange) return;
+    row.style.display = s ? '' : 'none';
+    if (!s) return;
+    row.classList.toggle('locked', s.locked);
+    this.set(lock, `${s.locked ? '◆' : '◇'} ${s.name}`);
+    this.set(lockRange, s.range >= 1000 ? `${(s.range / 1000).toFixed(1)} km` : `${Math.round(s.range / 10) * 10} m`);
+  }
+
+  /** TURRET row: traverse (° right of the nose) and elevation, and whether it is laying itself on the lock. */
+  setTurret(s: { yaw: number; pitch: number; auto: boolean } | null): void {
+    const { turretRow: row, turret, turretMode } = this.el;
+    if (!row || !turret || !turretMode) return;
+    row.style.display = s ? '' : 'none';
+    if (!s) return;
+    const yaw = Math.round(s.yaw);
+    this.set(turret, `${yaw === 0 ? '0' : yaw > 0 ? `R${yaw}` : `L${-yaw}`}° ${s.pitch >= 0 ? '+' : ''}${Math.round(s.pitch)}°`);
+    this.set(turretMode, s.auto ? 'AUTO' : '');
+  }
+
+  /** The MISSILE warning: hostile missiles homing on the craft. */
+  setMissileWarning(n: number): void {
+    this.el.missile?.classList.toggle('hidden', n === 0);
+    if (n && this.el.missile) this.set(this.el.missile, n > 1 ? `MISSILE ×${n}` : 'MISSILE');
+  }
+
   /** ORB row: apoapsis / periapsis (km) and period, once high or fast enough to care. */
   private updateOrbit(t: Telemetry): void {
     const { orbRow: row, orb, orbT: per } = this.el;
@@ -144,9 +211,11 @@ export class Hud {
   }
 
   /** The craft blew up: show the banner (and hide the stall warning). */
-  setDestroyed(on: boolean, respawnIn = 0): void {
+  setDestroyed(on: boolean, respawnIn = 0, shotDown = false): void {
     this.el.destroyed.classList.toggle('hidden', !on);
     if (!on) return;
+    const title = this.el.destroyed.querySelector('b');
+    if (title) this.set(title as HTMLElement, shotDown ? 'SHOT DOWN' : 'DESTROYED');
     this.el.stall.classList.add('hidden');
     const small = this.el.destroyed.querySelector('small');
     if (small) this.set(small as HTMLElement, `New plane in ${Math.ceil(respawnIn)}… · Backspace resets the world`);

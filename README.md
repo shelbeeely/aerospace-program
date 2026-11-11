@@ -20,6 +20,11 @@ npm run weapons        # weapons: fitted multiples, cannon cratering, tank bulld
 npm run craft          # vehicle rules: connected parts, the 1982 palette, the vehicle grammar, ground-vehicle design loop (offline)
 npm run engines        # fast flight: compressibility, ramjet/scramjet/solid/turbojet, thrust vectoring, airbrake, chute, cone/capsule parts, weight floors
 npm run air            # AI air traffic: count, clearance, destinations and circling, shot down and replaced
+npm run radar          # radar and planet map: contacts, heading-up scope, wrap-aware geometry
+npm run lock           # target lock, homing missiles, turret traverse/elevation and auto-aim, chase mode
+npm run turrets        # tower turrets: placement, streaming, armed-only fire, line of sight, kills, fracture
+npm run teams          # teams: liveries, territory, the AI war, friendly fire, capture, freelancers, mercenaries
+npm run enemies        # enemy aircraft: red-team colours, patrol vs hunt, gunnery, hit points, kills, determinism
 npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
 ```
@@ -192,6 +197,11 @@ stick expo, haptics, and touch controls auto/on/off.
 | V (hold) | fire guns / cannon (armed craft: the tank by default) |
 | O (hold) | drop bombs / fire missiles |
 | I | weapons loadout: fitted (when the craft has weapon parts), unarmed, guns, cannon, guns + bombs, guns + missiles, tank, laser + discs, pulse + missiles, full |
+| Tab | planet map: every vehicle in the world (or click the radar) |
+| ← → ↑ ↓ | turret traverse and elevation (tank, or any craft with a turret part); gamepad: LB + right stick |
+| / | turret back to the nose |
+| Enter | chase the locked vehicle (flight computer *Chase lock*; Enter again, or the stick, ends it) |
+| \\ | radar range: 2 / 5 / 12 km |
 
 > Browsers don't let pages block Ctrl+W, so tapping Ctrl for throttle-down next to W can
 > close the tab. Prefer Z/X or a gamepad if that bites you.
@@ -258,6 +268,105 @@ anything in the way. The flight model is a kinematic coordinated turn (banking i
 two dozen cost almost nothing; each carries a kinematic collider, so you can fly into one or
 shoot it down (it derezzes in its circuit colour and another takes its place).
 
+## Teams, territory and the war
+
+Three teams hold the planet: **Cyan**, **Red** and **Amber** (`src/sim/teams.ts`). Each starts
+with a third of the region cells, so territory comes in large contiguous patches
+(`src/sim/territory.ts`); the planet map washes every district in its holder's colour.
+
+- **Pick your team** in the hangar (TEAM, above SPAWN; remembered). Your craft is restyled in
+  its livery (`teamLivery` / `sideLivery`: the team's light on its bodies, within the light
+  budget), and spawn sites in another team's territory say so. Your designs are saved without
+  the livery.
+- **Turrets take sides:** a tower turret belongs to its district's holder. Your team's never fire
+  on you; the others' do (while you're armed), and they fire on enemy aircraft too.
+- **The AI war:** team aircraft fight every other side, not only you (F3: *Friendly aircraft*
+  0-6, *Enemy aircraft* 0-8 split between the two other teams). With nothing to fight,
+  friendlies escort you and go first for anything attacking you. Enemy aircraft also attack
+  turrets of the teams they fight, diving on them and firing homing missiles from outside their
+  guns' reach.
+- **Capture:** when the last turret of a district falls, the district goes to the team whose
+  fire destroyed it (yours if you did it) and its turrets rise again in the new colours 20 s
+  later. AI teams capture too, so the front line moves on its own. A world reset (Backspace)
+  restores the starting map.
+- **No friendly fire:** your rounds don't hurt your side's aircraft or turrets, and theirs
+  don't hurt you; the lock never picks a friend.
+- **Freelancers** (F3, 0-4, default 1) belong to no one and fight everyone: white light on steel.
+  They never capture.
+- **Mercenaries** are wingmen you hire with credits (`'`, or *Mercenaries* in the touch menu).
+  You earn 100 credits per aircraft shot down, 150 per turret and 300 per district captured
+  (kept between sessions; the CREDITS row). A contract lasts five minutes and costs 200-650 by
+  design (`src/sim/mercenaries.ts`), up to three at once. A mercenary flies for you whatever
+  your team, in bright blue with an M on the radar; it escorts, goes for anything attacking you,
+  then your enemies, and leaves when its time is up.
+- **Multiplayer:** your team is sent to the room (in the hello and whenever you change it);
+  other players show as friend or foe by team, team-mates are never locked, and your AI and
+  turrets treat enemy-team players as foes. Territory, the AI and captures are still simulated
+  by each client.
+
+## Enemy aircraft
+
+Enemy programs fly among the traffic in their team's colours: the fast aeroplanes of the same
+pool, each with its own guns and missiles and six hit points.
+
+- **They hunt only an armed craft.** While yours carries no weapons (the Trainer, or loadout
+  *Unarmed*; `I` cycles it) they patrol like everyone else. Arm it within 4 km of one and it
+  turns on you; disarm, derez, or get 6.5 km away and it goes back to its patrol.
+- **How they fight** (`fight()` in `src/sim/aiTraffic.ts`): lead pursuit, flying the nose onto
+  where you will be when the rounds arrive (closing speed and bullet drop included), with an aim
+  that wanders about half a degree. Guns inside 750 m when the nose is on; a missile from
+  400-1500 m, one every six seconds. They break off to one side and climb rather than ram, then
+  come round again; a hit sends them into a hard break turn. They fly the same kinematic model
+  as the traffic, harder (65° of bank), and never through the ground or a structure.
+- **Their fire hurts.** A round takes a share of the struck part's hit points
+  (`TUNING.weaponHitShare`): wings and tails break off, and the craft derezzes when its heaviest
+  part gives out, or when a warhead goes off against it. The banner reads *SHOT DOWN*.
+- **Finding them:** thin red brackets mark every hostile within 6 km (brighter while it attacks,
+  a ring on the screen's edge when it is out of view), with its range; the HUD's `HOSTILE` row
+  gives the count, the nearest one's range and bearing and your kills, and flashes
+  `UNDER FIRE`. Their lights follow the light states: dim on patrol, full in the attack,
+  flickering once hit.
+
+Hostiles are deterministic for the seed and use their own random stream, so the peaceful
+traffic flies the same with or without them.
+
+## Tower turrets
+
+Hostile turrets stand on the flat roofs of tall towers (`src/sim/groundTurrets.ts`; F3 →
+*Tower turrets*: Off / Sparse / Dense, default Sparse, remembered). Which towers carry one is a
+pure function of the world seed and the district — the same towers always do, never beside a
+rooftop helipad — and the ones within 5 km of you are live. Each is a red-team emplacement
+(`src/craft/towerTurret.ts`): a pedestal with a lit collar, a head that traverses at 90°/s,
+twin guns and a missile barrel that elevate from −10° to +85° (they shoot at aircraft overhead).
+
+- **They watch everyone, but fire only on an armed craft.** Within 2.5 km and with a clear line
+  of sight (sampled against the terrain and the towers), a turret's head follows you and its
+  lights come up; while your craft carries weapons it fires its guns inside 1.8 km when the
+  barrels are on your lead point, and a homing missile every 10 s from 600 m out (the `MISSILE`
+  warning). Their rounds hurt like the hostile aircraft's.
+- **Shooting them:** ten gun rounds (fewer with cannon or missiles) derez one; a tower brought
+  down takes its turret with it. Kills count on the HOSTILE row. A destroyed turret stays down
+  until the world is reset (Backspace).
+- **Finding them:** red brackets in view, small red squares on the radar and planet map (solid
+  while firing), and they can be locked: missiles home on them and the tank's turret lays on them.
+
+## Radar and planet map
+
+A radar scope sits in the corner of the view (`src/hud/RadarMap.ts`): heading up, with range
+rings, a north mark, the landing sites and every vehicle in range. `\` (or the range button)
+steps it through 2, 5 and 12 km; a hostile or another player beyond the range sits on the rim.
+`Tab` (or a click on the scope, or *Map* in the touch menu) opens the planet map: the whole
+planet unrolled north-up and centred on your craft, with the city (paler where the skyline is
+taller), the Outlands, the sea, every runway by name, the radar's reach, and every vehicle in
+the world, counted in its header.
+
+Aircraft are arrowheads on their heading, outlined in their circuit colour; hostiles are solid
+red, brighter while they attack; light cycles are dots in their team colour; other players are
+pale diamonds with their names. Both are wrap-aware (`src/sim/contacts.ts`): a vehicle across
+the planet's seam is drawn as near as it really is. The world only keeps vehicles near you
+(aircraft within 12 km, light cycles on the streets around you), so that is where the map shows
+them.
+
 ## Going fast: engines, parts and modules
 
 - **No speed wall.** Rapier clamps bodies to 400 m/s × its length unit, which kept every
@@ -283,6 +392,37 @@ shoot it down (it derezzes in its circuit colour and another takes its place).
   tells the model (`src/craft/moduleMass.ts`).
 
 A ramjet dart (solid booster to Mach 2, then a ramjet) passes Mach 3.2 in `npm run engines`.
+
+## Target lock, homing missiles and turrets
+
+**Lock** (`src/sim/lock.ts`): while your craft carries weapons, the vehicle nearest your aim
+line — the nose, or the barrel on a turreted craft — within 3 km and 20° is tracked (a thin cyan
+diamond, `TRACK`), and after 1.2 s on the line it is **locked** (a solid diamond, `LOCK`, the
+HUD's LOCK row, a ring on the radar and planet map). Aircraft, hostiles, light cycles and other
+players can all be locked. The lock holds until the vehicle leaves 30° or 3.5 km, or derezzes.
+
+**Homing missiles:** a missile fired while locked steers onto the target's lead point at up to
+45°/s and goes off within 6 m of it (a proximity fuse); if the target leaves its 60° seeker cone
+it flies on straight. Without a lock missiles fly straight, as before. **Hostile aircraft fire
+homing missiles at you too**, turning at 25°/s so a hard break can shake them; while one is
+tracking you the screen flashes `MISSILE`.
+
+**Turrets** (`src/craft/turret.ts`): a craft with a part of kind `turret` (the Program Tank, or
+any design that has one) turns it. The turret, its barrels (parts of kind cannon or barrel) and
+anything whose id starts with `turret.` traverse at 40°/s, all the way round; the barrels and the
+turret's weapons elevate from −8° to +30° at 20°/s. The arrow keys aim it (gamepad: LB and the
+right stick), `/` brings it back to the nose, and the cannon and coaxial gun fire where the barrel
+points. Left alone for a moment with a lock held, the turret lays the gun on the target by
+itself, allowing for the shell's flight time, its drop and the target's motion (`AUTO` on the
+TURRET row). The swing is visual and ballistic: the colliders stay where they are.
+
+**Chase lock** (flight computer, `Enter` or the J panel): the aircraft chases the locked vehicle
+on its own. An aeroplane flies lead pursuit, banking up to 75° and pulling the g that holds its
+height in the bank, faster than the target while far and bleeding off speed on the way in, then
+holds station a couple of hundred metres behind it, never below the terrain and structures
+ahead. A rotorcraft holds 250 m behind and 30 m above it, nose on. It never fires: that stays
+on V and O, with the locked missiles doing the aiming. The chase ends (back to Hold) when the
+target derezzes or stays out of reach for 5 s, or when you move the stick.
 
 ## Weapons and derez
 

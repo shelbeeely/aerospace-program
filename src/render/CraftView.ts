@@ -11,6 +11,7 @@ import { Engine } from '../modules/Engine.ts';
 import { Rotor } from '../modules/Rotor.ts';
 import { Wheel } from '../modules/Wheel.ts';
 import { Chute } from '../modules/Airbrake.ts';
+import { turretQuaternions } from '../craft/turret.ts';
 import { WeaponMount } from '../modules/WeaponMount.ts';
 import { NEON, glow, neonFillMaterial, neonize, neonTint, type TslNode } from './neon.ts';
 import { buildGrammar, driveGrammarLights, type GrammarModel } from './VehicleGrammarView.ts';
@@ -121,6 +122,38 @@ export class CraftView {
     this.engines = craft.modules.filter((m): m is Engine => m instanceof Engine);
     this.rotors = craft.modules.filter((m): m is Rotor => m instanceof Rotor);
     this.hideParts(craft.detached);
+    this.rigTurret();
+  }
+
+  /** The turret's traverse group (at its pivot) and the barrels' elevation group (at the trunnion). */
+  private turretYaw: THREE.Group | null = null;
+  private turretPitch: THREE.Group | null = null;
+  private readonly weaponGroups = new Set<THREE.Object3D>();
+
+  /**
+   * A turreted craft: everything drawn for the turret's parts moves into a group that traverses
+   * about the turret's pivot, and the barrels and the turret's weapons into one inside it that
+   * elevates about the trunnion, so the view follows craft.turret.
+   */
+  private rigTurret(): void {
+    const rig = this.craft.turretRig;
+    if (!rig) return;
+    const yaw = (this.turretYaw = new THREE.Group());
+    yaw.position.copy(rig.pivot);
+    const pitch = (this.turretPitch = new THREE.Group());
+    pitch.position.copy(rig.trunnion).sub(rig.pivot);
+    yaw.add(pitch);
+    this.root.add(yaw);
+    for (const [id, objs] of this.partObjects) {
+      if (!rig.riders.has(id)) continue;
+      for (const o of objs) {
+        if (o.parent !== this.root) continue;
+        const elevates = rig.barrels.has(id) || this.weaponGroups.has(o);
+        o.removeFromParent();
+        o.position.sub(elevates ? rig.trunnion : rig.pivot);
+        (elevates ? pitch : yaw).add(o);
+      }
+    }
   }
 
   private readonly grammar: GrammarModel;
@@ -406,6 +439,7 @@ export class CraftView {
     if (flash) flash.visible = false;
     this.root.add(g);
     this.track(m.partId, g);
+    this.weaponGroups.add(g);
     this.weapons.push({ m, slots, flash });
   }
 
@@ -457,6 +491,7 @@ export class CraftView {
   update(position: THREE.Vector3, rotation: THREE.Quaternion): void {
     this.root.position.copy(position);
     this.root.quaternion.copy(rotation);
+    if (this.turretYaw && this.turretPitch) turretQuaternions(this.craft.turret, this.turretYaw.quaternion, this.turretPitch.quaternion);
     for (const w of this.weapons) {
       for (let i = 0; i < w.slots.length; i++) w.slots[i].visible = i < w.m.ammo;
       if (w.flash) w.flash.visible = w.m.sinceFired < 0.06 || w.m.def.kind === 'laser';
@@ -484,7 +519,7 @@ export class CraftView {
       v.mesh.position.copy(v.solid.position);
       v.mesh.quaternion.copy(v.solid.quaternion);
       v.mesh.frustumCulled = false;
-      this.root.add(v.mesh);
+      (v.solid.parent ?? this.root).add(v.mesh); // a turret part's voxels turn with it
       this.track(v.partId, v.mesh);
     }
     v.solid.visible = false;

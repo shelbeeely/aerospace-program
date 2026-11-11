@@ -10,7 +10,8 @@ const TRAILS = 48;
 const BEAM_LIFE = 0.12;
 
 /**
- * Rounds in flight (reads `sim.weapons`), in the shooter's circuit colour and the 1982 palette.
+ * Rounds in flight (the player's weapon system and every hostile aircraft's), in the shooter's
+ * circuit colour and the 1982 palette.
  * Gun tracers are thin streaks along their velocity; cannon shells amber-cored bolts; pulse bolts
  * glowing orbs; identity discs spinning rings of light; laser beams bright lines that fade in a
  * blink. Bombs are drawn as bombs (a fat body tapering to a heavy nose, a lit band, a ring tail
@@ -39,7 +40,7 @@ export class WeaponsView {
   private readonly zero = new THREE.Matrix4().makeScale(0, 0, 0);
   private shown = { light: 0, solid: 0, ring: 0 };
 
-  constructor(scene: THREE.Scene, private readonly weapons: WeaponSystem) {
+  constructor(scene: THREE.Scene, private readonly systems: () => Iterable<WeaponSystem>) {
     const box = new THREE.BoxGeometry(1, 1, 1);
     const glow = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     // Brightest toward the tail (+z local), fading to the head.
@@ -90,7 +91,7 @@ export class WeaponsView {
       mesh.setColorAt(i, this._c.set(color).multiplyScalar(gain));
     };
     const live = new Set<number>();
-    for (const pr of this.weapons.projectiles) {
+    for (const weapons of this.systems()) for (const pr of weapons.projectiles) {
       if (nl >= MAX - 6 || ns >= MAX - 8) break;
       const speed = pr.vel.length();
       dir.copy(pr.kind === 'missile' || pr.kind === 'bomb' ? pr.heading : pr.vel).normalize();
@@ -198,7 +199,8 @@ export class WeaponsView {
 
   private drawBeams(time: number): void {
     let o = 0;
-    for (const b of this.weapons.beams) {
+    for (const weapons of this.systems()) for (const b of weapons.beams) {
+      if (o >= 64) break;
       const age = time - b.time;
       if (age < 0 || age > BEAM_LIFE) continue;
       const k = 1.6 * (1 - age / BEAM_LIFE);

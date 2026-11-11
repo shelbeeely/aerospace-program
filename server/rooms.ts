@@ -11,8 +11,8 @@
  * - Nothing persists: no accounts, no storage.
  */
 import {
-  MAX_PLAYERS, PROTOCOL_VERSION, isRoomCode, parseClientMessage, randomRoomCode,
-  type ClientMessage, type ErrorCode, type NetState, type PlayerInfo, type ServerMessage,
+  MAX_PLAYERS, PROTOCOL_VERSION, asTeam, isRoomCode, parseClientMessage, randomRoomCode,
+  type ClientMessage, type NetTeam, type ErrorCode, type NetState, type PlayerInfo, type ServerMessage,
 } from '../src/net/protocol.ts';
 import type { CraftDef } from '../src/craft/types.ts';
 
@@ -49,6 +49,7 @@ export interface Session {
   room: string | null;
   name: string;
   color: string;
+  team: NetTeam;
   craft: CraftDef | null;
   state: NetState | null;
   lastSeen: number;
@@ -92,7 +93,7 @@ export class Lobby {
     const now = this.now();
     const s: Session = {
       peer, id: `p${(this.nextId++).toString(36)}${Math.random().toString(36).slice(2, 6)}`, room: null,
-      name: '', color: '#00eaff', craft: null, state: null, lastSeen: now, strikes: 0, lastErrorAt: -Infinity,
+      name: '', color: '#00eaff', team: 0, craft: null, state: null, lastSeen: now, strikes: 0, lastErrorAt: -Infinity,
       limits: {
         all: new RateLimiter(80, 160, now),
         state: new RateLimiter(30, 60, now),
@@ -162,6 +163,7 @@ export class Lobby {
     if (!members) this.rooms.set(code, (members = new Set()));
     s.name = m.name;
     s.color = m.color;
+    s.team = asTeam(m.team);
     s.craft = m.craft;
     s.room = code;
     this.send(s, { t: 'welcome', v: PROTOCOL_VERSION, id: s.id, room: code, players: [...members].map(info) });
@@ -183,6 +185,10 @@ export class Lobby {
       if (!s.limits.craft.take(now)) return this.limited(s, now);
       s.craft = m.craft;
       out = { t: 'craft', id: s.id, craft: m.craft };
+    } else if (m.t === 'team') {
+      if (!s.limits.craft.take(now)) return this.limited(s, now);
+      s.team = m.team;
+      out = { t: 'team', id: s.id, team: m.team };
     } else {
       const bucket = m.e.k === 'chat' ? s.limits.chat : s.limits.event;
       if (!bucket.take(now)) return this.limited(s, now);
@@ -213,5 +219,5 @@ export class Lobby {
 }
 
 function info(s: Session): PlayerInfo {
-  return { id: s.id, name: s.name, color: s.color, craft: s.craft!, state: s.state };
+  return { id: s.id, name: s.name, color: s.color, team: s.team, craft: s.craft!, state: s.state };
 }
