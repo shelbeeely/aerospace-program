@@ -12,6 +12,7 @@
   </head>
   <body class="mode-hangar">
     <canvas id="view"></canvas>
+    <div id="hostile-marks"></div>
 
     <div id="hud" class="panel">
       <div class="row"><span>AIRSPEED</span><b id="h-speed">0</b><small>kt</small></div>
@@ -40,6 +41,7 @@
         <div class="row"><span>TGT SPD</span><b id="h-appr-spd">--</b><small id="h-appr-unit">kt</small></div>
       </div>
       <div class="row" id="h-arm-row" style="display:none"><span>ARM</span><b id="h-arm">--</b><small></small></div>
+      <div class="row" id="h-hostile-row" style="display:none"><span title="Hostile aircraft: how many, the nearest one's range and bearing, and your kills">HOSTILE</span><b id="h-hostile">--</b><small id="h-hostile-k"></small></div>
       <div class="row" id="h-fuel-row"><span>FUEL</span><b id="h-fuel">--</b><small>%</small></div>
       <div class="row" id="h-batt-row" style="display: none"><span>BATT</span><b id="h-batt">--</b><small>%</small></div>
       <div class="row" id="h-bus-row" style="display: none"><span>BUS</span><b id="h-volts">--</b><small id="h-amps">V</small></div>
@@ -123,6 +125,8 @@
       <h3>AI air traffic</h3>
       <label>Aircraft around you <b id="w-ai-count-v">8</b> <input id="w-ai-count" type="range" min="0" max="24" step="1" value="8" /></label>
       <label><input id="w-ai-mine" type="checkbox" checked /> Include my designs (single player)</label>
+      <label>Hostile aircraft <b id="w-hostile-count-v">2</b> <input id="w-hostile-count" type="range" min="0" max="8" step="1" value="2" /></label>
+      <p class="muted small">Hostiles hunt you only while your craft carries weapons (I cycles the loadout).</p>
       <p class="muted small">Triggers affect flight physics. Reset clears events.</p>
       <div class="legend">
         <span style="color:#33ff55">■ lift</span>

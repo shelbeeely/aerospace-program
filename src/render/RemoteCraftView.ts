@@ -5,7 +5,7 @@ import { validateCraft } from '../craft/validate.ts';
 import { edgeColor, fillColor, geometryFor } from './CraftView.ts';
 import { style1982 } from '../craft/style1982.ts';
 import { glow, neonFillMaterial, neonize, neonTint } from './neon.ts';
-import { buildGrammar, driveGrammarLights } from './VehicleGrammarView.ts';
+import { buildGrammar, driveGrammarLights, type GrammarModel } from './VehicleGrammarView.ts';
 
 /**
  * Another player's craft, drawn from their CraftDef alone (no physics body): one neon primitive
@@ -19,6 +19,7 @@ export class RemoteCraftView {
   private readonly wheels: Array<{ spin: THREE.Object3D; radius: number }> = [];
   private readonly discs: THREE.MeshBasicMaterial[] = [];
   private readonly beaconMat: THREE.LineBasicMaterial;
+  private grammar: GrammarModel | null = null;
   /** Craft bounding radius (m), for the beacon height and proximity checks. */
   readonly radius: number;
 
@@ -49,7 +50,8 @@ export class RemoteCraftView {
         }
       }
       // The vehicle grammar's detail, lights steady (no engine state for a remote craft).
-      driveGrammarLights(buildGrammar(def, this.root), { activity: 1, time: 0, engine: () => ({ spool: 0.7, afterburner: 0 }) });
+      this.grammar = buildGrammar(def, this.root);
+      this.setLightState({ activity: 1, integrity: 1, time: 0 });
     } else {
       const geo = new THREE.BoxGeometry(2, 1, 4);
       const fill = neonFillMaterial(neonTint(color).multiplyScalar(0.035));
@@ -95,6 +97,18 @@ export class RemoteCraftView {
     disc.position.copy(at);
     disc.quaternion.copy(q);
     this.root.add(disc);
+  }
+
+  /**
+   * The lights' state (AGENTS.md §5): `activity` 0 = idle (dim) to 1 = active (full), and
+   * `integrity` below 1 = damaged (they flicker, the more the worse it is).
+   */
+  setLightState(s: { activity: number; integrity: number; time: number }): void {
+    if (!this.grammar) return;
+    driveGrammarLights(this.grammar, {
+      activity: s.activity, time: s.time, integrity: () => s.integrity,
+      engine: () => ({ spool: 0.5 + 0.3 * s.activity, afterburner: 0 }),
+    });
   }
 
   private readonly _inv = new THREE.Quaternion();

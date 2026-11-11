@@ -56,6 +56,9 @@ export const WEAPONS: Record<WeaponKind, WeaponSpec> = {
   pulse: { label: 'Pulse', speed: 210, rate: 2, ammo: 60, mass: 6, blast: 4, life: 6, gravity: 0, group: 'primary', ricochet: 1 },
 };
 
+/** Hit points a round takes off an AI aircraft (a peaceful flyer has 1, a hostile several). */
+export const WEAPON_DAMAGE: Record<WeaponKind, number> = { gun: 1, laser: 1, disc: 3, pulse: 3, cannon: 8, missile: 8, bomb: 20 };
+
 /** Loadouts a vehicle can carry: which weapons, chosen in the hangar or cycled with I. */
 export const LOADOUTS = {
   none: { label: 'Unarmed', kinds: [] },
@@ -237,6 +240,8 @@ const _a = new THREE.Vector3();
 const _b = new THREE.Vector3();
 const _g = new THREE.Vector3();
 const _c = new THREE.Vector3();
+/** Projectile ids are unique across every weapon system (the renderer keys trails by them). */
+let nextProjectileId = 1;
 
 export class WeaponSystem {
   loadout: Loadout = 'none';
@@ -251,7 +256,6 @@ export class WeaponSystem {
   hits = 0;
   /** Called for every hit, after the projectile is gone. */
   onImpact: ((hit: WeaponImpact) => void) | null = null;
-  private nextId = 1;
   private readonly cooldown = new Map<Mount, number>();
   /** Alternates between paired mounts (left/right guns and missiles). */
   private flip = new Map<WeaponKind, number>();
@@ -357,7 +361,7 @@ export class WeaponSystem {
     if (kind !== 'bomb') vel.addScaledVector(dir, spec.speed);
     // Bombs leave the bay level with the craft and pitch nose-down as they fall (front-heavy).
     const heading = kind === 'bomb' ? new THREE.Vector3(0, 0, -1).applyQuaternion(host.rotation) : dir.clone();
-    this.projectiles.push({ id: this.nextId++, kind, pos, vel, heading, age: 0, color: host.color, bounces: spec.ricochet ?? 0 });
+    this.projectiles.push({ id: nextProjectileId++, kind, pos, vel, heading, age: 0, color: host.color, bounces: spec.ricochet ?? 0 });
     // Recoil (bombs just drop).
     if (kind !== 'bomb') {
       const j = spec.mass * spec.speed;

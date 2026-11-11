@@ -42,6 +42,24 @@ h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.12em; color: #9fd0ff; }
   position: absolute; top: 24%; left: 50%; transform: translateX(-50%); text-align: center;
   color: #ff8a1f; text-shadow: 0 0 12px #ff3d00, 0 0 2px #000; pointer-events: none;
 }
+/* Target brackets over hostile aircraft: thin red, no fill (light is selective). */
+#hostile-marks { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+body.mode-hangar #hostile-marks { display: none; }
+.hostile-mark { position: absolute; left: 0; top: 0; color: #ff2a12; opacity: 0.6; will-change: transform; }
+.hostile-mark.attacking { opacity: 1; }
+.hostile-mark::before, .hostile-mark::after {
+  content: ''; position: absolute; top: 0; bottom: 0; width: 22%; border: 1px solid currentColor;
+}
+.hostile-mark::before { left: 0; border-right: none; }
+.hostile-mark::after { right: 0; border-left: none; }
+.hostile-mark small {
+  position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 3px;
+  font-size: 10px; letter-spacing: 0.08em; white-space: nowrap; text-shadow: 0 0 3px #000;
+}
+.hostile-mark.edge::before, .hostile-mark.edge::after { width: 50%; border: none; }
+.hostile-mark.edge { border: 1px solid currentColor; transform-origin: center; border-radius: 50%; }
+#hud #h-hostile-row b { color: #ff6a4d; font-size: 14px; min-width: 0; flex: 1; }
+#hud #h-hostile-row.under-fire small { color: #ff2a12; animation: blink 0.5s steps(2) infinite; }
 #destroyed b { display: block; font-size: 40px; letter-spacing: 0.35em; }
 #destroyed small { display: block; margin-top: 6px; font-size: 13px; letter-spacing: 0.12em; color: #ffd9b0; }
 body.touch-ui #destroyed small { font-size: 11px; }

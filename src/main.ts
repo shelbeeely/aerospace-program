@@ -46,6 +46,7 @@ import { WeaponsView } from './render/WeaponsView.ts';
 import { CraterView } from './render/CraterView.ts';
 import { BoomView } from './render/BoomView.ts';
 import { AiTrafficView } from './render/AiTrafficView.ts';
+import { HostileMarkers, type HostileMark } from './hud/HostileMarkers.ts';
 import { terrainHeight } from './sim/terrain.ts';
 import { craftBounds } from './sim/weapons.ts';
 import { LOADOUT_ORDER, LOADOUTS, WEAPONS, type Loadout, type WeaponKind } from './sim/weapons.ts';
@@ -193,7 +194,7 @@ async function start() {
   const trafficView = new TrafficView(scene, sim.traffic);
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
-  const weaponsView = new WeaponsView(scene, sim.weapons);
+  const weaponsView = new WeaponsView(scene, () => sim.allWeapons());
   const craterView = new CraterView(scene);
   const boomView = new BoomView(scene);
   const aiTrafficView = new AiTrafficView(scene, sim.airTraffic);
@@ -387,12 +388,26 @@ async function start() {
   const aiCount = document.getElementById('w-ai-count') as HTMLInputElement | null;
   const aiMine = document.getElementById('w-ai-mine') as HTMLInputElement | null;
   const aiCountLabel = document.getElementById('w-ai-count-v');
+  const hostileCount = document.getElementById('w-hostile-count') as HTMLInputElement | null;
+  const hostileLabel = document.getElementById('w-hostile-count-v');
+  const hostileMarkers = new HostileMarkers(document.getElementById('hostile-marks'));
   const updateAirPool = () => {
     const own = aiMine?.checked !== false && !net.connected ? library.list().map((e) => e.craft) : [];
     sim.airTraffic.pool = [...BUILTINS.map((b) => b.craft), ...own];
     sim.airTraffic.count = Number(aiCount?.value ?? 8);
     if (aiCountLabel) aiCountLabel.textContent = String(sim.airTraffic.count);
+    sim.airTraffic.hostiles = Number(hostileCount?.value ?? 2);
+    if (hostileLabel) hostileLabel.textContent = String(sim.airTraffic.hostiles);
   };
+  // Hostile aircraft: red-team fighters that hunt an armed craft (the count is remembered).
+  const HOSTILE_STORAGE = 'hostileCount';
+  if (hostileCount && stored(HOSTILE_STORAGE) !== null) hostileCount.value = String(Math.max(0, Math.min(8, Number(stored(HOSTILE_STORAGE)) || 0)));
+  hostileCount?.addEventListener('input', () => {
+    try {
+      localStorage.setItem(HOSTILE_STORAGE, hostileCount.value);
+    } catch { /* private mode: not remembered */ }
+    updateAirPool();
+  });
   aiCount?.addEventListener('input', updateAirPool);
   aiMine?.addEventListener('change', updateAirPool);
   updateAirPool();
@@ -1046,6 +1061,23 @@ async function start() {
       document.body.classList.toggle('armed', kinds.length > 0);
       hud.setWeapons(kinds.length ? kinds.map((k) => `${WEAPONS[k].label.slice(0, 3).toUpperCase()} ${ammo[k]}`).join(' ') : null);
     }
+    {
+      // Hostile aircraft within 6 km: brackets over them, and the HOSTILE row (nearest first).
+      const marks: HostileMark[] = [];
+      for (const f of sim.airTraffic.hostileFlyers()) {
+        const range = f.pos.distanceTo(sim.position);
+        if (range < 6000) marks.push({ pos: f.pos, range, attacking: f.combat !== 'patrol' });
+      }
+      marks.sort((a, b) => a.range - b.range);
+      const near = marks[0];
+      const underFire = sim.time - sim.lastHitAt < 2;
+      hud.setHostiles(near ? {
+        count: marks.length, range: near.range, kills: sim.airTraffic.kills, underFire,
+        bearing: (Math.atan2(near.pos.x - sim.position.x, -(near.pos.z - sim.position.z)) * 180 / Math.PI + 360) % 360,
+      } : null);
+      if (mode === 'flight') hostileMarkers.update(camera, marks, window.innerWidth, window.innerHeight);
+      else hostileMarkers.hide();
+    }
     if (!sim.explosions.length) explosionHeardAt = -Infinity;
     for (const e of sim.explosions) {
       if (e.time <= explosionHeardAt) continue;
@@ -1057,7 +1089,7 @@ async function start() {
     if (sim.exploded && explodedAt === null) explodedAt = sim.time;
     if (!sim.exploded) explodedAt = null;
     const respawnLeft = explodedAt === null ? 0 : TUNING.respawnDelay - (sim.time - explodedAt);
-    hud.setDestroyed(sim.exploded, Math.max(0, respawnLeft));
+    hud.setDestroyed(sim.exploded, Math.max(0, respawnLeft), sim.derezCause === 'shot');
     if (explodedAt !== null && respawnLeft <= 0) {
       explodedAt = null;
       reset(false);

@@ -18,8 +18,8 @@ import { FireSystem } from './fire.ts';
 import { LightningSystem, type LightningStrike, type StrikeTarget } from './lightning.ts';
 import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
-import { craftBounds, WeaponSystem, type WeaponHost, type WeaponImpact } from './weapons.ts';
-import { AiAirTraffic, type AiFlyer } from './aiTraffic.ts';
+import { craftBounds, WEAPON_DAMAGE, WeaponSystem, type WeaponHost, type WeaponImpact, type WeaponKind } from './weapons.ts';
+import { AiAirTraffic, type AiFlyer, type AirTarget } from './aiTraffic.ts';
 import { WeaponMount } from '../modules/WeaponMount.ts';
 import { BOOM_DAMAGE, BOOM_DEREZ, BOOM_SHATTER, boomBite, boomOverpressure, boomReach, type BoomEvent } from './sonicBoom.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
@@ -79,7 +79,7 @@ export class Simulation {
   /** Bumped whenever the craft's structure changes (new craft, part broke off, rebuilt). */
   version = 0;
   /** Parts that broke off since the last reset, with the load that broke them. */
-  readonly failures: Array<{ partId: string; load: number; strength: number; time: number; cause?: 'load' | 'impact' | 'lightning' | 'fire' }> = [];
+  readonly failures: Array<{ partId: string; load: number; strength: number; time: number; cause?: 'load' | 'impact' | 'lightning' | 'fire' | 'weapon' }> = [];
   debris: Debris[] = [];
   /** Contact events of every world step (one persistent queue; drained each step). */
   readonly events = new RAPIER.EventQueue(true);
@@ -163,9 +163,10 @@ export class Simulation {
   }
 
   /** An AI aircraft derezzes: a flash and voxels in its circuit colour, a splash if it was low. */
-  derezFlyer(f: AiFlyer): void {
+  derezFlyer(f: AiFlyer, byPlayer = false): void {
     if (f.derezAt !== null) return;
     this.airTraffic.derez(f, this.time);
+    if (byPlayer && f.hostile) this.airTraffic.kills++;
     const p = f.pos;
     this.explosions.push({ x: p.x, y: p.y, z: p.z, time: this.time, radius: 6 + f.radius, color: f.color, speed: f.speed });
     if (this.explosions.length > 32) this.explosions.splice(0, this.explosions.length - 32);
@@ -188,6 +189,8 @@ export class Simulation {
 
   /** Guns, cannon, bombs and missiles (Rapier ray-swept projectiles); see sim/weapons.ts. */
   readonly weapons = new WeaponSystem();
+  /** What the hostile aircraft hunt: this craft. */
+  private readonly airTarget: AirTarget = { vel: new THREE.Vector3(), alive: true, armed: false };
   private dozeAt = -Infinity;
   /** Blocks of structure cleared by bulldozing so far (tests, stats). */
   bulldozed = 0;
@@ -199,7 +202,11 @@ export class Simulation {
   /** The craft blew up (controls dead until a new plane is spawned). */
   exploded = false;
   /** Why the craft derezzed last ('boundary': it crossed the edge of the Grid). */
-  derezCause: 'crash' | 'boundary' | null = null;
+  derezCause: 'crash' | 'boundary' | 'shot' | null = null;
+  /** When a hostile round last struck the craft (HUD warning; a crash soon after counts as shot down). */
+  lastHitAt = -Infinity;
+  /** Hostile rounds that have struck the craft since it spawned. */
+  hitsTaken = 0;
   /** Sum of craft contact impulses this step (N·s): decides explosions. */
   private stepImpact = 0;
   /** Craft velocity over the last ~0.15 s (ring buffer) and steps left since the last hard contact. */
@@ -314,6 +321,8 @@ export class Simulation {
     this.damage = new DamageModel(this.craft);
     this.weapons.arm(craftDef);
     this.weapons.onImpact = (h) => this.weaponImpact(h);
+    this.airTraffic.onHostileImpact = (h, f) => this.weaponImpact(h, f);
+    this.airTraffic.groundAt = (x, z) => (isSea(x) ? -COAST.depth : terrainHeight(x, z));
     this.onContactForce((e) => {
       // Fresh debris spawns overlapping the airframe; separating them isn't an impact.
       if (this.isFreshDebris(e.collider1) || this.isFreshDebris(e.collider2)) return;
@@ -328,7 +337,7 @@ export class Simulation {
     // Flying into an AI aircraft derezzes it (the player's craft takes the impact as usual).
     this.onContactForce((e) => {
       const f = this.airTraffic.byCollider(e.collider1) ?? this.airTraffic.byCollider(e.collider2);
-      if (f) this.derezFlyer(f);
+      if (f) this.derezFlyer(f, true);
     });
 
     const self = this;
@@ -549,6 +558,8 @@ export class Simulation {
     if (this.craft.detached.size || this.exploded) this.rebuildCraft(this.craft.def);
     this.exploded = false;
     this.derezCause = null;
+    this.lastHitAt = -Infinity;
+    this.hitsTaken = 0;
     this.stepImpact = 0;
     this.contactWindow = 0;
     this.failures.length = 0;
@@ -630,7 +641,11 @@ export class Simulation {
     this.craft.updateSoftCcd(this.dt);
     this.planetForces();
     this.traffic.step(this.dt, this.time, this.position, this.trails);
-    this.airTraffic.step(this.dt, this.time, this.position);
+    // Hostile aircraft hunt the craft only while it lives and carries weapons.
+    this.airTarget.vel.copy(this.linvel);
+    this.airTarget.alive = !this.exploded;
+    this.airTarget.armed = this.weapons.mounts.length > 0;
+    this.airTraffic.step(this.dt, this.time, this.position, this.airTarget);
 
     this.world.step(this.events);
     this.readBodyState();
@@ -638,6 +653,7 @@ export class Simulation {
     this.trails.step(this.time, this.craft, this.rotation, this.position, this.linvel.length(), this.craft.wheels.some((w) => w.grounded));
     if (this.exploded) this.weapons.trigger.primary = this.weapons.trigger.secondary = false;
     this.weapons.step(this.weaponHost, this.dt, this.time);
+    this.airTraffic.stepWeapons(this.dt, this.time);
     this.syncWeaponMounts();
     this.bulldoze();
     this.playerBoom();
@@ -743,7 +759,7 @@ export class Simulation {
     return strike;
   }
 
-  private hazardDamage(partId: string, energyJ: number, cause: 'lightning' | 'fire'): void {
+  private hazardDamage(partId: string, energyJ: number, cause: 'lightning' | 'fire' | 'weapon'): void {
     const hp = this.damage.hp.get(partId);
     if (hp === undefined || !Number.isFinite(hp)) return;
     const left = Math.max(0, hp - energyJ);
@@ -917,19 +933,38 @@ export class Simulation {
    * bodies (debris, rubble, other craft pieces), craters structures (fracturing them into Rapier
    * blocks), and flashes and shatters into voxels in the shooter's circuit colour.
    */
-  private weaponImpact(h: WeaponImpact): void {
+  private weaponImpact(h: WeaponImpact, shooter?: AiFlyer): void {
     const p = h.point;
     const col = h.collider;
     if (col) this.traffic.derezCollider(col.handle, this.time); // a rider, or a rider's jetwall
-    // AI aircraft: hit directly, or caught in a blast.
+    // AI aircraft: hit directly, or caught in a blast. Each has hit points (a peaceful flyer one,
+    // a hostile several); hostiles don't shoot each other down.
     const flyer = col ? this.airTraffic.byCollider(col.handle) : undefined;
-    if (flyer) this.derezFlyer(flyer);
-    if (h.blast >= 3) for (const f of this.airTraffic.flyers) if (f.derezAt === null && f.pos.distanceTo(p) < h.blast + f.radius) this.derezFlyer(f);
+    const strike = (f: AiFlyer) => {
+      if (f === shooter || (shooter && f.hostile)) return;
+      if (this.airTraffic.damage(f, WEAPON_DAMAGE[h.kind], this.time)) this.derezFlyer(f, !shooter);
+    };
+    if (flyer) strike(flyer);
+    if (h.blast >= 3) for (const f of this.airTraffic.flyers) if (f !== flyer && f.derezAt === null && f.pos.distanceTo(p) < h.blast + f.radius) strike(f);
+    // A hostile's round on the player's craft: the struck part loses hit points (and breaks off
+    // at zero); a warhead that goes off against it, or beside it, derezzes it outright.
+    if (shooter && !this.exploded) {
+      const partId = col ? this.craft.partIdForCollider(col.handle) : undefined;
+      const near = h.blast >= 7 && p.distanceTo(this.position) < h.blast;
+      if (partId !== undefined || near) {
+        this.lastHitAt = this.time;
+        this.hitsTaken++;
+      }
+      if (near || (partId !== undefined && h.blast >= 7)) {
+        this.derezCause = 'shot';
+        this.explode();
+      } else if (partId !== undefined) this.weaponDamage(partId, h.kind);
+    }
     if (h.blast >= 3) this.traffic.derezWithin(p.x, p.z, h.blast * 0.8, this.time);
     // Light walls break: a round that strikes one cuts a gap; a blast clears its radius.
     const wallHit = !!col && this.trails.isWall(col.handle);
     if (wallHit || h.blast >= 3) this.trails.cutAt(p.x, p.z, wallHit ? Math.max(2, h.blast * 0.8) : h.blast * 0.8);
-    // (An AI aircraft just hit has no body left to shove: it derezzed above.)
+    // (An AI aircraft is kinematic: a round doesn't shove it.)
     const body = flyer ? undefined : col?.parent();
     if (body && body.isDynamic()) {
       const k = h.mass * (h.kind === 'gun' ? 1.5 : 4);
@@ -962,6 +997,24 @@ export class Simulation {
     // An energy splash erupts where the round meets the grid (not off a wall face high up).
     const gy = isSea(p.x) ? 0 : terrainHeight(p.x, p.z);
     if (p.y - gy < 4) this.chips.emit({ x: p.x, y: gy, z: p.z, radius: 0.5, vx: h.vel.x * 0.1, vy: 0, vz: h.vel.z * 0.1, speed: 8 + h.blast * 1.2, count: Math.round(60 + h.blast * 10), size: 0.14, color: h.color, splash: true });
+  }
+
+  /** A hostile round strikes a part: it loses a share of its full hit points, by the weapon. */
+  private weaponDamage(partId: string, kind: WeaponKind): void {
+    const max = this.damage.maxHp.get(partId);
+    if (max === undefined || !Number.isFinite(max)) return;
+    // The heaviest part is the craft itself: when it gives out, the craft derezzes.
+    const core = [...this.craft.parts].sort((a, b) => b.mass - a.mass)[0];
+    const left = (this.damage.hp.get(partId) ?? 0) - max * TUNING.weaponHitShare[kind];
+    if (left <= 0 && (core?.id === partId || this.craft.parts.length <= 1)) {
+      this.derezCause = 'shot';
+      this.explode();
+    } else this.hazardDamage(partId, max * TUNING.weaponHitShare[kind], 'weapon');
+  }
+
+  /** Every weapon system with rounds in flight: the craft's own and the hostiles' (the renderer). */
+  allWeapons(): WeaponSystem[] {
+    return [this.weapons, ...this.airTraffic.weaponSystems()];
   }
 
   /** A bulldozer shoving through structure or rubble: no damage to it (the rubble still feels it). */
@@ -1119,7 +1172,8 @@ export class Simulation {
   explode(): void {
     if (this.exploded) return;
     this.exploded = true;
-    this.derezCause ??= 'crash';
+    // Going down within a few seconds of taking fire is being shot down.
+    this.derezCause ??= this.time - this.lastHitAt < 12 ? 'shot' : 'crash';
     this.trails.derez(this.time); // a derezzed vehicle's trails go with it
     const c = this.position.clone();
     const radius = 10 + Math.min(20, this.craft.fuel * 0.15);
@@ -1161,7 +1215,7 @@ export class Simulation {
     this.version++;
   }
 
-  private breakPart(partId: string, load: number, strength: number, cause: 'load' | 'impact' | 'lightning' | 'fire'): void {
+  private breakPart(partId: string, load: number, strength: number, cause: 'load' | 'impact' | 'lightning' | 'fire' | 'weapon'): void {
     if (this.craft.parts.length <= 1) return; // never detach the last piece
     const part = this.craft.parts.find((p) => p.id === partId);
     const body = this.craft.detachPart(partId);

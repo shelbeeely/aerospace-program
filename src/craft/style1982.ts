@@ -166,6 +166,23 @@ export function style1982(def: CraftDef): CraftDef {
   return { ...def, parts };
 }
 
+/**
+ * The same craft in red-team colours (hostile programs): every light red, every body surface
+ * the warm near-black of the same step, the trail red. Idempotent, and still a 1982 craft.
+ */
+export function redTeam(def: CraftDef): CraftDef {
+  const styled = style1982(def);
+  const red = LIGHTS[2];
+  const parts = styled.parts.map((p) => {
+    const c = p.color.toLowerCase();
+    const cool = (BODY_COOL as readonly string[]).indexOf(c);
+    const color = isPalette(c, LIGHTS) ? red : cool >= 0 ? BODY_WARM[cool] : isPalette(c, BODY_WARM) ? c : snapBody(c, true);
+    const modules = p.modules?.map((m) => (m.type === 'trail' ? { ...m, color: red } : m));
+    return { ...p, color, ...(modules ? { modules } : {}) };
+  });
+  return style1982({ ...styled, parts });
+}
+
 /** Is this colour a dark body surface (dim structural edges) rather than light? */
 export function isBodyColor(color: string): boolean {
   if (isPalette(color, BODY_COOL) || isPalette(color, BODY_WARM)) return true;

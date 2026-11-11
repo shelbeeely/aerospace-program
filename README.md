@@ -20,6 +20,7 @@ npm run weapons        # weapons: fitted multiples, cannon cratering, tank bulld
 npm run craft          # vehicle rules: connected parts, the 1982 palette, the vehicle grammar, ground-vehicle design loop (offline)
 npm run engines        # fast flight: compressibility, ramjet/scramjet/solid/turbojet, thrust vectoring, airbrake, chute, cone/capsule parts, weight floors
 npm run air            # AI air traffic: count, clearance, destinations and circling, shot down and replaced
+npm run enemies        # enemy aircraft: red-team colours, patrol vs hunt, gunnery, hit points, kills, determinism
 npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
 ```
@@ -248,6 +249,34 @@ another; it scans its path 15 s ahead (and the whole circle before circling) and
 anything in the way. The flight model is a kinematic coordinated turn (banking into turns), so
 two dozen cost almost nothing; each carries a kinematic collider, so you can fly into one or
 shoot it down (it derezzes in its circuit colour and another takes its place).
+
+## Enemy aircraft
+
+Hostile programs fly among the traffic (F3 → *AI air traffic* → *Hostile aircraft*, 0-8,
+default 2, remembered): the fast aeroplanes of the same pool in red-team colours (warm
+near-black bodies, red light; `redTeam()` in `src/craft/style1982.ts`), each with its own guns
+and missiles and six hit points.
+
+- **They hunt only an armed craft.** While yours carries no weapons (the Trainer, or loadout
+  *Unarmed*; `I` cycles it) they patrol like everyone else. Arm it within 4 km of one and it
+  turns on you; disarm, derez, or get 6.5 km away and it goes back to its patrol.
+- **How they fight** (`fight()` in `src/sim/aiTraffic.ts`): lead pursuit, flying the nose onto
+  where you will be when the rounds arrive (closing speed and bullet drop included), with an aim
+  that wanders about half a degree. Guns inside 750 m when the nose is on; a missile from
+  400-1500 m, one every six seconds. They break off to one side and climb rather than ram, then
+  come round again; a hit sends them into a hard break turn. They fly the same kinematic model
+  as the traffic, harder (65° of bank), and never through the ground or a structure.
+- **Their fire hurts.** A round takes a share of the struck part's hit points
+  (`TUNING.weaponHitShare`): wings and tails break off, and the craft derezzes when its heaviest
+  part gives out, or when a warhead goes off against it. The banner reads *SHOT DOWN*.
+- **Finding them:** thin red brackets mark every hostile within 6 km (brighter while it attacks,
+  a ring on the screen's edge when it is out of view), with its range; the HUD's `HOSTILE` row
+  gives the count, the nearest one's range and bearing and your kills, and flashes
+  `UNDER FIRE`. Their lights follow the light states: dim on patrol, full in the attack,
+  flickering once hit.
+
+Hostiles are deterministic for the seed and use their own random stream, so the peaceful
+traffic flies the same with or without them.
 
 ## Going fast: engines, parts and modules
 

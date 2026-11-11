@@ -28,6 +28,9 @@ export class Hud {
     fuelRow: $('h-fuel-row'),
     armRow: $('h-arm-row'),
     arm: $('h-arm'),
+    hostileRow: $('h-hostile-row'),
+    hostile: $('h-hostile'),
+    hostileKills: $('h-hostile-k'),
     batt: $('h-batt'),
     battRow: $('h-batt-row'),
     volts: $('h-volts'),
@@ -130,6 +133,21 @@ export class Hud {
     if (text) this.set(this.el.arm, text);
   }
 
+  /**
+   * HOSTILE row: how many hostile aircraft are about, the nearest one's range and bearing, and
+   * the kills so far (hidden when there are none near). It flashes while the craft is under fire.
+   */
+  setHostiles(s: { count: number; range: number; bearing: number; kills: number; underFire: boolean } | null): void {
+    const { hostileRow: row, hostile, hostileKills } = this.el;
+    if (!row || !hostile || !hostileKills) return;
+    row.style.display = s ? '' : 'none';
+    if (!s) return;
+    row.classList.toggle('under-fire', s.underFire);
+    const range = s.range >= 1000 ? `${(s.range / 1000).toFixed(1)}km` : `${Math.round(s.range / 10) * 10}m`;
+    this.set(hostile, `${s.count} · ${range} ${String(Math.round(s.bearing) % 360).padStart(3, '0')}°`);
+    this.set(hostileKills, s.underFire ? 'UNDER FIRE' : s.kills ? `${s.kills} down` : '');
+  }
+
   /** ORB row: apoapsis / periapsis (km) and period, once high or fast enough to care. */
   private updateOrbit(t: Telemetry): void {
     const { orbRow: row, orb, orbT: per } = this.el;
@@ -144,9 +162,11 @@ export class Hud {
   }
 
   /** The craft blew up: show the banner (and hide the stall warning). */
-  setDestroyed(on: boolean, respawnIn = 0): void {
+  setDestroyed(on: boolean, respawnIn = 0, shotDown = false): void {
     this.el.destroyed.classList.toggle('hidden', !on);
     if (!on) return;
+    const title = this.el.destroyed.querySelector('b');
+    if (title) this.set(title as HTMLElement, shotDown ? 'SHOT DOWN' : 'DESTROYED');
     this.el.stall.classList.add('hidden');
     const small = this.el.destroyed.querySelector('small');
     if (small) this.set(small as HTMLElement, `New plane in ${Math.ceil(respawnIn)}… · Backspace resets the world`);
