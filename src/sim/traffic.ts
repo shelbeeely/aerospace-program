@@ -119,8 +119,9 @@ export interface Rider {
   boxAxisX: boolean;
   /** Intersection whose stop line holds it while it waits for a gap or its turn (-1: none). */
   held: number;
-  /** Signalled intersection it is committed to cross (amber came too late to stop), or -1. */
+  /** Signalled intersection it is committed to cross (amber came too late to stop), or -1, and until when. */
   commit: number;
+  commitUntil: number;
   /** Just spawned: its speed is settled against what is ahead at its first control tick. */
   fresh: boolean;
   /** Seconds it has stood still (a stuck rider is the sign of a jam). */
@@ -333,6 +334,11 @@ export class TrafficSystem {
     this.wallBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   }
 
+  /** Where the traffic is streamed around (the player), for the renderer. */
+  get centre(): { x: number; z: number } {
+    return this.player;
+  }
+
   /** Is this collider a rider's cycle? */
   isRider(handle: number): boolean {
     return this.byCollider.has(handle);
@@ -408,7 +414,7 @@ export class TrafficSystem {
     const r: Rider = {
       id: this.nextId++, team: o.team ?? 0, x: ax ? o.along : perp, z: ax ? perp : o.along, heading: h, lane, laneIndex,
       speed: 0, accel: 0, temper: o.temper ?? 1, fixedSpeed: o.temper === undefined ? o.speed ?? 30 : undefined, room: Infinity,
-      jog: 0, jogBack: h, wantLane: -1, token: -1, tokenX: 0, tokenZ: 0, box: -1, boxX: 0, boxZ: 0, boxAxisX: false, held: -1, commit: -1, fresh: true, waited: 0,
+      jog: 0, jogBack: h, wantLane: -1, token: -1, tokenX: 0, tokenZ: 0, box: -1, boxX: 0, boxZ: 0, boxAxisX: false, held: -1, commit: -1, commitUntil: 0, fresh: true, waited: 0,
       line: o.line, node: 0, next: h, turnAt: 0, uturn: 0, trail: [], derezAt: null, rng, walls: [],
     };
     r.speed = this.desired(r);
@@ -596,6 +602,8 @@ export class TrafficSystem {
       let w = h2 === h ? (onHighway ? 8 : 2) : highway2 ? 3 : onHighway ? 0.4 : 1;
       // A road that ends at the next intersection is a last resort.
       if (deadEnd(i + HX[h2], j + HZ[h2])) w *= 0.02;
+      // Left turns across a signalled crossing are the slow way round: fewer take them.
+      if (h2 === left(h) && controlAt(i, j) === CONTROL.signal) w *= 0.4;
       if (avoid) {
         const px = ax ? at : r.x, pz = ax ? r.z : at;
         if (this.wallAhead(px, pz, h2, 50) < Infinity) w = 0;
@@ -1005,7 +1013,8 @@ export class TrafficSystem {
       if (e.rider === self || ((d > 0 ? e.hi : e.lo) - from) * d <= 0) continue;
       const g = Math.max(0, ((d > 0 ? e.lo : e.hi) - from) * d);
       // Two paths that cross inside an intersection: the lower id rides on, the other brakes.
-      if (e.cross && (g > soon || (e.soft && self.id < e.rider!.id))) continue;
+      // (nor does anyone wait for the path of a rider that is itself standing).
+      if (e.cross && (g > soon || (e.soft && (self.id < e.rider!.id || e.rider!.speed < 1)))) continue;
       if (g < gap) { gap = g; lv = e.v * d; }
     }
     return [gap, lv];
@@ -1100,19 +1109,19 @@ export class TrafficSystem {
       let stop = blocked;
       if (kind === CONTROL.signal) {
         const [light, remains] = signalPhase(i, j, ax, time);
-        // Committed, then held up on the way (and able to stop after all): not through on red.
-        if (r.commit === key && light === 'red' && (v * v) / 20 < toStop) r.commit = -1;
+        // Committed, then held up on the way: not through on a later red.
+        if (r.commit === key && time > r.commitUntil) r.commit = -1;
         if (r.commit !== key) {
           // A left turn that has waited out the green goes as the oncoming lanes stop: on
           // amber, or in the first second of the all-red (cross traffic waits for it to clear).
-          const waitedLeft = next === left(h) && !blocked && toStop < 3;
+          const waitedLeft = next === left(h) && !blocked && toStop < 14 && v < 12 && this.leftTurnFirst(r, key);
           if (light === 'red') {
-            if (waitedLeft && remains > SIGNAL.cycle / 2 + SIGNAL.allRed - 1 && this.oncomingClear(r, key, toTurn, true)) r.commit = key;
+            if (waitedLeft && remains > SIGNAL.cycle / 2 + SIGNAL.allRed - 1 && this.oncomingClear(r, key, toTurn, true)) { r.commit = key; r.commitUntil = time + remains - (SIGNAL.cycle / 2 + SIGNAL.allRed - 1); }
             else stop = true;
           } else if (light === 'amber') {
             if (r.fresh && toStop > v * remains) stop = true; // just placed, and it would not make it: it starts slower
-            else if ((v * v) / 20 > toStop && toStop < v * remains + 2) r.commit = key; // too close to stop, and it makes it: through on amber
-            else if (waitedLeft && remains < SIGNAL.amber - 0.25 && this.oncomingClear(r, key, toTurn, true)) r.commit = key;
+            else if ((v * v) / 20 > toStop && toStop < v * remains + 2) { r.commit = key; r.commitUntil = time + remains; } // too close to stop, and it makes it: through on amber
+            else if (waitedLeft && remains < SIGNAL.amber - 0.25 && this.oncomingClear(r, key, toTurn, true)) { r.commit = key; r.commitUntil = time + remains + 1; }
             else { stop = true; if (next === left(h)) r.held = key; }
           }
           // Green: a left turn gives way to the oncoming lanes; nobody starts into cross traffic still clearing.
@@ -1152,11 +1161,22 @@ export class TrafficSystem {
     if (this.control && (this.steps / 4 + r.id) % 8 === 0) this.changeLane(r, leadGap, leadV, toStop);
   }
 
+  /** Two left turns waiting face to face cross each other: the one that has waited longer goes first. */
+  private leftTurnFirst(r: Rider, node: number): boolean {
+    const o = back(r.heading);
+    for (const lane of TRAFFIC.lanes) for (const e of this.lanes.get(laneKey(alongX(o), lanePerp(o, r.line, lane))) ?? []) {
+      const w = e.rider;
+      if (!w || !e.body || w.held !== node || w.next !== left(w.heading)) continue;
+      if (w.waited > r.waited + 0.5 || (w.waited > r.waited - 0.5 && w.id < r.id)) return false;
+    }
+    return true;
+  }
+
   /** May a left-turner cross the oncoming lanes of its own street? */
   private oncomingClear(r: Rider, node: number, toTurn: number, stopping: boolean): boolean {
     const h = r.heading, o = back(h);
     for (const lane of TRAFFIC.lanes) {
-      const need = travelTime(toTurn + r.lane + lane + NOSE + 1, r.speed) + TRAFFIC.trailTime + 0.8;
+      const need = travelTime(toTurn + r.lane + lane + NOSE + 1, r.speed) + TRAFFIC.trailTime + 0.4;
       if (!this.laneClear(laneKey(alongX(h), lanePerp(o, r.line, lane)), r.turnAt, dirOf(o), need, r, node, stopping)) return false;
     }
     return true;

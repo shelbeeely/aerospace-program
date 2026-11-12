@@ -13,7 +13,7 @@ import { CITY, COAST, isSea, LAYOUT, PLANET } from './layout.ts';
 import { terrainHeight } from './terrain.ts';
 import { TrailSystem } from './trails.ts';
 import { TrailEmitter } from '../modules/TrailEmitter.ts';
-import { HX, HZ, TrafficSystem, type Rider } from './traffic.ts';
+import { HX, HZ, TrafficSystem, type Rider, type RoadObstacle } from './traffic.ts';
 import { LockSystem, relativePosition, type LockTarget } from './lock.ts';
 import { anglesOf, applyTurret, driveTurret, leadAim, slewTurret } from '../craft/turret.ts';
 import { FireSystem } from './fire.ts';
@@ -533,6 +533,7 @@ export class Simulation {
   readonly traffic: TrafficSystem;
   /** AI aircraft flying around the player (built-ins and, in single player, the player's designs). */
   readonly airTraffic: AiAirTraffic;
+  private readonly roadObstacle: RoadObstacle = { x: 0, y: 0, z: 0, vx: 0, vz: 0, radius: 2 };
   /** Hostile turrets on tower roofs around the player (density 0 = off). */
   readonly groundTurrets: GroundTurretSystem;
   /** Called-in strikes (the strike globe): missile barrages, EMP strikes, nuke bombers. */
@@ -966,6 +967,11 @@ export class Simulation {
     });
     this.craft.updateSoftCcd(this.dt);
     this.planetForces();
+    // Riders brake for the player's vehicle when it is down on their road.
+    const ob = this.roadObstacle;
+    ob.x = this.position.x; ob.z = this.position.z; ob.vx = this.linvel.x; ob.vz = this.linvel.z;
+    ob.y = this.position.y - terrainHeight(this.position.x, this.position.z);
+    this.traffic.obstacles = this.exploded ? [] : [ob];
     this.traffic.step(this.dt, this.time, this.position, this.trails);
     // Hostile aircraft hunt the craft only while it lives and carries weapons.
     this.airTarget.vel.copy(this.linvel);
