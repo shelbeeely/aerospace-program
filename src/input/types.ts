@@ -47,7 +47,8 @@ export type Action =
   | 'recentre'
   | 'chase'
   | 'mercs'
-  | 'strategic';
+  | 'strategic'
+  | 'foot';
 
 /** What a device may know about the game when it reads. */
 export interface InputContext {

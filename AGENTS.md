@@ -17,7 +17,7 @@ Rules for every agent and contributor working on this repo. Claude Code reads th
 - **Separation:** the simulation (`src/sim`, `src/world`, `src/arch`) stays free of three.js
   scene objects and the DOM; rendering lives in `src/render`.
 - **Checks:** `npm run typecheck`, `npm run arch`, `npm run drive`, `npm run city`,
-  `npm run ground` before pushing world or vehicle changes.
+  `npm run ground` before pushing world or vehicle changes; `npm run bit` for the people.
 
 ## Design rules
 
@@ -289,6 +289,21 @@ universe, not a conventional open world decorated with neon.
   `npm run traffic`, `npm run air`.
 - **A vehicle never runs into its own light wall** (Rapier collision groups,
   `src/sim/collisionGroups.ts`); its walls stay deadly to everyone else. Ground vehicles reverse.
+
+## 17. People (project)
+
+- **Bits are people, not vehicles.** They are never a craft, never in the vehicle picker and
+  never on wheels. A Bit is a rigid polyhedron that hovers; it has no legs and no animation
+  rig. It speaks only by which of its four figures it shows (`src/people/bit.ts`): blue idle 1
+  and idle 2 (it pulses between them), yellow YES, red NO.
+- **They behave like people** (`src/sim/bits.ts`): they live on a block, walk its kerb, stand,
+  meet and talk, step back from fast vehicles and explosions, and derez when run over. Seeded
+  and deterministic per block; streamed around the player.
+- **The player on foot is a Bit** (`BitWalker`): it steps out of a stopped vehicle, walks, and
+  gets back in beside it. The vehicle stays parked.
+- The figures are the imported "BIT" meshes (CC-BY 4.0, credited in the README). Do not
+  replace them with humanoids.
+- Check: `npm run bit`.
 
 ## 16. Vehicles (project)
 

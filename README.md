@@ -288,6 +288,34 @@ two dozen cost almost nothing; each carries a kinematic collider, so you can fly
 park beside one or shoot it down (it derezzes in its circuit colour and another takes its
 place). Check: `npm run air`.
 
+## Bits: the people of the Grid
+
+Bits are people, not vehicles: hovering polyhedra with no legs to animate, who say everything
+by which of four figures they show (`src/people/bit.ts`).
+
+| State | Figure | Colour |
+| --- | --- | --- |
+| Idle 1 | compound of icosahedron and dodecahedron | blue |
+| Idle 2 | small triambic icosahedron | blue |
+| YES | octahedron | yellow |
+| NO | stellated icosahedron | red |
+
+- **They live on the streets** (`src/sim/bits.ts`). Each block with streets around it has up to
+  six, more toward the downtown hubs. They walk the kerb around their block at their own pace,
+  stand a while, turn back, and go and find a neighbour: two that meet stop, face each other,
+  and one answers YES or NO. Idle, each pulses between the two blue figures. The same world
+  always has the same people in the same places; they stream in around you like the traffic.
+- **They react.** A vehicle bearing down on them fast, or an explosion nearby, and they say NO
+  and step back from the road. One that is run over derezzes into chips.
+- **You can be one.** `;` (touch: More → *On foot*) steps out of a stopped vehicle as a Bit.
+  W/S walk, A/D turn, Q/E sidestep; V says YES and O says NO, and the Bits in earshot turn and
+  answer. Walls stop you, kerbs and low steps don't. The vehicle stays parked where you left
+  it; `;` beside it gets back in. A new vehicle (R) starts with you aboard.
+- Drawn by `src/render/BitsView.ts` (one instanced mesh per figure, so a crowd costs four draw
+  calls) and `src/render/BitFigure.ts` (your own). Check: `npm run bit`.
+- Not yet: other players do not see you on foot, and the world still streams around your
+  parked vehicle, so stay within a few hundred metres of it.
+
 ## Light-cycle traffic
 
 Programs ride the street grid (`src/sim/traffic.ts`), two lanes each way, laying short jetwalls:
@@ -909,3 +937,10 @@ Tower kit: This work is based on "Tron Buildings 1"
 SpringSociety (https://sketchfab.com/jcreadingtutor) licensed under CC-BY-4.0
 (http://creativecommons.org/licenses/by/4.0/). Converted with `npm run import-towers`
 (baked, re-oriented, voxelized into block grids); original files in `assets/towerKit/`.
+
+Bit figures: "BIT" by Fernando Jerez, licensed under CC-BY 4.0
+(http://creativecommons.org/licenses/by/4.0/), built on polyhedra from Kit Wallace's OpenSCAD
+generator (http://kitwallace.co.uk/3d/solid-index.xq), George Hart's stellations of the
+icosahedron (https://www.georgehart.com/virtual-polyhedra/stellations-icosahedron-index.html)
+and David McCooey's coordinates. Converted with `npm run import-bit` (welded, centred, Y-up,
+unit radius); the four figure files are in `assets/bit/`. The printing stands are not used.

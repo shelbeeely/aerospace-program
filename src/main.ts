@@ -38,6 +38,7 @@ import { ArchitectureInspector } from './ui/ArchitectureInspector.ts';
 import { GLOBE_VIEW } from './render/cityGround.ts';
 import { TrailView } from './render/TrailView.ts';
 import { TrafficView } from './render/TrafficView.ts';
+import { BitsView } from './render/BitsView.ts';
 import { ExplosionView } from './render/ExplosionView.ts';
 import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
 import { updateSkyPlanet } from './render/neon.ts';
@@ -73,6 +74,7 @@ import { AutopilotPanel } from './ui/AutopilotPanel.ts';
 import { initPhysics, Simulation } from './sim/Simulation.ts';
 import { WEATHER_PRESETS } from './sim/atmosphere.ts';
 import { TUNING } from './tuning.ts';
+import { BIT } from './people/bit.ts';
 import { builtinEntry, CAP_STORAGE, KEY_STORAGE, Studio } from './ui/Studio.ts';
 import { HangarView } from './render/HangarView.ts';
 import { applyModeClass, modeFromQuery, parseMode, type AppMode } from './app/Mode.ts';
@@ -206,6 +208,7 @@ async function start() {
   const sitesView = new LandingSitesView(scene, sim.staticWorld);
   const trailView = new TrailView(scene, sim.trails);
   const trafficView = new TrafficView(scene, sim.traffic);
+  const bitsView = new BitsView(scene, sim.bits, sim.walker);
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
   const weaponsView = new WeaponsView(scene, () => sim.allWeapons());
@@ -1051,6 +1054,10 @@ async function start() {
 
   // --- Fixed-timestep loop with render interpolation
   const renderPos = new THREE.Vector3();
+  const footPos = new THREE.Vector3();
+  const footRot = new THREE.Quaternion();
+  const _up = new THREE.Vector3(0, 1, 0);
+  let wasOnFoot = false;
   const renderRot = new THREE.Quaternion();
   const renderOffset = new THREE.Vector3();
   const velocity = new THREE.Vector3();
@@ -1128,9 +1135,16 @@ async function start() {
       else if (mode !== 'flight') continue; // the rest only means something in flight
       else if (a === 'reset') { reset(false); toast('New plane — the world stays as it is'); }
       else if (a === 'resetWorld') { reset(true); toast('World reset'); }
-      else if (a === 'camera') rig.toggle(renderPos);
+      else if (a === 'camera') rig.toggle(sim.walker.active ? footPos : renderPos);
       else if (a === 'apPanel') apPanel.toggle();
       else if (a === 'mercs') mercPanel.toggle();
+      else if (a === 'foot') {
+        // Step out as a Bit, or get back in.
+        const why = sim.walker.active ? sim.boardVehicle() : sim.exitVehicle();
+        if (why) toast(why);
+        else if (sim.walker.active) { autopilot.disengage(); toast('On foot · W/S walk, A/D turn, Q/E sidestep · V says YES, O says NO · ; gets back in'); }
+        else { player.reset(); toast('Aboard'); }
+      }
       else if (a === 'strategic') toast(sim.launchStrategic() ?? 'Launched');
       else if (a === 'help') {
         controlsPanel.render(); // reflect the current profile / devices
@@ -1146,6 +1160,7 @@ async function start() {
     }
 
     net.update(dt);
+    if (mode === 'hangar' && sim.walker.active) sim.boardVehicle(); // the hangar shows the vehicle
     if (mode === 'hangar') {
       // Physics paused; the craft sits on the turntable under the orbit camera.
       accumulator = 0;
@@ -1156,8 +1171,18 @@ async function start() {
 
     // Weapons triggers (held keys / buttons); the flight computer never fires.
     const trig = player.firing();
-    sim.weapons.trigger.primary = trig.primary;
-    sim.weapons.trigger.secondary = trig.secondary;
+    const onFoot = sim.walker.active;
+    sim.weapons.trigger.primary = trig.primary && !onFoot;
+    sim.weapons.trigger.secondary = trig.secondary && !onFoot;
+    // On foot the triggers are the Bit's two answers; the people in earshot answer back.
+    if (onFoot && (trig.primary || trig.secondary) && sim.walker.say(trig.primary ? 'yes' : 'no', sim.time)) {
+      sim.bits.hear(sim.walker.x, sim.walker.z, sim.time);
+    }
+    if (onFoot !== wasOnFoot) {
+      wasOnFoot = onFoot;
+      rig.fitCraft(onFoot ? 2.4 : sim.craft.boundingRadius());
+      rig.snap();
+    }
     const aim = player.aim();
     sim.turretInput.yaw = aim.yaw;
     sim.turretInput.pitch = aim.pitch;
@@ -1193,7 +1218,9 @@ async function start() {
     stepsThisFrame = 0;
     let stepMs = 0;
     while (accumulator >= sim.dt && stepsThisFrame < TUNING.maxStepsPerFrame) {
-      sim.step(pilot.sample(sim.dt, telemetry));
+      const inputs = pilot.sample(sim.dt, telemetry);
+      if (sim.walker.active) sim.walkInput = player.walk();
+      sim.step(inputs);
       stepMs += sim.lastStepMs;
       accumulator -= sim.dt;
       stepsThisFrame++;
@@ -1376,12 +1403,22 @@ async function start() {
 
     const v = sim.craft.body.linvel();
     velocity.set(v.x, v.y, v.z);
+    bitsView.update(sim.time, alpha);
+    // On foot the camera follows the Bit, not the parked vehicle.
+    if (sim.walker.active) {
+      const w = sim.walker;
+      footPos.set(w.prevX + (w.x - w.prevX) * alpha, w.prevY + (w.y - w.prevY) * alpha + BIT.hover, w.prevZ + (w.z - w.prevZ) * alpha);
+      footRot.setFromAxisAngle(_up, w.prevYaw + (w.yaw - w.prevYaw) * alpha);
+      velocity.set(w.vx, 0, w.vz);
+    }
+    const viewPos = sim.walker.active ? footPos : renderPos;
+    const viewRot = sim.walker.active ? footRot : renderRot;
     // Crossed a wrap edge: the craft jumped one circumference; the camera jumps with it.
     if (sim.wrapCount !== wrapsSeen) {
       wrapsSeen = sim.wrapCount;
       rig.snap();
     }
-    rig.update(dt, renderPos, renderRot, velocity);
+    rig.update(dt, viewPos, viewRot, velocity);
     // Planet curvature follows the camera; from high up the clip range opens to show the globe.
     curveOrigin.value.copy(camera.position);
     updateSkyPlanet(camera.position.y, PLANET.radius);

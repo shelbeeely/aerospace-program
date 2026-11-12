@@ -11,6 +11,8 @@ import { neutralControls, sanitizeControls, type ControlInputs } from './control
 import { Ocean } from './ocean.ts';
 import { CITY, COAST, isSea, LAYOUT, PLANET } from './layout.ts';
 import { terrainHeight } from './terrain.ts';
+import { BIT_LOOK } from '../people/bit.ts';
+import { BitPopulation, BitWalker, ON_FOOT, type BitThreat, type WalkInput } from './bits.ts';
 import { TrailSystem } from './trails.ts';
 import { TrailEmitter } from '../modules/TrailEmitter.ts';
 import { HX, HZ, TrafficSystem, type Rider, type RoadObstacle } from './traffic.ts';
@@ -534,6 +536,52 @@ export class Simulation {
   /** AI aircraft flying around the player (built-ins and, in single player, the player's designs). */
   readonly airTraffic: AiAirTraffic;
   private readonly roadObstacle: RoadObstacle = { x: 0, y: 0, z: 0, vx: 0, vz: 0, radius: 2 };
+  /** The people of the Grid: Bits walking the kerbs around their blocks. */
+  readonly bits = new BitPopulation();
+  /** The player as a Bit on foot (active once it steps out of its vehicle). */
+  readonly walker = new BitWalker();
+  /** Where the player on foot wants to go; set by the host each step. */
+  walkInput: WalkInput = { forward: 0, turn: 0, strafe: 0 };
+  private readonly bitThreat: BitThreat = { x: 0, y: 0, z: 0, vx: 0, vz: 0 };
+  private lastScare = -Infinity;
+
+  /** The player, wherever it is: on foot, or its vehicle. */
+  get playerPoint(): { x: number; y: number; z: number } {
+    return this.walker.active ? this.walker : this.position;
+  }
+
+  /**
+   * Step out of the vehicle and go on foot. Returns why not, or null when out. The vehicle has
+   * to be down and nearly stopped; it stays parked, brakes on, where it was left.
+   */
+  exitVehicle(): string | null {
+    if (this.walker.active) return 'Already on foot';
+    if (this.exploded) return 'Nothing to step out of';
+    const ground = isSea(this.position.x) ? null : terrainHeight(this.position.x, this.position.z);
+    if (ground === null) return 'Not over water';
+    if (this.linvel.length() > ON_FOOT.exitSpeed) return 'Stop first';
+    if (this.position.y - ground - this.craft.restingHeight() > 2) return 'Land first';
+    // Out of the left side, clear of the hull, facing the way the vehicle faces.
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.rotation);
+    const yaw = Math.atan2(-fwd.x, -fwd.z);
+    const b = craftBounds(this.craft.def);
+    const side = (b.max.x - b.min.x) / 2 + 1.6;
+    const x = this.position.x - Math.cos(yaw) * side, z = this.position.z + Math.sin(yaw) * side;
+    this.walker.exit(x, terrainHeight(x, z), z, yaw);
+    return null;
+  }
+
+  /** Get back in. Returns why not, or null when aboard. */
+  boardVehicle(): string | null {
+    if (!this.walker.active) return 'Already aboard';
+    if (!this.exploded) {
+      const b = craftBounds(this.craft.def);
+      const reach = ON_FOOT.reach + Math.max(b.max.x - b.min.x, b.max.z - b.min.z) / 2;
+      if (Math.hypot(this.walker.x - this.position.x, this.walker.z - this.position.z) > reach) return 'Too far from your vehicle';
+    }
+    this.walker.board();
+    return null;
+  }
   /** Hostile turrets on tower roofs around the player (density 0 = off). */
   readonly groundTurrets: GroundTurretSystem;
   /** Called-in strikes (the strike globe): missile barrages, EMP strikes, nuke bombers. */
@@ -839,6 +887,9 @@ export class Simulation {
   resetToRunway(): void {
     this.trails.clear();
     this.traffic.clear();
+    this.bits.reset();
+    this.walker.board();
+    this.lastScare = -Infinity;
     this.airTraffic.clear();
     this.groundTurrets.clear();
     this.staticWorld.reset();
@@ -881,6 +932,7 @@ export class Simulation {
     this.debris = [];
     this.debrisSpawn.clear();
     if (this.craft.detached.size || this.exploded) this.rebuildCraft(this.craft.def);
+    this.walker.board(); // a new vehicle starts with its driver in it
     this.exploded = false;
     this.derezCause = null;
     this.lastHitAt = -Infinity;
@@ -936,7 +988,8 @@ export class Simulation {
   step(controls: ControlInputs): void {
     const t0 = performance.now();
     // A wreck flies no more: engines out, surfaces slack (brakes stay on so it settles).
-    this.controls = this.exploded ? { ...neutralControls(), brake: 1 } : this.tailStrikeGuard(sanitizeControls(controls));
+    // On foot the vehicle is parked: nobody at the controls, brakes on.
+    this.controls = this.exploded || this.walker.active ? { ...neutralControls(), brake: 1 } : this.tailStrikeGuard(sanitizeControls(controls));
     // An EMP: the engines are out until it passes (the surfaces still answer the stick).
     if (this.time < this.empUntil) this.controls = { ...this.controls, throttle: 0 };
     (this.ctx as { controls: ControlInputs }).controls = this.controls;
@@ -977,6 +1030,21 @@ export class Simulation {
     ob.y = this.position.y - terrainHeight(this.position.x, this.position.z);
     this.traffic.obstacles = this.exploded ? [] : [ob];
     this.traffic.step(this.dt, this.time, this.position, this.trails);
+    // The people: they watch for the player's vehicle and flinch from anything that goes off.
+    this.walker.step(this.dt, this.walkInput, this.world, (x, z) => (isSea(x) ? -COAST.depth : terrainHeight(x, z)), this.craft.body);
+    const th = this.bitThreat;
+    th.x = this.position.x; th.y = this.position.y; th.z = this.position.z; th.vx = this.linvel.x; th.vz = this.linvel.z;
+    const latest = this.explosions[this.explosions.length - 1];
+    if (latest && latest.time > this.lastScare) {
+      for (const e of this.explosions) if (e.time > this.lastScare) this.bits.scare(e.x, e.z, 40 + e.radius * 3, this.time);
+      this.lastScare = latest.time;
+    }
+    this.bits.step(this.dt, this.time, this.playerPoint, this.exploded ? [] : [th]);
+    // A Bit run over derezzes into chips of its own light.
+    for (const d of this.bits.derezEvents) {
+      this.chips.emit({ x: d.x, y: d.y, z: d.z, radius: 0.6, vx: th.vx * 0.5, vy: 2, vz: th.vz * 0.5, speed: 6, count: 26, size: 0.14, color: BIT_LOOK.idle1.color });
+    }
+    this.bits.derezEvents.length = 0;
     // Hostile aircraft hunt the craft only while it lives and carries weapons.
     this.airTarget.vel.copy(this.linvel);
     this.airTarget.alive = !this.exploded;

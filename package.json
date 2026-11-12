@@ -26,6 +26,7 @@
     "electric": "node --experimental-transform-types --no-warnings scripts/electric.ts",
     "buildings": "node --experimental-transform-types --no-warnings scripts/buildings.ts",
     "city": "node --experimental-transform-types --no-warnings scripts/city.ts",
+    "import-bit": "node --experimental-transform-types --no-warnings scripts/importBit.ts",
     "import-towers": "node --experimental-transform-types --no-warnings scripts/importTowers.ts",
     "autopilot": "node --experimental-transform-types --no-warnings scripts/autopilot.ts",
     "design": "node --experimental-transform-types --no-warnings scripts/design.ts",
@@ -40,6 +41,7 @@
     "traffic": "node --experimental-transform-types --no-warnings scripts/traffic.ts",
     "drive": "node --experimental-transform-types --no-warnings scripts/drive.ts",
     "arch": "node --experimental-transform-types --no-warnings scripts/arch.ts",
+    "bit": "node --experimental-transform-types --no-warnings scripts/bit.ts",
     "ground": "node --experimental-transform-types --no-warnings scripts/groundVehicles.ts",
     "server": "bun server/index.ts",
     "test:server": "bun test server"
