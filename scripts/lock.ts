@@ -68,6 +68,7 @@ function park(f: AiFlyer, speed: number): void {
   f.heading = Math.PI / 2;
   f.speed = f.cruise = speed;
   f.altitude = f.cruiseAltitude = f.pos.y;
+  f.phase = 'wander'; // no flight plan: it flies where the test puts it
   f.state = 'transit';
   f.dest = { x: f.pos.x + 50000, z: f.pos.z };
   f.pitch = f.bank = 0;

@@ -58,6 +58,7 @@ console.log('--- railgun');
 {
   const sim = world();
   sim.weapons.arm(JET, 'rail');
+  sim.airTraffic.flights = false; // the test places them itself
   sim.airTraffic.count = 4;
   run(sim, 0.1);
   const gunY = sim.weapons.mounts.find((m) => m.kind === 'rail')!.offset;

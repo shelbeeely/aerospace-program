@@ -282,6 +282,11 @@ universe, not a conventional open world decorated with neon.
   blocks a road must keep the graph and the drawn ground in agreement. Islands of streets are
   linked to the network by connector roads (or removed if they cannot be), so there are none.
 - **Ground vehicles start on the road network**, never on an airstrip.
+- **Traffic behaves like traffic.** Riders (`src/sim/traffic.ts`) follow the one ahead, stop for
+  the signals at highway crossings, give way where a street meets a highway, and never ride
+  into another rider or its jetwall. Civil aircraft (`src/sim/aiTraffic.ts`) fly flights between
+  fields and pads, one to a runway, and go around rather than land on an occupied one. Checks:
+  `npm run traffic`, `npm run air`.
 - **A vehicle never runs into its own light wall** (Rapier collision groups,
   `src/sim/collisionGroups.ts`); its walls stay deadly to everyone else. Ground vehicles reverse.
 

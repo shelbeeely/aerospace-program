@@ -1,6 +1,11 @@
 import * as THREE from 'three/webgpu';
 import { DEREZ_TIME } from '../sim/trails.ts';
-import { HX, HZ, TRAFFIC, type TrafficSystem } from '../sim/traffic.ts';
+import { CONTROL, controlAt, HX, HZ, lineX, lineZ, signalLight, TRAFFIC, type TrafficSystem } from '../sim/traffic.ts';
+import { GRID } from '../arch/grid.ts';
+
+/** Stop bars drawn at once (four to a signalled crossing) and how far out (m). */
+const MAX_BARS = 160, BAR_RANGE = 900;
+const LIGHTS = { red: new THREE.Color('#ff2a1a').multiplyScalar(2.2), amber: new THREE.Color('#ffb347').multiplyScalar(2), green: new THREE.Color('#9fefff').multiplyScalar(0.9) };
 
 const MAX_RUNS = TRAFFIC.maxRiders * 6;
 
@@ -45,6 +50,8 @@ function cycleGeometry(): THREE.BufferGeometry {
  * Draws the AI light-cycle traffic: instanced cycle silhouettes in their program colour (cyan
  * or amber) and their short jetwalls in TrailView's look (translucent additive panels with a
  * blazing top edge, dimming toward the tail). Derezzing riders flicker out with their walls.
+ * The signals at the highway crossings are stop bars of light across each approach: red, amber,
+ * or pale cyan when the way is open (light that says what the road is doing, §5).
  */
 export class TrafficView {
   private readonly cycles: THREE.InstancedMesh;
@@ -62,6 +69,7 @@ export class TrafficView {
   private readonly _p = new THREE.Vector3();
   private readonly _s = new THREE.Vector3();
   private readonly up = new THREE.Vector3(0, 1, 0);
+  private readonly bars: THREE.InstancedMesh;
 
   constructor(scene: THREE.Scene, private readonly traffic: TrafficSystem) {
     const mat = new THREE.MeshBasicNodeMaterial({ vertexColors: true });
@@ -72,6 +80,17 @@ export class TrafficView {
     this.cycles.frustumCulled = false;
     this.cycles.name = 'traffic';
     scene.add(this.cycles);
+
+    const bar = new THREE.PlaneGeometry(1, 1);
+    bar.rotateX(-Math.PI / 2);
+    this.bars = new THREE.InstancedMesh(bar, new THREE.MeshBasicNodeMaterial({ depthWrite: false }), MAX_BARS);
+    this.bars.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_BARS * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    this.bars.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.bars.count = 0;
+    this.bars.frustumCulled = false;
+    this.bars.renderOrder = 1;
+    this.bars.name = 'signals';
+    scene.add(this.bars);
 
     this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('color', new THREE.BufferAttribute(this.col, 3).setUsage(THREE.DynamicDrawUsage));
@@ -86,7 +105,38 @@ export class TrafficView {
     this.lineGeo.setDrawRange(0, 0);
   }
 
+  /** The stop bars of the signalled crossings around the player. */
+  private signals(time: number): void {
+    const c = this.traffic.centre;
+    const i0 = Math.round((c.x - GRID.x0) / GRID.pitch), j0 = Math.round((c.z - GRID.z0) / GRID.pitch);
+    const reach = Math.ceil(BAR_RANGE / GRID.pitch);
+    const stop = TRAFFIC.stopLine - 0.6, span = TRAFFIC.lanes[1] + 3.25, mid = span / 2;
+    let n = 0;
+    this._q.identity();
+    for (let a = -reach; a <= reach && n + 4 <= MAX_BARS; a++) for (let b = -reach; b <= reach && n + 4 <= MAX_BARS; b++) {
+      const i = i0 + a, j = j0 + b;
+      if (!this.traffic.control || controlAt(i, j) !== CONTROL.signal) continue;
+      const x = lineX(i), z = lineZ(j);
+      if (Math.hypot(x - c.x, z - c.z) > BAR_RANGE) continue;
+      for (let h = 0; h < 4; h++) {
+        const ax = h === 0 || h === 2;
+        // Before the crossing, across the two lanes of this approach (to its right of the centreline).
+        const px = ax ? x - HX[h] * stop : x - HZ[h] * mid, pz = ax ? z + HX[h] * mid : z - HZ[h] * stop;
+        this._p.set(px, 0.07, pz);
+        this._s.set(ax ? 0.7 : span, 1, ax ? span : 0.7);
+        this._m.compose(this._p, this._q, this._s);
+        this.bars.setMatrixAt(n, this._m);
+        this.bars.setColorAt(n, LIGHTS[signalLight(i, j, ax, time)]);
+        n++;
+      }
+    }
+    this.bars.count = n;
+    this.bars.instanceMatrix.needsUpdate = true;
+    if (this.bars.instanceColor) this.bars.instanceColor.needsUpdate = true;
+  }
+
   update(time: number): void {
+    this.signals(time);
     let n = 0, v = 0, l = 0;
     const P = this.pos, Cc = this.col, LP = this.lpos, LC = this.lcol;
     const H = TRAFFIC.trailHeight, L = TRAFFIC.trailLength;
