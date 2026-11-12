@@ -303,7 +303,7 @@ with a third of the region cells, so territory comes in large contiguous patches
   They never capture.
 - **Mercenaries** are wingmen you hire with credits (`'`, or *Mercenaries* in the touch menu).
   You earn 100 credits per aircraft shot down, 150 per turret and 300 per district captured
-  (kept between sessions; the CREDITS row). To test without earning them: F3 → *Credits
+  (kept between sessions; the CREDITS row). To test without earning them: F3 (on a phone: *More* → *Debug & credits*) → *Credits
   (testing)* (+1,000, +10,000, set an amount, reset), or `game.giveCredits(n)` in the console. A contract lasts five minutes and costs 200-650 by
   design (`src/sim/mercenaries.ts`), up to three at once. A mercenary flies for you whatever
   your team, in bright blue with an M on the radar; it escorts, goes for anything attacking you,
