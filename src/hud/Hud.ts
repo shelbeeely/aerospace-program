@@ -185,13 +185,14 @@ export class Hud {
   }
 
   /** LOCK row: the vehicle tracked or locked, and its range (hidden with none). */
-  setLock(s: { name: string; range: number; locked: boolean } | null): void {
+  setLock(s: { name: string; range: number; locked: boolean; hack?: string | null } | null): void {
     const { lockRow: row, lock, lockRange } = this.el;
     if (!row || !lock || !lockRange) return;
     row.style.display = s ? '' : 'none';
     if (!s) return;
     row.classList.toggle('locked', s.locked);
-    this.set(lock, `${s.locked ? '◆' : '◇'} ${s.name}`);
+    this.set(lock, `${s.locked ? '◆' : '◇'} ${s.name}${s.hack ? ` · ${s.hack}` : ''}`);
+    row.classList.toggle('hacking', !!s.hack && s.hack.startsWith('HACK'));
     this.set(lockRange, s.range >= 1000 ? `${(s.range / 1000).toFixed(1)} km` : `${Math.round(s.range / 10) * 10} m`);
   }
 

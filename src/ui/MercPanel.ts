@@ -3,6 +3,7 @@ import { MAX_MERCS } from '../sim/aiTraffic.ts';
 import { hireable, mercPrice } from '../sim/mercenaries.ts';
 import type { Simulation } from '../sim/Simulation.ts';
 import { STRATEGIC } from '../sim/strategic.ts';
+import { HACK } from '../sim/hacking.ts';
 import type { StrategicKind } from '../sim/weapons.ts';
 
 /**
@@ -43,7 +44,7 @@ export class MercPanel {
     this.list = el('div', 'merc-list');
     this.status = el('p', 'merc-status small');
     const armoryTitle = el('h3', '', 'ARMORY');
-    const armoryNote = el('p', 'muted small', 'Strategic weapons, one carried at a time, launched with ` (homes on your lock). Nuke: arms after 3 s, a 400 m fireball and a 1.2 km shock ring. EMP: knocks out engines, turrets and light cycles within 800 m for a while; destroys nothing.');
+    const armoryNote = el('p', 'muted small', 'Strategic weapons, one carried at a time, released with `. Nuke: a bomb dropped under a chute (watch the DROP marker); it arms after 4 s and bursts 300 m up: a 400 m fireball and a 1.2 km shock ring. EMP: a missile that homes on your lock and knocks out engines, turrets and light cycles within 800 m for a while; destroys nothing. Hacking charges: lock an enemy aircraft, turret or light cycle within 1.5 km and hold ; for 3 s (4 s for a turret): it is yours for 60 s.');
     this.armory = el('div', 'merc-list');
     this.root.append(close, title, this.credits, note, this.active, this.list, armoryTitle, armoryNote, this.armory, this.status);
     document.body.append(this.root);
@@ -110,6 +111,25 @@ export class MercPanel {
       buy.addEventListener('click', () => {
         const why = sim.buyStrategic(kind);
         this.status.textContent = why ?? `${STRATEGIC[kind].label} loaded: \` launches it.`;
+        this.refresh(true);
+      });
+      row.append(name, cost, buy);
+      this.armory.append(row);
+    }
+    // Hacking charges: a pack of three.
+    {
+      const row = document.createElement('div');
+      row.className = 'merc-row';
+      const name = document.createElement('span');
+      name.textContent = `Hacking charges ×${HACK.pack} · ${sim.hackCharges} held`;
+      const cost = document.createElement('small');
+      cost.textContent = `${HACK.price} cr`;
+      const buy = document.createElement('button');
+      buy.textContent = 'Buy';
+      buy.disabled = sim.credits < HACK.price || sim.hackCharges + HACK.pack > HACK.max;
+      buy.addEventListener('click', () => {
+        const why = sim.buyHack();
+        this.status.textContent = why ?? 'Hacking charges loaded: lock a target and hold ;';
         this.refresh(true);
       });
       row.append(name, cost, buy);

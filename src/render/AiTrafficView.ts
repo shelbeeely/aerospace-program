@@ -1,3 +1,4 @@
+import type { CraftDef } from '../craft/types.ts';
 import * as THREE from 'three/webgpu';
 import type { AiAirTraffic } from '../sim/aiTraffic.ts';
 import { RemoteCraftView } from './RemoteCraftView.ts';
@@ -9,6 +10,7 @@ import { RemoteCraftView } from './RemoteCraftView.ts';
  */
 export class AiTrafficView {
   private readonly views = new Map<number, RemoteCraftView>();
+  private readonly defs = new Map<number, CraftDef>();
   private readonly _q = new THREE.Quaternion();
 
   constructor(private readonly scene: THREE.Scene, private readonly traffic: AiAirTraffic) {}
@@ -25,15 +27,24 @@ export class AiTrafficView {
       if (f.derezAt !== null) continue;
       live.add(f.id);
       let v = this.views.get(f.id);
+      // A hack (or its end) changes its livery: rebuild it in the new one.
+      if (v && this.defs.get(f.id) !== f.def) {
+        v.root.removeFromParent();
+        v.dispose();
+        v = undefined;
+      }
       if (!v) {
         v = new RemoteCraftView(f.def, f.color, { beacon: false });
         this.views.set(f.id, v);
+        this.defs.set(f.id, f.def);
         this.scene.add(v.root);
       }
       v.update(f.pos, this.traffic.rotation(f, this._q), f.speed, 0.8, dt);
       // Lights (§5): an EMP'd aircraft is dark; a combat aircraft dim on patrol, full in a fight.
       const dark = this.time >= 0 && f.disabledUntil > this.simTime;
-      if (f.hostile || dark || v.dark) v.setLightState({ activity: f.hostile && f.combat !== 'patrol' ? 1 : 0, integrity: f.hp / f.maxHp, time: this.time, inactive: dark });
+      // Hacked: its light flickers between dim and full (it isn't quite yours).
+      const hackFlicker = f.hacked ? (Math.sin(this.time * 9 + f.id) > 0.3 ? 1 : 0.25) : null;
+      if (f.hostile || dark || v.dark) v.setLightState({ activity: hackFlicker ?? (f.hostile && f.combat !== 'patrol' ? 1 : 0), integrity: f.hp / f.maxHp, time: this.time, inactive: dark });
       v.dark = dark;
     }
     for (const [id, v] of this.views) {
@@ -41,6 +52,7 @@ export class AiTrafficView {
       this.scene.remove(v.root);
       v.dispose();
       this.views.delete(id);
+      this.defs.delete(id);
     }
   }
 }

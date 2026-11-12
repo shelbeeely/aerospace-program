@@ -181,6 +181,14 @@ export class RadarMap {
 
   /** A vehicle's mark at (x, y), pointing along `angle` (rad, 0 = up, clockwise). */
   private mark(g: CanvasRenderingContext2D, c: Contact, x: number, y: number, angle: number, k: number): void {
+    if (c.hacked) {
+      // Hacked over to you: a small H beside it.
+      g.save();
+      g.fillStyle = '#dff6ff';
+      g.font = `bold ${Math.round(7 * k)}px ui-monospace, Menlo, monospace`;
+      g.fillText('H', x + 4 * k, y + 3 * k);
+      g.restore();
+    }
     g.save();
     g.translate(x, y);
     g.lineWidth = k;

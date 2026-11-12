@@ -33,6 +33,8 @@ export interface Contact {
   merc?: boolean;
   /** A railgun turret. */
   rail?: boolean;
+  /** Taken over by the player's hacking beam (for now). */
+  hacked?: boolean;
 }
 
 /** Shortest signed distance from a to b along one wrapped axis (m). */
@@ -86,16 +88,16 @@ export function simContacts(sim: Simulation): Contact[] {
     if (f.derezAt !== null) continue;
     out.push({
       id: `air:${f.id}`, kind: f.hostile ? 'hostile' : 'aircraft', x: f.pos.x, z: f.pos.z, y: f.pos.y, heading: f.heading, color: f.color, name: f.name,
-      attacking: f.hostile && f.combat !== 'patrol', foe: f.side !== null && hostile(sim.team, f.side), merc: f.role === 'merc',
+      attacking: f.hostile && f.combat !== 'patrol', foe: f.side !== null && hostile(sim.team, f.side), merc: f.role === 'merc', hacked: !!f.hacked,
     });
   }
   for (const t of sim.groundTurrets.turrets) {
     if (t.derezAt !== null) continue;
-    out.push({ id: `turret:${t.site.id}`, kind: 'turret', x: t.pos.x, z: t.pos.z, y: t.pos.y, heading: t.pose.yaw, color: t.color, name: t.site.kind === 'rail' ? 'Railgun turret' : 'Tower turret', attacking: t.state === 'firing' || t.state === 'charging', foe: hostile(sim.team, t.side), rail: t.site.kind === 'rail' });
+    out.push({ id: `turret:${t.site.id}`, kind: 'turret', x: t.pos.x, z: t.pos.z, y: t.pos.y, heading: t.pose.yaw, color: t.color, name: t.site.kind === 'rail' ? 'Railgun turret' : 'Tower turret', attacking: t.state === 'firing' || t.state === 'charging', foe: hostile(sim.team, t.side), rail: t.site.kind === 'rail', hacked: !!t.hacked });
   }
   for (const r of sim.traffic.riders) {
     if (r.derezAt !== null) continue;
-    out.push({ id: `rider:${r.id}`, kind: 'rider', x: r.x, z: r.z, y: 0, heading: Math.atan2(HX[r.heading], -HZ[r.heading]), color: TRAFFIC.colors[r.team], name: 'Light cycle' });
+    out.push({ id: `rider:${r.id}`, kind: 'rider', x: r.x, z: r.z, y: 0, heading: Math.atan2(HX[r.heading], -HZ[r.heading]), color: r.hackColor ?? TRAFFIC.colors[r.team], name: 'Light cycle', hacked: !!r.hackColor });
   }
   return out;
 }

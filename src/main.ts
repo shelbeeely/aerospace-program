@@ -61,6 +61,7 @@ import type { LockTarget } from './sim/lock.ts';
 import { RadarMap } from './hud/RadarMap.ts';
 import { AdsbTags } from './hud/AdsbTags.ts';
 import { GlobeView } from './render/GlobeView.ts';
+import { HackBeamView } from './render/HackBeamView.ts';
 import { StrikePanel } from './ui/StrikePanel.ts';
 import { simContacts, wrapDelta, type Contact } from './sim/contacts.ts';
 import { terrainHeight } from './sim/terrain.ts';
@@ -211,6 +212,8 @@ async function start() {
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
   const weaponsView = new WeaponsView(scene, () => sim.allWeapons());
+  const hackBeamView = new HackBeamView(scene);
+  const _beamFrom = new THREE.Vector3(), _beamTo = new THREE.Vector3();
   const craterView = new CraterView(scene);
   const boomView = new BoomView(scene);
   const aiTrafficView = new AiTrafficView(scene, sim.airTraffic);
@@ -481,6 +484,10 @@ async function start() {
   // Credits (remembered) and the mercenaries they hire.
   const CREDIT_STORAGE = 'credits';
   sim.credits = Math.max(0, Math.floor(Number(stored(CREDIT_STORAGE)) || 0));
+  // Hacking charges are kept with the credits.
+  const HACK_STORAGE = 'hackCharges';
+  sim.hackCharges = Math.max(0, Math.min(9, Math.floor(Number(stored(HACK_STORAGE)) || 0)));
+  let savedHacks = sim.hackCharges;
   let savedCredits = sim.credits;
   { const shown = document.getElementById('w-credits-v'); if (shown) shown.textContent = sim.credits.toLocaleString(); }
   const STRATEGIC_STORAGE = 'strategic';
@@ -1163,6 +1170,8 @@ async function start() {
     const trig = player.firing();
     sim.weapons.trigger.primary = trig.primary;
     sim.weapons.trigger.secondary = trig.secondary;
+    sim.hackHeld = trig.hack;
+    document.body.classList.toggle('hacking', sim.hackCharges > 0);
     const aim = player.aim();
     sim.turretInput.yaw = aim.yaw;
     sim.turretInput.pitch = aim.pitch;
@@ -1224,6 +1233,16 @@ async function start() {
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
     weaponsView.update(sim.time);
+    // The hacking beam: from the nose to the locked target while it holds.
+    {
+      const target = sim.hackBeam.status === 'beam' ? sim.lock.target : null;
+      if (target) {
+        _beamFrom.set(0, 0, -2).applyQuaternion(renderRot).add(renderPos);
+        target.position(_beamTo);
+        _beamTo.set(renderPos.x + wrapDelta(renderPos.x, _beamTo.x), _beamTo.y, renderPos.z + wrapDelta(renderPos.z, _beamTo.z));
+      }
+      hackBeamView.update(target ? _beamFrom : null, target ? _beamTo : null, TEAMS[sim.team].light, sim.hackBeam.progress, sim.time);
+    }
     aiTrafficView.update(dt);
     aiTrafficView.simTime = turretsView.simTime = sim.time;
     turretsView.update(dt);
@@ -1362,7 +1381,10 @@ async function start() {
         const range = Math.hypot(wrapDelta(sim.position.x, _lockPos.x), _lockPos.y - sim.position.y, wrapDelta(sim.position.z, _lockPos.z));
         _lockPos.set(sim.position.x + wrapDelta(sim.position.x, _lockPos.x), _lockPos.y, sim.position.z + wrapDelta(sim.position.z, _lockPos.z));
         lockMarker.update(camera, { pos: _lockPos, range, name: tracked.name, locked: sim.lock.locked }, window.innerWidth, window.innerHeight);
-        hud.setLock({ name: tracked.name, range, locked: sim.lock.locked });
+        // The hacking beam on it: its progress, or why it won't hold.
+        const hb = sim.hackBeam;
+        const hack = !sim.hackHeld ? null : hb.status === 'beam' ? `HACK ${Math.round(hb.progress * 100)}%` : hb.status === 'idle' ? null : hb.status.toUpperCase();
+        hud.setLock({ name: tracked.name, range, locked: sim.lock.locked, hack });
       } else {
         lockMarker.update(camera, null, window.innerWidth, window.innerHeight);
         hud.setLock(null);
@@ -1467,6 +1489,10 @@ async function start() {
     {
       const inFlight = sim.weapons.projectiles.find((p) => p.kind === 'nuke' || p.kind === 'emp');
       hud.setStrategic({ carried: sim.strategic, flight: inFlight ? inFlight.kind : null, emp: Math.max(0, sim.empUntil - sim.time) });
+    }
+    if (sim.hackCharges !== savedHacks) {
+      savedHacks = sim.hackCharges;
+      try { localStorage.setItem(HACK_STORAGE, String(sim.hackCharges)); } catch { /* not remembered */ }
     }
     if (sim.strategic !== savedStrategic) {
       savedStrategic = sim.strategic;

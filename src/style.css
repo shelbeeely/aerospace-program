@@ -95,6 +95,7 @@ body.mode-hangar #radar, body.mode-hangar #planet-map { display: none; }
 body.mode-hangar #missile-warn { display: none; }
 #hud #h-lock-row b { color: #7fe8ff; font-size: 14px; min-width: 0; flex: 1; }
 #hud #h-lock-row.locked b { color: #00d4ff; }
+#hud #h-lock-row.hacking b { color: #dff6ff; text-shadow: 0 0 6px rgba(0, 212, 255, 0.8); }
 #hud #h-turret-row b { font-size: 14px; min-width: 0; flex: 1; }
 
 /* A nuke's flash over the whole view, and an EMP's flicker on the HUD. */
@@ -643,6 +644,10 @@ body.armed .tfire { display: block; }
 .tfire-1 { bottom: calc(max(40px, env(safe-area-inset-bottom)) + 56px); min-width: 72px; height: 56px; border-color: rgba(255, 138, 31, 0.7); }
 .tfire-2 { bottom: max(40px, env(safe-area-inset-bottom)); min-width: 72px; }
 .tfire.down { background: rgba(255, 90, 31, 0.7); }
+/* The hacking beam: only with charges held. */
+.tfire-3 { display: none !important; bottom: calc(max(40px, env(safe-area-inset-bottom)) + 120px); min-width: 72px; border-color: rgba(0, 212, 255, 0.6); }
+body.hacking .tfire-3 { display: block !important; }
+.tfire-3.down { background: rgba(0, 160, 220, 0.6); }
 
 /* ---------------------------------------------------------------- hangar craft picker */
 #craft-card .craft-pick { display: flex; align-items: center; gap: 6px; }

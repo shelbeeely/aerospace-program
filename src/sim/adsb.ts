@@ -45,6 +45,8 @@ export interface AdsbRecord {
   status: string;
   /** Distance from the player's craft (m). */
   range: number;
+  /** Taken over by the player's hacking beam (for now). */
+  hacked?: boolean;
 }
 
 const ROLE_PREFIX: Record<string, string> = { civil: 'CIV', merc: 'MRC', strike: 'STK', free: 'FRL' };
@@ -59,7 +61,9 @@ export function squawkOf(callsign: string): string {
 }
 
 export function flyerCallsign(f: AiFlyer): string {
-  const prefix = ROLE_PREFIX[f.role] ?? (f.side !== null && f.side !== FREELANCER ? TEAM_PREFIX[f.side] : 'FRL');
+  // (A hacked aircraft keeps the callsign it had.)
+  const role = f.hacked?.wasRole ?? f.role, side = f.hacked ? f.hacked.was : f.side;
+  const prefix = ROLE_PREFIX[role] ?? (side !== null && side !== FREELANCER ? TEAM_PREFIX[side] : 'FRL');
   return `${prefix}-${f.id}`;
 }
 
@@ -74,7 +78,8 @@ export function flyerRecord(f: AiFlyer, team: Team, time: number, from: { x: num
   const gs = Math.hypot(f.vel.x, f.vel.z);
   const disabled = time < f.disabledUntil;
   let status: string;
-  if (disabled) status = 'disabled (EMP)';
+  if (f.hacked) status = `hacked (${Math.max(0, Math.ceil(f.hacked.until - time))} s)`;
+  else if (disabled) status = 'disabled (EMP)';
   else if (f.run && !f.run.dropped) status = 'strike run';
   else if (f.leaving) status = 'leaving';
   else if (f.target) status = `attacking ${f.target.kind === 'player' ? 'you' : f.target.kind === 'turret' ? 'a turret' : f.target.kind === 'remote' ? 'a player' : f.target.flyer ? flyerCallsign(f.target.flyer) : 'a target'}`;
@@ -91,7 +96,7 @@ export function flyerRecord(f: AiFlyer, team: Team, time: number, from: { x: num
     x: f.pos.x, z: f.pos.z, alt: f.pos.y, agl: f.pos.y - terrainHeight(f.pos.x, f.pos.z),
     gs, track: gs > 1 ? Math.atan2(f.vel.x, -f.vel.z) : f.heading, vs: f.vel.y,
     squawk: disabled ? '7600' : hurt ? '7700' : squawkOf(callsign),
-    status, range: Math.hypot(wrapDelta(from.x, f.pos.x), wrapDelta(from.z, f.pos.z)),
+    status, range: Math.hypot(wrapDelta(from.x, f.pos.x), wrapDelta(from.z, f.pos.z)), hacked: !!f.hacked,
   };
 }
 
@@ -103,10 +108,10 @@ export function riderRecord(r: Rider, time: number, from: { x: number; z: number
   const gs = stalled ? 0 : r.speed;
   return {
     id: `rider:${r.id}`, callsign, type: 'Light cycle', category: 'ground', side: null,
-    sideName: r.team === 0 ? 'Cyan program' : 'Amber program', color: TRAFFIC.colors[r.team], foe: false,
+    sideName: r.team === 0 ? 'Cyan program' : 'Amber program', color: r.hackColor ?? TRAFFIC.colors[r.team], foe: false, hacked: !!r.hackColor,
     x: r.x, z: r.z, alt: 0, agl: 0, // (riders keep to the streets, at ground level)
     gs, track: Math.atan2(HX[r.heading], -HZ[r.heading]), vs: 0,
-    squawk: stalled ? '7600' : squawkOf(callsign), status: stalled ? 'stalled (EMP)' : 'riding',
+    squawk: stalled ? '7600' : squawkOf(callsign), status: r.hackColor ? `hacked (${Math.max(0, Math.ceil((r.hackedUntil ?? 0) - time))} s)` : stalled ? 'stalled (EMP)' : 'riding',
     range: Math.hypot(wrapDelta(from.x, r.x), wrapDelta(from.z, r.z)),
   };
 }

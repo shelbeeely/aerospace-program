@@ -14,6 +14,7 @@ import type { LockTarget } from './lock.ts';
 import type { Foe } from './aiTraffic.ts';
 import { hostile, sideLight, sideLivery, type Side, type Team } from './teams.ts';
 import { Territory } from './territory.ts';
+import type { HackedTurret } from './hacking.ts';
 import type { CraftDef } from '../craft/types.ts';
 import { terrainHeight } from './terrain.ts';
 import { WeaponSystem, type WeaponHost, type WeaponImpact } from './weapons.ts';
@@ -75,6 +76,8 @@ export interface GroundTurret {
   color: string;
   /** The team that holds it (its district's owner when it was raised). */
   side: Team;
+  /** Taken over by the player's hacking beam: its old side, until when (see sim/hacking.ts). */
+  hacked: HackedTurret | null;
   /** What it is shooting at (re-chosen a few times a second). */
   target: Foe | null;
   /** It, as a lock target and as a foe to others. */
@@ -262,7 +265,11 @@ export class GroundTurretSystem {
     const { ci, cj } = t.site;
     if (by === null || by > 2 || by === t.side) return;
     const sites = turretSites(ci, cj, this.density);
-    if (!sites.every((s) => this.destroyed.has(s.id))) return;
+    // (A turret hacked over to the attackers doesn't hold the district for its old side.)
+    const hackedFor = (id: string) => this.turrets.some((x) => x.site.id === id && x.derezAt === null && x.hacked && x.side === by);
+    if (!sites.every((s) => this.destroyed.has(s.id) || hackedFor(s.id))) return;
+    // The hacked ones stay with their new owner for good.
+    for (const x of this.turrets) if (x.hacked && x.site.ci === ci && x.site.cj === cj) x.hacked = null;
     if (!this.territory.capture(ci, cj, by as Team)) return;
     for (const s of sites) this.destroyed.delete(s.id);
     this.rebuilding.set(`${ci},${cj}`, time + 20);
@@ -313,7 +320,7 @@ export class GroundTurretSystem {
     const self = this;
     const t: GroundTurret = {
       id: this.nextId++, site, pos, pose, hp, maxHp: hp, hitAt: -Infinity, state: 'idle', derezAt: null,
-      aimError: { h: 0, p: 0 }, missileAt: -Infinity, chargeAt: null, sees: false, seenAt: -Infinity, weapons, body, color, side, target: null,
+      aimError: { h: 0, p: 0 }, missileAt: -Infinity, chargeAt: null, sees: false, seenAt: -Infinity, weapons, body, color, side, hacked: null, target: null,
       handle: null as unknown as LockTarget, foe: null as unknown as Foe, disabledUntil: -Infinity,
       host: {
         world: this.world, body, position: pos, rotation: new THREE.Quaternion(), linvel: new THREE.Vector3(), color,

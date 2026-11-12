@@ -10,6 +10,7 @@ import { RemoteCraftView } from './RemoteCraftView.ts';
  */
 export class GroundTurretsView {
   private readonly views = new Map<number, RemoteCraftView>();
+  private readonly sides = new Map<number, number>();
   private readonly level = new THREE.Quaternion();
   private time = 0;
   /** The simulation's clock (EMP timers are in it). */
@@ -24,7 +25,14 @@ export class GroundTurretsView {
       if (t.derezAt !== null) continue;
       live.add(t.id);
       let v = this.views.get(t.id);
+      // Hacked over (or back): rebuilt in its new side's colours.
+      if (v && this.sides.get(t.id) !== t.side) {
+        v.root.removeFromParent();
+        v.dispose();
+        v = undefined;
+      }
       if (!v) {
+        this.sides.set(t.id, t.side);
         // Its own design (gun or railgun) in its team's colours.
         v = new RemoteCraftView(turretDef(t.side, t.site.kind), t.color, { beacon: false });
         this.views.set(t.id, v);
@@ -41,6 +49,7 @@ export class GroundTurretsView {
       this.scene.remove(v.root);
       v.dispose();
       this.views.delete(id);
+      this.sides.delete(id);
     }
   }
 }

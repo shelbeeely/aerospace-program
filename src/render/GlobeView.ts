@@ -548,7 +548,7 @@ export class GlobeView {
       let n = 0;
       for (const { r, at } of order) {
         if (n >= 40) break;
-        const line1 = r.callsign;
+        const line1 = r.hacked ? `${r.callsign} H` : r.callsign;
         const climb = r.vs > 2 ? '▲' : r.vs < -2 ? '▼' : '';
         const line2 = r.category === 'ground' ? `${knots(r.gs)} kt` : `${Math.round(r.alt).toLocaleString()} m ${climb} ${knots(r.gs)} kt`;
         const tw = Math.max(g.measureText(line1).width, g.measureText(line2).width) + 6;

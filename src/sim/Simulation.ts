@@ -22,10 +22,12 @@ import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
 import { craftBounds, WEAPON_DAMAGE, WEAPONS, WeaponSystem, type Mount, type StrategicKind, type WeaponHost, type WeaponImpact, type WeaponKind } from './weapons.ts';
 import { AiAirTraffic, type AiFlyer, type AirTarget, type Foe } from './aiTraffic.ts';
-import { hostile, sideLivery, sideName, TEAMS, type Side, type Team } from './teams.ts';
+import { hostile, sideLight, sideLivery, sideName, TEAMS, type Side, type Team } from './teams.ts';
 import { CREDITS, mercPrice } from './mercenaries.ts';
 import { STRATEGIC, strategicPrice, type StrategicBlast } from './strategic.ts';
-import { GroundTurretSystem, TURRET_HEAD_Y, type GroundTurret } from './groundTurrets.ts';
+import { GroundTurretSystem, lineOfSight, TURRET_HEAD_Y, type GroundTurret } from './groundTurrets.ts';
+import { HACK, HackBeam, type HackCandidate } from './hacking.ts';
+import { circuitOf } from '../craft/style1982.ts';
 import { WeaponMount } from '../modules/WeaponMount.ts';
 import { BOOM_DAMAGE, BOOM_DEREZ, BOOM_SHATTER, boomBite, boomOverpressure, boomReach, type BoomEvent } from './sonicBoom.ts';
 import { StaticWorld } from '../world/staticWorld.ts';
@@ -34,7 +36,7 @@ import { nearestRoadPoint, siteSpawnPoint, type SpawnPoint, type SpawnSite } fro
 import { orbitElements, type OrbitTelemetry, type Telemetry } from './telemetry.ts';
 import { StrikeSystem, type Strike, type StrikeKind } from './strikes.ts';
 import { wrapDelta } from './contacts.ts';
-import { AdsbTracker, craftRecord, flyerRecord, riderRecord, type AdsbRecord } from './adsb.ts';
+import { AdsbTracker, craftRecord, flyerCallsign, flyerRecord, riderRecord, type AdsbRecord } from './adsb.ts';
 
 function roundOrbit(o: OrbitTelemetry): OrbitTelemetry {
   const r = (x: number | null, d = 0) => (x === null ? null : Math.round(x * 10 ** d) / 10 ** d);
@@ -1004,6 +1006,7 @@ export class Simulation {
     if (this.exploded) this.weapons.trigger.primary = this.weapons.trigger.secondary = false;
     this.stepTurret(this.dt);
     if (++this.lockTick % 4 === 0) this.stepLock(this.dt * 4);
+    this.stepHack(this.dt);
     this.weapons.lock = this.lock.target;
     this.weapons.step(this.weaponHost, this.dt, this.time);
     this.airTraffic.stepWeapons(this.dt, this.time);
@@ -1313,7 +1316,8 @@ export class Simulation {
 
   /** The lock runs while the craft carries weapons. */
   private stepLock(dt: number): void {
-    if (this.exploded || this.weapons.mounts.length === 0) {
+    // Unarmed, there is nothing to lock for, unless hacking charges are held (the beam needs one).
+    if (this.exploded || (this.weapons.mounts.length === 0 && this.hackCharges <= 0)) {
       this.lock.clear();
       return;
     }
@@ -1535,6 +1539,125 @@ export class Simulation {
     }
     out.push(...this.extraAdsb);
     return out;
+  }
+
+  // ------------------------------------------------------------------ the hacking beam
+  /** Hacking charges held (bought in the armory; see sim/hacking.ts). */
+  hackCharges = 0;
+  /** The hack trigger is held this step. */
+  hackHeld = false;
+  readonly hackBeam = new HackBeam();
+  /** Hacks done so far (tests, stats). */
+  hacks = 0;
+
+  /** Buy a pack of hacking charges. Returns why not, or null. */
+  buyHack(): string | null {
+    if (this.hackCharges + HACK.pack > HACK.max) return `You hold ${this.hackCharges}: at most ${HACK.max}`;
+    if (this.credits < HACK.price) return `Not enough credits (${HACK.price} needed, ${this.credits} held)`;
+    this.credits -= HACK.price;
+    this.hackCharges += HACK.pack;
+    this.notice(`${HACK.pack} hacking charges (−${HACK.price} credits): lock a target and hold ;`);
+    return null;
+  }
+
+  /** What the beam would work on: the locked vehicle, if it is an aircraft, turret or light cycle. */
+  private hackCandidate(): HackCandidate | null {
+    const t = this.lock.locked ? this.lock.target : null;
+    if (!t || !t.alive()) return null;
+    const at = t.position(new THREE.Vector3());
+    at.set(this.position.x + wrapDelta(this.position.x, at.x), at.y, this.position.z + wrapDelta(this.position.z, at.z));
+    const range = at.distanceTo(this.position);
+    const clear = lineOfSight(this.position, at);
+    if (t.id.startsWith('air:')) {
+      const f = this.airTraffic.flyers.find((x) => `air:${x.id}` === t.id);
+      if (!f) return null;
+      return { id: t.id, kind: 'air', hackable: f.side !== null && hostile(this.team, f.side) && !f.hacked && f.role !== 'strike', range, clear, disabled: this.time < f.disabledUntil };
+    }
+    if (t.id.startsWith('turret:')) {
+      const g = this.groundTurrets.turrets.find((x) => `turret:${x.site.id}` === t.id);
+      if (!g) return null;
+      return { id: t.id, kind: 'turret', hackable: hostile(this.team, g.side) && !g.hacked, range, clear, disabled: this.time < g.disabledUntil };
+    }
+    if (t.id.startsWith('rider:')) {
+      const r = this.traffic.riders.find((x) => `rider:${x.id}` === t.id);
+      if (!r) return null;
+      return { id: t.id, kind: 'rider', hackable: !r.hackColor, range, clear, disabled: (r.stalledUntil ?? -Infinity) > this.time };
+    }
+    return null;
+  }
+
+  private stepHack(dt: number): void {
+    const done = this.hackBeam.step(dt, this.hackHeld && !this.exploded, this.hackCharges, this.hackHeld ? this.hackCandidate() : null);
+    if (done) {
+      this.hackCharges--;
+      this.hack(done);
+    }
+    // Hacks run out: back to their old side.
+    for (const f of this.airTraffic.flyers) if (f.hacked && this.time >= f.hacked.until) this.unhackFlyer(f, true);
+    for (const t of this.groundTurrets.turrets) if (t.hacked && this.time >= t.hacked.until) this.unhackTurret(t, true);
+    for (const r of this.traffic.riders) if (r.hackColor && this.time >= (r.hackedUntil ?? 0)) { r.hackColor = undefined; r.hackedUntil = undefined; this.notice(`LC-${r.id}: the hack ran out`); }
+  }
+
+  /** Take a vehicle over (by its lock id) for HACK.duration seconds. */
+  hack(id: string): boolean {
+    const until = this.time + HACK.duration;
+    const team = this.team;
+    if (id.startsWith('air:')) {
+      const f = this.airTraffic.flyers.find((x) => `air:${x.id}` === id);
+      if (!f || f.side === null) return false;
+      const before = flyerCallsign(f);
+      f.hacked = { until, was: f.side, wasRole: f.role, wasDef: f.def, wasColor: f.color };
+      f.side = team;
+      f.role = 'hacked';
+      f.def = sideLivery(f.def, team);
+      f.color = circuitOf(f.def);
+      if (f.foe) f.foe.side = team;
+      f.target = null;
+      f.order = null;
+      f.leaving = false;
+      this.notice(`Hacked ${before}: it flies for you for ${HACK.duration} s`);
+    } else if (id.startsWith('turret:')) {
+      const t = this.groundTurrets.turrets.find((x) => `turret:${x.site.id}` === id);
+      if (!t) return false;
+      t.hacked = { until, was: t.side, wasColor: t.color };
+      t.side = team;
+      t.color = sideLight(team);
+      t.foe.side = team;
+      t.target = null;
+      this.notice(`Hacked a turret: it fires for ${TEAMS[team].name} for ${HACK.duration} s`);
+    } else if (id.startsWith('rider:')) {
+      const r = this.traffic.riders.find((x) => `rider:${x.id}` === id);
+      if (!r) return false;
+      r.hackedUntil = until;
+      r.hackColor = sideLight(team);
+      this.notice(`Hacked LC-${r.id}: its wall can't touch you for ${HACK.duration} s`);
+    } else return false;
+    this.hacks++;
+    this.lock.clear();
+    this.version++;
+    return true;
+  }
+
+  private unhackFlyer(f: AiFlyer, notice: boolean): void {
+    const h = f.hacked!;
+    f.hacked = null;
+    f.side = h.was;
+    f.role = h.wasRole;
+    f.def = h.wasDef;
+    f.color = h.wasColor;
+    if (f.foe) f.foe.side = h.was;
+    f.target = null;
+    if (notice && f.derezAt === null) this.notice(`${flyerCallsign(f)}: the hack ran out, it's back with ${sideName(h.was)}`);
+  }
+
+  private unhackTurret(t: GroundTurret, notice: boolean): void {
+    const h = t.hacked!;
+    t.hacked = null;
+    t.side = h.was;
+    t.color = h.wasColor;
+    t.foe.side = h.was;
+    t.target = null;
+    if (notice && t.derezAt === null) this.notice(`A hacked turret is back with ${TEAMS[h.was].name}`);
   }
 
   /** Strikes in flight (the strike globe). */

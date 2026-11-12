@@ -18,6 +18,8 @@ export interface RawInput {
   /** Weapons triggers held this frame: primary (guns, cannon) and secondary (bombs, missiles). */
   fire: boolean;
   fireAlt: boolean;
+  /** The hacking beam held on the lock (;). */
+  hack: boolean;
   /** Turret traverse (+ right) and elevation (+ up), -1..1. */
   aimYaw: number;
   aimPitch: number;
