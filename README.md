@@ -348,6 +348,10 @@ with a third of the region cells, so territory comes in large contiguous patches
   - After 60 s each goes back to its old side, with a notice. The radar and the globe mark
     hacked units with an **H**.
 
+**Airfields are safe to take off from.** No turret stands where it could reach a runway
+(railgun turrets keep 3.8 km clear, gun turrets 2.1 km), and for the first 20 s after you spawn,
+and while you are on a runway, nothing engages you, armed or not.
+
 ## Called-in strikes and attack orders
 
 From the strike globe (below) you can send the war somewhere else. Wherever an order or a strike

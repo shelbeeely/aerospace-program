@@ -147,7 +147,7 @@ console.log('--- turret');
   const e = sim.airTraffic.flyers.find((x) => x.role === 'enemy' && x.side === old) ?? sim.airTraffic.flyers.find((x) => x.role === 'enemy')!;
   e.side = old; if (e.foe) e.foe.side = old;
   let shot = false;
-  run(sim, 5, () => { park(e, t.pos.clone().add(new THREE.Vector3(-400, 250, 0))); shot ||= t.target?.flyer === e && (t.state === 'firing' || t.weapons.projectiles.length > 0); });
+  run(sim, 5, () => { park(e, t.pos.clone().add(new THREE.Vector3(-120, 380, 0))); shot ||= t.target?.flyer === e && (t.state === 'firing' || t.weapons.projectiles.length > 0); });
   check(shot, 'it fires on its old side');
   // Under an EMP a turret hacks in half the time.
   const t2 = sim.groundTurrets.turrets.find((x) => x !== t && x.derezAt === null && hostile(sim.team, x.side));

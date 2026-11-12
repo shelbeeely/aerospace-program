@@ -25,7 +25,7 @@ import { AiAirTraffic, type AiFlyer, type AirTarget, type Foe } from './aiTraffi
 import { hostile, sideLight, sideLivery, sideName, TEAMS, type Side, type Team } from './teams.ts';
 import { CREDITS, mercPrice } from './mercenaries.ts';
 import { STRATEGIC, strategicPrice, type StrategicBlast } from './strategic.ts';
-import { GroundTurretSystem, lineOfSight, TURRET_HEAD_Y, type GroundTurret } from './groundTurrets.ts';
+import { GroundTurretSystem, lineOfSight, runwayDistance, TURRET_HEAD_Y, type GroundTurret } from './groundTurrets.ts';
 import { HACK, HackBeam, type HackCandidate } from './hacking.ts';
 import { circuitOf } from '../craft/style1982.ts';
 import { WeaponMount } from '../modules/WeaponMount.ts';
@@ -981,7 +981,10 @@ export class Simulation {
     const pf = this.playerFoe;
     pf.side = this.team;
     pf.lock = this.selfTarget;
-    pf.engage = this.airTarget.alive && this.airTarget.armed;
+    // Spawn grace: nothing engages a craft for its first seconds, or while it sits on (or rolls
+    // along) an airfield's runway, so taking off is never a death sentence.
+    const onAirfield = pf.ground && runwayDistance(this.position.x, this.position.z) < 150;
+    pf.engage = this.airTarget.alive && this.airTarget.armed && this.time >= this.spawnGraceUntil && !onAirfield;
     pf.ground = this.position.y - terrainHeight(this.position.x, this.position.z) < 8;
     this.airTarget.team = this.team;
     const foes = this.airTarget.foes!;
@@ -1542,6 +1545,10 @@ export class Simulation {
   }
 
   // ------------------------------------------------------------------ the hacking beam
+  /** Until then (s) nothing engages the craft: a fresh spawn gets to take off. */
+  spawnGraceUntil = 20;
+  static readonly SPAWN_GRACE = 20;
+
   /** Hacking charges held (bought in the armory; see sim/hacking.ts). */
   hackCharges = 0;
   /** The hack trigger is held this step. */

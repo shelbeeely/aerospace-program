@@ -145,15 +145,38 @@ export function turretSites(ci: number, cj: number, density: TurretDensity): Tur
       .filter((s) => s.roof && s.roof.y >= 35 && s.roof.y <= 320 && s.roof.r >= 2.5)
       .filter((s) => !pads.some((p) => Math.hypot(wrapDelta(p.x, s.roof!.x), wrapDelta(p.z, s.roof!.z)) < 40))
       .sort((a, b) => hash32(SEED, strSeed(a.id)) - hash32(SEED, strSeed(b.id)));
-    for (const s of candidates.slice(0, want)) {
+    for (const s of candidates) {
+      if (out.length >= want) break;
       // About one in four is a railgun turret; one in two on the tallest towers.
       const rail = hashFloat(SEED, strSeed(s.id), 7) < (s.roof!.y >= 120 ? 0.5 : 0.25);
+      // Airfields are neutral ground: no turret stands where it could reach a runway.
+      if (runwayDistance(s.roof!.x, s.roof!.z) < (rail ? AIRFIELD_CLEAR.rail : AIRFIELD_CLEAR.gun)) continue;
       out.push({ id: s.id, structureId: s.id, ci, cj, kind: rail ? 'rail' : 'gun', x: s.roof!.x, y: s.roof!.y, z: s.roof!.z });
     }
   }
   siteCache.set(key, out);
   if (siteCache.size > 400) siteCache.delete(siteCache.keys().next().value!);
   return out;
+}
+
+/**
+ * How far turrets keep from any runway (m), by kind: beyond their reach at a craft on the
+ * runway or just off it (railguns reach 3.5 km, guns 1.8 km), so taking off is never a
+ * shooting gallery.
+ */
+export const AIRFIELD_CLEAR = { rail: 3800, gun: 2100 } as const;
+
+/** Distance (m) from a point to the nearest runway (its centreline, end to end). */
+export function runwayDistance(x: number, z: number): number {
+  let best = Infinity;
+  for (const r of landingSites()) {
+    if (r.kind !== 'runway') continue;
+    const dx = wrapDelta(r.x, x), dz = wrapDelta(r.z, z);
+    const along = r.axis === 'x' ? dx : dz, across = r.axis === 'x' ? dz : dx;
+    const over = Math.max(0, Math.abs(along) - r.length / 2);
+    best = Math.min(best, Math.hypot(over, across));
+  }
+  return best;
 }
 
 /** Deterministic PRNG (mulberry32) for the turrets' aim wander. */
