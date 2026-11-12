@@ -24,7 +24,10 @@ npm run radar          # radar and planet map: contacts, heading-up scope, wrap-
 npm run lock           # target lock, homing missiles, turret traverse/elevation and auto-aim, chase mode
 npm run turrets        # tower turrets: placement, streaming, armed-only fire, line of sight, kills, fracture
 npm run teams          # teams: liveries, territory, the AI war, friendly fire, capture, freelancers, mercenaries
-npm run wmd            # railgun, nuke and EMP: buying, arming, the fireball and shock ring, the EMP's effects
+npm run wmd            # railgun, nuke and EMP: buying, the dropped nuke (chute, airburst, drop marker), the fireball and shock ring, the EMP's effects
+npm run strikes        # called-in strikes and orders: focus points, barrage, EMP strike, nuke bomber, interception, attack orders
+npm run adsb           # ADS-B: callsigns, speeds, squawk codes, track history; strike-globe picking and close-view geometry
+npm run hacking        # the hacking beam: charges, the 3 s hold, takeovers of aircraft, turrets and light cycles, reverting
 npm run netdamage      # networked damage: hit tests, the shooter's scanner, the victim's checks, kills
 npm run enemies        # enemy aircraft: red-team colours, patrol vs hunt, gunnery, hit points, kills, determinism
 npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
@@ -200,7 +203,9 @@ stick expo, haptics, and touch controls auto/on/off.
 | O (hold) | drop bombs / fire missiles |
 | I | weapons loadout: fitted (when the craft has weapon parts), unarmed, guns, cannon, guns + bombs, guns + missiles, tank, laser + discs, pulse + missiles, full |
 | Tab | planet map: every vehicle in the world (or click the radar) |
-| ` | launch the nuke or EMP carried (bought in the ' panel's Armory) |
+| Shift+Tab | the strike globe: pick a spot, send aircraft, call in strikes, zoom in to the buildings (or the map's Globe button) |
+| ` | drop the nuke or launch the EMP carried (bought in the ' panel's Armory) |
+| ; (hold) | hacking beam on the locked target (needs a hacking charge from the Armory) |
 | ← → ↑ ↓ | turret traverse and elevation (tank, or any craft with a turret part); gamepad: LB + right stick |
 | / | turret back to the nose |
 | Enter | chase the locked vehicle (flight computer *Chase lock*; Enter again, or the stick, ends it) |
@@ -315,16 +320,86 @@ with a third of the region cells, so territory comes in large contiguous patches
   structure pieces), six hit points each; 0.4 shots a second, 20 rounds, a hard kick. Its streak
   lingers white-hot for half a second.
 - **Nuke and EMP** (`src/sim/strategic.ts`) are bought with credits in the Armory (the `'`
-  panel): nuke 1500, EMP 800, one carried at a time (remembered). **`** launches it from under
-  the nose; it flies as a heavy homing missile (it follows your lock).
-  - **Nuke:** arms 3 s after launch (an earlier impact is a dud). Its 400 m fireball fractures
+  panel): nuke 1500, EMP 800, one carried at a time (remembered). **`** releases it.
+  - **Nuke:** a free-fall bomb dropped from the bomb bay with your craft's speed; it never homes.
+    A drogue of light opens after 1.5 s and slows its fall toward 45 m/s; it arms after 4 s and
+    bursts 300 m above the ground (an impact before it arms is a dud). While you carry one in the
+    air, a **DROP** marker in the view and a ring on the radar show where it would burst if you
+    let go now (*DUD: TOO LOW* when it couldn't arm in time). Its 400 m fireball fractures
     and flattens the structures in it (nearest first, up to the fractured-structure cap) and
     derezzes a craft inside; the shock ring out to 1.2 km derezzes aircraft, turrets and light
     cycles and wrecks a craft caught in it. Drawn as geometry and light: a flash, a fireball of
     lattice lines, a column of rings spreading into a disc, a ring racing out along the Grid.
   - **EMP:** within 800 m it destroys nothing but switches things off: aircraft lose engines and
     lights for 8 s and glide, turrets go dark for 20 s, light cycles stall, homing missiles lose
-    their lock, and your own engines cut for 8 s if you're caught (the HUD flickers).
+    their lock, and your own engines cut for 8 s if you're caught (the HUD flickers). It is a
+    heavy missile that homes on your lock.
+- **Hacking beam** (`src/sim/hacking.ts`): hacking charges come three for 600 credits from the
+  Armory (up to nine, kept with the credits). Lock an enemy aircraft or turret, or a light
+  cycle, within 1.5 km and in clear line of sight, and **hold `;`** (touch: *HACK*). A thin
+  tether of light reaches from your nose to it, and the LOCK row counts `HACK 47%`. After 3 s
+  unbroken (4 s for a turret, half that under an EMP) it is yours for 60 s and the charge is
+  spent; letting go, losing the lock or the line resets it at no cost.
+  - A hacked **aircraft** flies for your side in your livery, its lights flickering, escorting
+    you and fighting its old side; your rounds don't hurt it (and its kills don't pay).
+  - A hacked **turret** fires for your team from its tower and no longer holds its district,
+    so destroying the rest captures it (and the hacked one stays yours).
+  - A hacked **light cycle** rides in your colour and its jetwall can't derez you.
+  - After 60 s each goes back to its old side, with a notice. The radar and the globe mark
+    hacked units with an **H**.
+
+## Called-in strikes and attack orders
+
+From the strike globe (below) you can send the war somewhere else. Wherever an order or a strike
+is aimed becomes a **focus point**: turrets stream in there and aircraft are kept there just as
+round your own craft, so the attack plays out for real with the same pilots, turrets and rounds
+(`src/sim/strikes.ts`, `Simulation.focusPoints()`).
+
+- **Send aircraft:** your team's friendlies and your mercenaries fly to the spot, fight anything
+  within 3 km of it and circle it while it's quiet. The order ends after 3 minutes or 20 s with
+  nothing left; **Recall** brings them back to escort you.
+- **Strikes,** paid with credits, set out from the nearest district your team holds (at least
+  3 km from the target):
+
+  | Strike | Credits | What arrives |
+  |---|---|---|
+  | Missile barrage | 400 | six cruise missiles at 1.5 km, each diving (weaving) on a different enemy turret within 1.5 km of the target |
+  | EMP strike | 900 | one cruise missile that bursts an EMP over the middle of the enemy turrets there |
+  | Nuke bomber | 2500 | a heavy bomber in your livery flies there at 1.8 km, drops the nuke at the release point its fall predicts, and turns for home |
+
+  Turrets on the way and at the target engage them: cruise missiles can be shot down and the
+  bomber can be lost. Their kills and captures pay you like your own.
+
+## The strike globe
+
+`Shift+Tab` (or **Globe** on the planet map, or *Globe* in the touch menu) opens the whole
+planet as a real 3D globe (`src/render/GlobeView.ts`): the surface map with the team territory
+washed over it, lit from one side with a glowing limb. Drag to turn it and the wheel zooms.
+Click a spot to target it: the side panel (`src/ui/StrikePanel.ts`) shows the district, who
+holds it, the enemy turrets standing there and how far it is, and offers *Send aircraft*,
+*Recall* and the three strikes with their ETAs. Strikes in flight show on their paths and
+attack orders as rings.
+
+- **ADS-B on everything** (`src/sim/adsb.ts`): every aircraft, light cycle, player and your own
+  craft broadcasts a callsign (`RED-14`, `CYN-7`, `FRL-3`, `MRC-9`, `CIV-2`, `LC-120`, a
+  player's name, `YOU`), its type, altitude, ground speed, track, vertical rate and a squawk
+  code (7700 when badly hit, 7600 under an EMP). Zoomed in, each vehicle carries a tag
+  (`RED-14 1,840 m ▲ 410 kt`, decluttered) and a fading minute of track. Click a vehicle for
+  its live card with what it is doing (*attacking CYN-7*, *on order*, *strike run*), with
+  **Target here** and **Follow**.
+- **Basic and detailed:** basic draws markers; detailed draws the real aircraft models on the
+  globe and the full architecture up close. It is chosen for the device (detailed on desktops,
+  basic on phones and at low quality) and switchable in the panel's header (remembered).
+- **Zoom right in** and the globe hands over to a close view of that spot
+  (`src/render/GlobeCloseView.ts`), like a map app's 3D mode: a tilted camera over the ground
+  map, the districts' buildings streamed in around it (their full procedural architecture in
+  detailed mode, plain blocks in basic), the Outlands landforms, the aircraft as their models,
+  light cycles, turrets, strikes and the same tags. Drag to pan, right-drag to turn and tilt,
+  click to target or to pick a vehicle; zoom far out and it hands back to the globe.
+
+In the cockpit the same broadcasts tag the nearest vehicles in the view and the nearest blips on
+the radar (callsign and altitude relative to you, in hundreds of metres). The **ADS-B** button
+on the radar turns both off and on.
 
 ## Networked damage
 
@@ -397,9 +472,8 @@ steps it through 2, 5 and 12 km; a hostile or another player beyond the range si
 `Tab` (or a click on the scope, or *Map* in the touch menu) opens the planet map: the whole
 planet unrolled north-up and centred on your craft, with the city (paler where the skyline is
 taller), the Outlands, the sea, every runway by name, the radar's reach, and every vehicle in
-the world, counted in its header. **Globe** (in its header, remembered) shows the same map on a
-sphere: drag to turn it, the wheel zooms, a double-click recentres it on you. (East-west becomes
-longitude and north-south latitude, so the map stretches toward the poles.)
+the world, counted in its header. **Globe** in its header opens the 3D strike globe (see *The
+strike globe*).
 
 Aircraft are arrowheads on their heading, outlined in their circuit colour; hostiles are solid
 red, brighter while they attack; light cycles are dots in their team colour; other players are
