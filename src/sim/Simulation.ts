@@ -625,6 +625,10 @@ export class Simulation {
     this.weapons.onImpact = (h) => this.weaponImpact(h);
     this.airTraffic.onHostileImpact = (h, f) => this.weaponImpact(h, f);
     this.airTraffic.groundAt = (x, z) => (isSea(x) ? -COAST.depth : terrainHeight(x, z));
+    // Runways are used into the wind (10 m up, the gusts averaged out by how seldom it is asked).
+    const windProbe = new THREE.Vector3(), windOut = new THREE.Vector3();
+    this.airTraffic.wind = (x, z) => this.atmosphere.windAt(windProbe.set(x, 10, z), 0, windOut);
+    this.airTraffic.fractured = this.staticWorld.fractured;
     this.groundTurrets.onImpact = (h, t) => this.weaponImpact(h, t);
     this.groundTurrets.groundAt = this.airTraffic.groundAt;
     this.groundTurrets.fractured = (id) => this.structureFractured(id);
