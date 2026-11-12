@@ -19,7 +19,7 @@ npm run drive          # road network: one graph, every destination by road, the
 npm run weapons        # weapons: fitted multiples, cannon cratering, tank bulldozer, bombs, missiles, laser, discs, armour
 npm run craft          # vehicle rules: connected parts, the 1982 palette, the vehicle grammar, ground-vehicle design loop (offline)
 npm run engines        # fast flight: compressibility, ramjet/scramjet/solid/turbojet, thrust vectoring, airbrake, chute, cone/capsule parts, weight floors
-npm run air            # AI air traffic: count, clearance, destinations and circling, shot down and replaced
+npm run air            # AI air traffic: flights between fields and pads, clearance, one per runway, go-arounds
 npm run radar          # radar and planet map: contacts, heading-up scope, wrap-aware geometry
 npm run lock           # target lock, homing missiles, turret traverse/elevation and auto-aim, chase mode
 npm run turrets        # tower turrets: placement, streaming, armed-only fire, line of sight, kills, fracture
@@ -265,11 +265,47 @@ and icing, fog follows visibility, and the runway darkens when wet.
 
 Other programs fly around you (`src/sim/aiTraffic.ts`): the built-in aircraft and, in single
 player, your own hangar designs (F3 → *AI air traffic*: how many, and whether yours fly too).
-Each picks a destination 1.5-6 km from you, flies there, circles for 30-90 s, then picks
-another; it scans its path 15 s ahead (and the whole circle before circling) and climbs over
-anything in the way. The flight model is a kinematic coordinated turn (banking into turns), so
-two dozen cost almost nothing; each carries a kinematic collider, so you can fly into one or
-shoot it down (it derezzes in its circuit colour and another takes its place).
+Civil aircraft fly real flights between the airfields and helipads within 10 km of you:
+
+- **Aeroplanes** wait on a stand beside the runway, taxi to the hold, line up when the runway
+  is free and nobody is on short final, roll, and climb straight out to the field's sector
+  altitude before turning on course. They cruise at a level set by their direction of flight
+  (eastbound on the odd hundreds of metres, westbound on the even), join the destination's
+  pattern (downwind, base, the extended centreline), come down the 3° slope, flare, roll out,
+  clear the runway and turn round for the next flight. Runways are used into the wind.
+- **One aircraft per runway.** An aeroplane goes around if it is not lined up and on the slope
+  700 m out, or if the runway is taken: by another aircraft, or by you. After two missed
+  approaches it diverts to another field.
+- **Rotorcraft** lift straight off a pad (street-level or rooftop), fly across, slow to a hover
+  and let down onto another; one to a pad.
+- **Separation:** traffic at the same height within 700 m (yours included) parts vertically.
+- **Airships**, and everything where there is nowhere to land, wander: to a point, round it a
+  while, on to another.
+
+Everything scans its path 15 s ahead, and the circle it could turn through, and climbs over
+what is in the way. The flight model is a kinematic coordinated turn (banking into turns), so
+two dozen cost almost nothing; each carries a kinematic collider, so you can fly into one,
+park beside one or shoot it down (it derezzes in its circuit colour and another takes its
+place). Check: `npm run air`.
+
+## Light-cycle traffic
+
+Programs ride the street grid (`src/sim/traffic.ts`), two lanes each way, laying short jetwalls:
+
+- **Following.** Each rider accelerates to its own speed for the road and keeps a time gap to
+  whatever is ahead in its lane (the Intelligent Driver Model): another cycle, the end of that
+  cycle's jetwall, a stop line, your vehicle. A jetwall is as long as 1.2 s of riding, so
+  queues close up and nobody rides into the wall ahead.
+- **Intersections.** Highway crossings are signalled: green, amber, all-red, with the greens
+  running as a wave along the highways; the signals are drawn as stop bars of light (red,
+  amber, pale cyan). Where a street meets a highway the highway has priority and street riders
+  wait for a gap. Street crossings and dead ends are taken one rider at a time. Left turns
+  give way to the oncoming lanes (and clear as the lights change); nobody enters a crossing it
+  cannot leave; riders brake for a jetwall across their lane.
+- **Lanes.** Left turns leave from the inner lane, right turns from the outer. Riders move over
+  before a turn, pull out to pass, and drift back to the outer lane, with a square 90° jog.
+
+Check: `npm run traffic`.
 
 ## Teams, territory and the war
 
