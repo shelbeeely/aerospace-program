@@ -39,7 +39,8 @@ export class CraterView {
     this.slabs.frustumCulled = false;
     this.slabs.name = 'road-slabs';
     scene.add(this.slabs);
-    this.bars = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicNodeMaterial({ color: new THREE.Color('#ff2a12').multiplyScalar(2.2), depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 }), MAX_BARS);
+    this.bars = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicNodeMaterial({ color: new THREE.Color('#ff2a12').multiplyScalar(2.2), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 }), MAX_BARS);
+    this.bars.renderOrder = 2; // a decal: drawn after the ground it lies on
     this.bars.count = 0;
     this.bars.frustumCulled = false;
     this.bars.name = 'road-closed';
