@@ -276,15 +276,19 @@ Players may join and never return. No city, vote or route may depend on one pers
 - **Joining is cheap.** A new player can sign in as a guest (Supabase anonymous sign-in) and
   later upgrade to a full account with the same player id. They are placed in a vacant or
   caretaker city, or a new settlement, in the country with the fewest active mayors.
-- **Activity states** per player, with thresholds set in configuration and counted in season
-  time:
+- **Activity states** per player. The limits are real time since the player was last
+  connected, and are configuration; the defaults are:
 
-  | State | The player's city |
-  |---|---|
-  | active | run by the mayor |
-  | away | run by the mayor's standing orders |
-  | dormant | run by a caretaker: the neutral simulation that runs discovered cities. It stays in its country. |
-  | vacant | the seat is open: the country may assign it, or a newcomer may claim it |
+  | State | After | The player's city |
+  |---|---|---|
+  | active | | run by the mayor |
+  | away | 24 hours | run by the mayor's standing orders |
+  | dormant | 3 days | run by a caretaker: the neutral simulation that runs discovered cities. It stays in its country. |
+  | vacant | 10 days | the seat is open: the country may assign it, or a newcomer may claim it |
+
+  A player with under one hour of play goes straight to vacant after 48 hours, so seats taken
+  by people who tried the game once are freed quickly. Ten days lets a weekend player miss a
+  weekend.
 
 - **Returning.** Before the seat is reassigned, the mayor resumes the city as it stands and gets
   the report of what happened. After reassignment they are offered another city.
@@ -298,15 +302,26 @@ Players may join and never return. No city, vote or route may depend on one pers
 
 ## 10. Seasons and scoring
 
-- The world runs continuously on server time. Season length and clock rate are configuration.
-- Each season has a distinct starting portal network, discovery opportunities or a published
-  rule change, plus scheduled disruptions (a bridge closure, a flood that shuts low crossings).
+The first three seasons are planned in [`seasons.md`](seasons.md).
+
+- The world runs continuously on server time. Defaults: a season of six weeks, an intermission
+  of one week, a tick of one minute. All are configuration, with a compressed clock for tests.
+- **A season is data:** `SeasonConfig` holds the portal network, the activation budget, the
+  countries, rule changes, scheduled disruptions (a bridge closure, a surge that shuts low
+  crossings), scoring weights and story text.
 - Scoring works in a peaceful season: service reliability, fulfilled contracts, shared
   infrastructure used by others, growth. Territory scores through the services and routes it
   secures, not by area.
 - At the end: archive maps, border history, settlements, major projects, discoveries and trade
   routes. Reset territory, armies and stockpiles. Carry forward cosmetics and district
   blueprints; veterans get no extra starting resources.
+- **One season shapes the next.** Archiving computes outcome measures (accord index, conflict
+  index, disruption response, busiest route, champion, discoveries, scarcest good). The pure
+  function `nextSeason(template, outcomes)` picks one branch per hook in the next season's
+  template; every hook has a default. Carry-over changes the world and the story only, never a
+  team's resources, and no branch makes war necessary.
+- Planets persist across seasons by id, seed and generator version. Player edits are archived
+  with the season, not kept in play.
 
 ## 11. Server
 
@@ -315,9 +330,13 @@ Location: `server/campaign/`, beside the relay, in the same Bun process.
 - **Transport.** WebSocket at `/campaign`; Grid Link rooms keep the existing path and protocol
   untouched. Campaign messages get their own version number (`CAMPAIGN_VERSION`) in
   `src/campaign/protocol.ts`.
-- **Sessions.** Players sign in with Supabase Auth (guest, email or OAuth). The client presents
-  its Supabase JWT on `auth`; the server verifies it and maps the user id to a player. The
-  server never sees a password.
+- **Sessions.** Players sign in with Supabase Auth. At launch: guest (anonymous), Google,
+  Discord and an email link with no password. Later: Apple (needs a paid Apple developer
+  account) and Twitch. A guest can link any method and keeps the same player id and city.
+  The client presents its Supabase JWT on `auth`; the server verifies it and maps the user id
+  to a player. The server never sees a password.
+- **Archives.** A finished season's archive is written to Supabase Storage; its outcome
+  measures are kept in Postgres for `nextSeason`.
 - **Messages.** Client: `auth`, `command`, `subscribe` (city, country, planet, portal network),
   `ack`. Server: `snapshot` (versioned), `delta`, `result` (per command id), `feed`.
 - **Storage.** A `CampaignStore` interface with two drivers and the same tables (clock,
@@ -441,7 +460,7 @@ paired return portal, a scheduled bridge closure.
 Stages, each ending with passing checks and a commit:
 
 1. **Simulation core** (`src/campaign/`): state, tick, commands, economy, freight on the road
-   graph, events, scoring. Check `npm run campaign`: determinism (same commands, same state),
+   graph, events, scoring, `SeasonConfig` and `nextSeason` (check `npm run seasons`). Check `npm run campaign`: determinism (same commands, same state),
    idempotent commands, conservation of goods, capacity limits, a season that ends with scores
    and no war; a vote passes with absent members; a dormant mayor's city keeps its services;
    a vacant seat is taken over with its edits intact.
@@ -476,6 +495,9 @@ scores and no declaration of war; the sandbox room still works beside it.
 
 ## 16. Deferred work and open questions
 
+The slice is what season 1 needs. War arrives with season 2 and federations with season 3
+([`seasons.md`](seasons.md)).
+
 Deferred: free-form roads; in-place planet swap; air and orbital portals; per-planet radius,
 coast and central plan; war (occupation, ceasefires, objectives); federations; running
 one process per planet; LLM mayors for neutral cities.
@@ -484,9 +506,6 @@ Open questions:
 
 - How many players per country and per season is the target? It sets snapshot size and the
   subscription model.
-- Tick length and season length for a real season.
-- How long before a player is away, dormant and vacant (section 9).
-- Which sign-in methods to offer besides guests (email, which OAuth providers).
 - Whether neutral cities are run by simple rules or by a model.
 - How district blueprints are stored and shared between seasons.
 - Whether the home Grid's hand-planned centre is a city a player can govern, or a neutral

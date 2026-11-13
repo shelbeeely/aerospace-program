@@ -955,6 +955,9 @@ wind, surge, rain, scheduler lifecycle and actual Rapier ground motion.
     - **Seasons and scoring.** Scores reward reliable services, fulfilled contracts and
       useful shared infrastructure. The season is archived, then territory, armies and
       stockpiles reset; cosmetics and district blueprints carry over.
+    - **Three seasons are planned** as one story ([seasons](docs/seasons.md)): First Light,
+      Open Gates and The Dimming. How each season ends adjusts the next one's world and
+      story, never a team's starting resources.
     - **Server-authoritative.** Validated idempotent commands on the Bun server beside the
       Grid Link relay, hosted on Render, with durable state in Supabase Postgres and sign-in
       through Supabase Auth. Everyone sees the same world live: a building knocked over falls
