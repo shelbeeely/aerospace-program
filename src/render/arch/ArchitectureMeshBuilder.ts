@@ -193,7 +193,7 @@ function emitPrimitive(w: GeometryWriter, p: Primitive, T: TF, N: TF, f: ReturnT
     }
     case 'frustum': return frustum(w, p.w, p.d, p.wt, p.dt, p.h, T, N, f, elevated);
     case 'prism': return prism(w, SEG_LOD(p.sides, lod), p.r0, p.r1, p.h, p.phase ?? 0, T, N, f, elevated, p.sides >= 12);
-    case 'lathe': return lathe(w, p.profile, SEG_LOD(p.sides, lod), T, N, f, p.sides >= 12);
+    case 'lathe': return lathe(w, p.profile, SEG_LOD(p.sides, lod), T, N, f, p.sides >= 12, p.arc ?? Math.PI * 2, p.arcStart ?? 0, p.phase ?? 0);
     case 'ring': return ring(w, p.r0, p.r1, p.h, SEG_LOD(p.sides, lod), p.arc ?? Math.PI * 2, p.arcStart ?? 0, T, N, f);
     case 'torus': return torus(w, p.R, p.r, SEG_LOD(p.sides, lod), lod === 0 ? p.tube : 4, T, N);
     case 'extrude': return extrude(w, p.outline, p.h, p.taper ?? 1, T, N, f, elevated);
@@ -265,7 +265,32 @@ function prism(w: GeometryWriter, n: number, r0: number, r1: number, h: number, 
   }
 }
 
-function lathe(w: GeometryWriter, profile: ReadonlyArray<readonly [number, number]>, n: number, T: TF, N: TF, f: ReturnType<typeof edgeFlags>, smooth: boolean): void {
+/**
+ * Revolved profile on a polygon of n sides (vertices at phase + k·2π/n; n large reads as a
+ * circle). The surface follows the polygon exactly at any angle, so a partial turn (`arc` from
+ * `start`) can begin and end anywhere; its two ends are closed with the profile polygon. A
+ * closed profile (first point repeated last) makes a shell segment: a curved wall with an
+ * inside face, as a doorway's sides.
+ */
+function lathe(w: GeometryWriter, profile: ReadonlyArray<readonly [number, number]>, n: number, T: TF, N: TF, f: ReturnType<typeof edgeFlags>, smooth: boolean, arc = Math.PI * 2, start = 0, phase = 0): void {
+  const full = arc >= Math.PI * 2 - 1e-6;
+  const step = (Math.PI * 2) / n;
+  const closed = profile.length > 3 && Math.abs(profile[0][0] - profile[profile.length - 1][0]) < 1e-6 && Math.abs(profile[0][1] - profile[profile.length - 1][1]) < 1e-6;
+  // Radius factor of the polygon at angle a (1 at the vertices).
+  const poly = (a: number) => {
+    const t = ((((a - phase) % step) + step) % step) - step / 2;
+    return Math.cos(step / 2) / Math.cos(t);
+  };
+  // The angles the surface is cut at: the polygon's vertices within the turn, and its two ends.
+  const angles: number[] = [];
+  if (full) for (let k = 0; k <= n; k++) angles.push(phase + k * step);
+  else {
+    angles.push(start);
+    const k0 = Math.floor((start - phase) / step) + 1;
+    for (let k = k0; phase + k * step < start + arc - 1e-6; k++) angles.push(phase + k * step);
+    angles.push(start + arc);
+  }
+  const P = (r: number, y: number, a: number): V3 => { const k = r * poly(a); return T([Math.cos(a) * k, y, Math.sin(a) * k]); };
   let v = 0;
   for (let i = 0; i + 1 < profile.length; i++) {
     const [ra, ya] = profile[i], [rb, yb] = profile[i + 1];
@@ -273,15 +298,14 @@ function lathe(w: GeometryWriter, profile: ReadonlyArray<readonly [number, numbe
     if (seg < 1e-4) continue;
     const nr = (yb - ya) / seg, ny = -(rb - ra) / seg;
     // Lit edges: the profile breaks (horizontal), the first ring (base) and the last (top).
-    const litA = (i === 0 && f.base) || (i > 0 && f.horiz);
-    const litB = (i + 2 === profile.length && f.top) || (i + 2 < profile.length && f.horiz);
-    for (let k = 0; k < n; k++) {
-      const a0 = (k / n) * Math.PI * 2, a1 = ((k + 1) / n) * Math.PI * 2;
-      const P = (r: number, y: number, a: number) => T([Math.cos(a) * r, y, Math.sin(a) * r]);
-      const Nn = (a: number) => N(smooth ? [Math.cos(a) * nr, ny, Math.sin(a) * nr] : [Math.cos((a0 + a1) / 2) * nr, ny, Math.sin((a0 + a1) / 2) * nr]);
-      const circ = Math.PI * (ra + rb);
+    const litA = !closed && ((i === 0 && f.base) || (i > 0 && f.horiz));
+    const litB = !closed && ((i + 2 === profile.length && f.top) || (i + 2 < profile.length && f.horiz));
+    const circ = Math.PI * (ra + rb);
+    for (let k = 0; k + 1 < angles.length; k++) {
+      const a0 = angles[k], a1 = angles[k + 1], am = (a0 + a1) / 2;
+      const Nn = (a: number) => N(smooth ? [Math.cos(a) * nr, ny, Math.sin(a) * nr] : [Math.cos(am) * nr, ny, Math.sin(am) * nr]);
       const p00 = P(ra, ya, a0), p01 = P(ra, ya, a1), p10 = P(rb, yb, a0), p11 = P(rb, yb, a1);
-      const u0 = (k / n) * circ, u1 = ((k + 1) / n) * circ;
+      const u0 = (a0 / (Math.PI * 2)) * circ, u1 = (a1 / (Math.PI * 2)) * circ;
       if (rb < 0.05) {
         w.tri(p01, p00, p10, Nn(a1), Nn(a0), Nn(a0), [u1, v], [u0, v], [u0, v + seg], false, false, litA);
       } else if (ra < 0.05) {
@@ -295,12 +319,31 @@ function lathe(w: GeometryWriter, profile: ReadonlyArray<readonly [number, numbe
   }
   // Cap the top if the profile ends with a radius.
   const [rt, yt] = profile[profile.length - 1];
-  if (rt > 0.05) {
+  if (!closed && rt > 0.05) {
     const up = N([0, 1, 0]);
     const c = T([0, yt, 0]);
-    for (let k = 0; k < n; k++) {
-      const a0 = (k / n) * Math.PI * 2, a1 = ((k + 1) / n) * Math.PI * 2;
-      w.tri(c, T([Math.cos(a1) * rt, yt, Math.sin(a1) * rt]), T([Math.cos(a0) * rt, yt, Math.sin(a0) * rt]), up, up, up, [0, 0], [Math.cos(a1) * rt, Math.sin(a1) * rt], [Math.cos(a0) * rt, Math.sin(a0) * rt], f.top, false, false);
+    for (let k = 0; k + 1 < angles.length; k++) {
+      const a0 = angles[k], a1 = angles[k + 1];
+      const q0 = rt * poly(a0), q1 = rt * poly(a1);
+      w.tri(c, P(rt, yt, a1), P(rt, yt, a0), up, up, up, [0, 0], [Math.cos(a1) * q1, Math.sin(a1) * q1], [Math.cos(a0) * q0, Math.sin(a0) * q0], f.top, false, false);
+    }
+  }
+  // The two ends of a partial turn: the profile polygon (closed back to the axis if it is open).
+  if (!full) {
+    const pts = closed ? profile.slice(0, -1) : [[0, profile[0][1]] as const, ...profile, [0, profile[profile.length - 1][1]] as const];
+    const tris = earcut(pts);
+    for (const [a, sign] of [[start, -1], [start + arc, 1]] as const) {
+      const tx = -Math.sin(a) * sign, tz = Math.cos(a) * sign; // the way the end faces
+      const nn = N([tx, 0, tz]);
+      for (const [i, j, k] of tris) {
+        const loc = (q: readonly [number, number]): V3 => { const r = q[0] * poly(a); return [Math.cos(a) * r, q[1], Math.sin(a) * r]; };
+        let A = loc(pts[i]), B = loc(pts[j]), C = loc(pts[k]);
+        // Wind it so it faces out of the end.
+        const cx = (B[1] - A[1]) * (C[2] - A[2]) - (B[2] - A[2]) * (C[1] - A[1]);
+        const cz = (B[0] - A[0]) * (C[1] - A[1]) - (B[1] - A[1]) * (C[0] - A[0]);
+        if (cx * tx + cz * tz < 0) [B, C] = [C, B];
+        w.tri(T(A), T(B), T(C), nn, nn, nn, [0, A[1]], [0, B[1]], [0, C[1]], false, false, false);
+      }
     }
   }
 }

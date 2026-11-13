@@ -196,7 +196,8 @@ function doorKerb(h: BitHome, d: RoomDoor): number {
 
 /** A place to stand down the aisle behind a door. */
 function spotBehind(d: RoomDoor, rand: () => number): Waypoint {
-  const t = 3 + rand() * (d.depth - 3);
+  const t0 = d.inset + 1.5;
+  const t = t0 + rand() * Math.max(0, d.depth - t0);
   const side = (rand() - 0.5) * Math.max(0, d.width - 2.6);
   return { x: d.x - d.nx * t - d.nz * side, z: d.z - d.nz * t + d.nx * side };
 }

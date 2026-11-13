@@ -35,7 +35,12 @@ export type Tier = 1 | 2 | 3;
 export type Primitive =
   | { kind: 'box'; w: number; h: number; d: number; taper?: number }
   | { kind: 'prism'; sides: number; r0: number; r1: number; h: number; phase?: number }
-  | { kind: 'lathe'; profile: ReadonlyArray<readonly [number, number]>; sides: number }
+  /**
+   * Revolved (radius, height) profile on a polygon of `sides` (vertices at phase + k·2π/sides).
+   * `arc`/`arcStart`: only that part of the turn, closed with the profile at each end. A closed
+   * profile (first point repeated last) revolves into a shell: a curved wall with an inside.
+   */
+  | { kind: 'lathe'; profile: ReadonlyArray<readonly [number, number]>; sides: number; phase?: number; arc?: number; arcStart?: number }
   | { kind: 'ring'; r0: number; r1: number; h: number; sides: number; arc?: number; arcStart?: number }
   | { kind: 'torus'; R: number; r: number; sides: number; tube: number }
   | { kind: 'extrude'; outline: ReadonlyArray<readonly [number, number]>; h: number; taper?: number }

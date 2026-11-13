@@ -187,6 +187,52 @@ for (const a of ARCHETYPE_IDS) {
   check(bad === 0 && blocked === 0 && thin === 0, 'a round room validates, its wall is closed and its doorways are open', `${bad} problems, ${blocked} blocked doorway samples, ${thin} gaps in the wall`);
 }
 
+// --- Shell rooms and entrance halls: radial structures and every kind of tower have rooms.
+{
+  const fam = new Map<string, [number, number]>();
+  let bad = 0, blocked = 0, gaps = 0, halls = 0, shells = 0, outside = 0;
+  const notes: string[] = [], gapNotes: string[] = [];
+  for (let ci = -2; ci <= 2; ci++) for (let cj = -2; cj <= 2; cj++) for (const s of districtPlan(ci, cj).structures) {
+    if (s.archetype !== 'radial' && s.archetype !== 'tower') continue;
+    const k = `${s.archetype}/${s.variant}`;
+    const f = fam.get(k) ?? [0, 0];
+    f[0]++;
+    const room = structureRoom(s);
+    if (room) f[1]++;
+    fam.set(k, f);
+    const I = s.interior;
+    if (!I || !room || I.wall < 1.4) continue; // the box and drum rooms are checked above
+    shells++;
+    if (s.components.some((c) => c.role === 'hall')) halls++;
+    if (!s.validation?.pass) bad++;
+    const solidAt = (x: number, z: number, y: number) => s.colliders.some((c) => Math.abs(c.x - x) < c.sx / 2 + 0.05 && Math.abs(c.z - z) < c.sz / 2 + 0.05 && c.y - c.sy / 2 < y && c.y + c.sy / 2 > y);
+    const y = room.y + 1.5;
+    // Every doorway open from the room out through the wall to the outer face.
+    for (const d of room.doors) {
+      if (d.depth < 3) { bad++; notes.push(`${k}: door aisle ${d.depth} m`); continue; }
+      for (let t = -2; t <= I.wall / 2 + 0.5; t += 0.5) if (solidAt(d.x + d.nx * t, d.z + d.nz * t, y)) { blocked++; if (notes.length < 6) notes.push(`${k}: doorway blocked ${t.toFixed(1)} m out (wall ${I.wall.toFixed(1)} m)`); break; }
+    }
+    // The wall closed just outside the room, all the way round except at the doorways.
+    const R = room.round;
+    const cx = R ? R.x : (room.x0 + room.x1) / 2, cz = R ? R.z : (room.z0 + room.z1) / 2;
+    const half = R ? R.r : (room.x1 - room.x0) / 2;
+    for (let n = 0; n < 160; n++) {
+      const a = (n / 160) * Math.PI * 2;
+      const r = R ? half + 0.6 : (half + 0.6) / Math.max(Math.abs(Math.cos(a)), Math.abs(Math.sin(a)));
+      const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
+      const nearDoor = room.doors.some((d) => Math.abs((x - d.x) * d.nz - (z - d.z) * d.nx) < d.width / 2 + 1.2);
+      if (!nearDoor && !solidAt(x, z, y)) { gaps++; if (gapNotes.length < 4) gapNotes.push(`${k} ${R ? 'round' : 'square'} wall ${I.wall.toFixed(1)} at ${((a * 180) / Math.PI).toFixed(0)}°`); }
+    }
+    // The furniture inside the room.
+    for (const c of s.components) if (c.interior && (R ? Math.hypot(c.x - I.round!.cx, c.z - I.round!.cz) > I.round!.r + 0.5 : c.x < I.x0 - 0.5 || c.x > I.x1 + 0.5 || c.z < I.z0 - 0.5 || c.z > I.z1 + 0.5)) outside++;
+  }
+  const rows = [...fam].sort().map(([k2, [n, r]]) => `${k2} ${r}/${n}`);
+  const total = [...fam.values()].reduce((a, [n, r]) => [a[0] + n, a[1] + r], [0, 0]);
+  console.log(`     rooms: ${rows.join(', ')}`);
+  check(total[1] >= total[0] * 0.95, 'radial structures and towers have rooms', `${total[1]} of ${total[0]}, ${shells} of them shells or halls (${halls} halls)`);
+  check(bad === 0 && blocked === 0 && gaps === 0 && outside === 0, 'shell and hall rooms validate, their doorways are open and their walls closed', `${bad} problems, ${blocked} blocked doorways, ${gaps} gaps in walls, ${outside} pieces of furniture outside${notes.length ? ': ' + notes.join('; ') : ''}${gapNotes.length ? ' gaps: ' + gapNotes.join('; ') : ''}`);
+}
+
 // --- Outlands terrain.
 {
   const seen = new Set<string>();

@@ -227,7 +227,7 @@ console.log('\n--- structural integrity of fractured structures');
   sim.resetToRunway();
   // The tallest slender structure with a foot big enough to cut most of away.
   const footOf = (g: (typeof groups)[number]) => { const m = structureMask(g, sim.staticWorld.structures.list); let n = 0; for (let x = 0; x < g.size[0]; x++) for (let z = 0; z < g.size[2]; z++) if (m(x, 0, z)) n++; return n; };
-  const tallOnes = groups.filter((g) => !g.kit && g.arch && !g.arch.startsWith('infra') && g.size[1] >= 8 && g.size[0] <= 10 && g.size[2] <= 10).sort((p, q) => q.size[1] * q.blockSize - p.size[1] * p.blockSize);
+  const tallOnes = groups.filter((g) => !g.kit && g.arch && !g.arch.startsWith('infra') && g.size[1] >= 8 && g.size[0] <= 14 && g.size[2] <= 14).sort((p, q) => q.size[1] * q.blockSize - p.size[1] * p.blockSize);
   const tall = tallOnes.find((g) => footOf(g) >= 12) ?? tallOnes[0];
   const b = sim.staticWorld.fracture(tall.id, { impulse: 0, x: 0, y: 0, z: 0 }, sim.time, false);
   const whole = b.aliveCount;

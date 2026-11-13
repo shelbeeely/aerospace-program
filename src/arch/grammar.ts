@@ -116,8 +116,11 @@ export class Builder {
   }
 
   /** Revolved (radius, height) profile: trumpet bases, stepped radial platforms, domes. */
-  lathe(tier: Tier, role: string, x: number, y: number, z: number, profile: Array<[number, number]>, sides: number, o: Opts = {}): Component {
-    const c = this.push({ kind: 'lathe', profile, sides }, tier, role, x, y, z, o);
+  lathe(tier: Tier, role: string, x: number, y: number, z: number, profile: Array<[number, number]>, sides: number, o: Opts & { phase?: number; arc?: number; arcStart?: number } = {}): Component {
+    const prim: Primitive = { kind: 'lathe', profile, sides };
+    if (o.phase) prim.phase = o.phase;
+    if (o.arc !== undefined && o.arc < Math.PI * 2 - 1e-6) { prim.arc = o.arc; prim.arcStart = o.arcStart ?? 0; }
+    const c = this.push(prim, tier, role, x, y, z, o);
     if (this.solid(tier, o)) {
       for (let i = 0; i + 1 < profile.length; i++) {
         const [ra, ya] = profile[i];
@@ -274,7 +277,7 @@ export function primitiveTriangles(p: Primitive): number {
   switch (p.kind) {
     case 'box': return 12 + (Math.max(p.w, p.d) > 120 ? 24 : 0);
     case 'prism': return p.sides * (p.r1 > 0 ? 4 : 3);
-    case 'lathe': return (p.profile.length - 1) * p.sides * 2 + p.sides * 2;
+    case 'lathe': { const k = (p.arc ?? Math.PI * 2) / (Math.PI * 2); return Math.ceil((p.profile.length - 1) * (p.sides * k + 2) * 2 + (k < 1 ? p.profile.length * 2 : p.sides * 2)); }
     case 'ring': return p.sides * 8 + 4;
     case 'torus': return p.sides * p.tube * 2;
     case 'extrude': return p.outline.length * 2 + (p.outline.length - 2) * 2;
@@ -298,9 +301,9 @@ export function primitiveVolume(p: Primitive): number {
       let v = 0;
       for (let i = 0; i + 1 < p.profile.length; i++) {
         const [ra, ya] = p.profile[i], [rb, yb] = p.profile[i + 1];
-        v += (Math.PI * Math.abs(yb - ya) / 3) * (ra * ra + ra * rb + rb * rb);
+        v += (Math.PI * (yb - ya) / 3) * (ra * ra + ra * rb + rb * rb); // signed: a closed shell profile nets out to its own volume
       }
-      return v;
+      return Math.abs(v) * ((p.arc ?? Math.PI * 2) / (Math.PI * 2));
     }
     case 'ring': return Math.PI * (p.r1 * p.r1 - p.r0 * p.r0) * p.h * ((p.arc ?? Math.PI * 2) / (Math.PI * 2));
     case 'torus': return 2 * Math.PI * Math.PI * p.R * p.r * p.r;
@@ -339,7 +342,7 @@ export function primitiveArea(p: Primitive): number {
         const [ra, ya] = p.profile[i], [rb, yb] = p.profile[i + 1];
         a += Math.PI * (ra + rb) * Math.hypot(rb - ra, yb - ya);
       }
-      return a;
+      return a * ((p.arc ?? Math.PI * 2) / (Math.PI * 2));
     }
     case 'ring': return (2 * Math.PI * (p.r0 + p.r1) * p.h + 2 * Math.PI * (p.r1 * p.r1 - p.r0 * p.r0)) * ((p.arc ?? Math.PI * 2) / (Math.PI * 2));
     case 'torus': return 4 * Math.PI * Math.PI * p.R * p.r;
