@@ -463,46 +463,53 @@ function local(f: Landform, x: number, z: number): [number, number] {
   return [dx * c - dz * s, dx * s + dz * c];
 }
 
-/** Top surface height of a landform at (x, z) (canonical frame of the landform), or -Infinity. */
-export function landformTop(f: Landform, x: number, z: number): number {
+/**
+ * The solid's bottom and top (m) on the vertical line through (x, z), in the landform's own
+ * canonical frame; null where the line misses it. Every landform is convex, so this is the
+ * whole of it there.
+ */
+export function landformSpan(f: Landform, x: number, z: number): [number, number] | null {
   const [u, v] = local(f, x, z);
   switch (f.shape) {
     case 'frustum': {
       const ax = Math.abs(u), az = Math.abs(v);
-      if (ax > f.w / 2 || az > f.d / 2) return -Infinity;
+      if (ax > f.w / 2 || az > f.d / 2) return null;
       const fx = ax <= f.wt / 2 ? 1 : (f.w / 2 - ax) / Math.max(1e-6, (f.w - f.wt) / 2);
       const fz = az <= f.dt / 2 ? 1 : (f.d / 2 - az) / Math.max(1e-6, (f.d - f.dt) / 2);
-      return f.y0 + f.h * Math.min(fx, fz);
+      return [f.y0, f.y0 + f.h * Math.min(fx, fz)];
     }
     case 'pyramid': {
       const m = Math.max(Math.abs(u), Math.abs(v));
-      return m >= f.half ? -Infinity : f.y0 + f.h * (1 - m / f.half);
+      return m >= f.half ? null : [f.y0, f.y0 + f.h * (1 - m / f.half)];
     }
     case 'octa': {
+      // Two pyramids base to base: the waist is at y0 + h.
       const m = Math.max(Math.abs(u), Math.abs(v));
-      return m >= f.half ? -Infinity : f.y0 + f.h * (2 - m / f.half);
+      return m >= f.half ? null : [f.y0 + (f.h * m) / f.half, f.y0 + f.h * (2 - m / f.half)];
     }
     case 'dome': {
       const e = (u / (f.w / 2)) ** 2 + (v / (f.d / 2)) ** 2;
-      return e >= 1 ? -Infinity : f.y0 + f.h * Math.sqrt(1 - e);
+      return e >= 1 ? null : [f.y0, f.y0 + f.h * Math.sqrt(1 - e)];
     }
     case 'sphere': {
       const d2 = u * u + v * v;
-      return d2 >= f.r0 * f.r0 ? -Infinity : f.y0 + f.r0 + Math.sqrt(f.r0 * f.r0 - d2);
+      if (d2 >= f.r0 * f.r0) return null;
+      const k = Math.sqrt(f.r0 * f.r0 - d2);
+      return [f.y0 + f.r0 - k, f.y0 + f.r0 + k];
     }
     case 'prism': {
       const k = Math.cos(Math.PI / f.sides);
       const d = Math.hypot(u, v);
       const ri0 = f.r0 * k, ri1 = f.r1 * k;
-      if (d >= ri0) return -Infinity;
-      return f.y0 + (d <= ri1 ? f.h : (f.h * (ri0 - d)) / Math.max(1e-6, ri0 - ri1));
+      if (d >= ri0) return null;
+      return [f.y0, f.y0 + (d <= ri1 ? f.h : (f.h * (ri0 - d)) / Math.max(1e-6, ri0 - ri1))];
     }
     case 'slab': {
       // Vertical line through a box tilted by rx about its local x axis.
       const c = Math.cos(f.rx), s = Math.sin(f.rx);
-      if (Math.abs(u) > f.w / 2) return -Infinity;
+      if (Math.abs(u) > f.w / 2) return null;
       // In the slab frame, a point (v, y) maps to (v c + y s, -v s + y c) for (z', y').
-      // Find the largest y with |z'| ≤ d/2 and |y'| ≤ h/2 (y measured from the slab centre).
+      // Find the range of y with |z'| ≤ d/2 and |y'| ≤ h/2 (y measured from the slab centre).
       let lo = -Infinity, hi = Infinity;
       const clampLine = (a: number, b: number, lim: number) => {
         // |a + b·y| ≤ lim
@@ -512,9 +519,43 @@ export function landformTop(f: Landform, x: number, z: number): number {
       };
       clampLine(v * c, -s, f.d / 2);
       clampLine(v * s, c, f.h / 2);
-      return hi >= lo ? f.y0 + f.h / 2 + hi : -Infinity;
+      return hi >= lo ? [f.y0 + f.h / 2 + lo, f.y0 + f.h / 2 + hi] : null;
     }
   }
+}
+
+/** Top surface height of a landform at (x, z) (canonical frame of the landform), or -Infinity. */
+export function landformTop(f: Landform, x: number, z: number): number {
+  return landformSpan(f, x, z)?.[1] ?? -Infinity;
+}
+
+// --- Broken landforms ---
+
+/**
+ * Landforms that have been broken up (the destruction engine turned them into blocks). They are
+ * no longer part of the terrain: the height queries skip them, the renderer leaves them out,
+ * and no hull collider is made for them. Module state, because the terrain itself is a pure
+ * function of the seed: cleared by `mendForms` (a world reset, a new simulation).
+ */
+const broken = new Set<string>();
+let brokenCount = 0;
+
+/** A landform's identity: where its base is (canonical) and what it is. */
+export function formKey(f: Landform): string {
+  return `${f.shape}:${Math.round(mod(f.cx, C))}:${Math.round(mod(f.cz, C))}:${Math.round(f.y0)}:${f.id}`;
+}
+export function breakForm(f: Landform): void {
+  if (!broken.has(formKey(f))) { broken.add(formKey(f)); brokenCount++; }
+}
+export function isBroken(f: Landform): boolean {
+  return broken.size > 0 && broken.has(formKey(f));
+}
+export function mendForms(): void {
+  if (broken.size) { broken.clear(); brokenCount++; }
+}
+/** Changes whenever a landform breaks or they are all mended (renderers watch it). */
+export function brokenVersion(): number {
+  return brokenCount;
 }
 
 /** Convex hull points (world metres, offset by (ox, oz)) of a landform. */
@@ -599,7 +640,7 @@ function shift(f: Landform, px: number, pz: number): Landform {
 export function terrainHeight(x: number, z: number): number {
   const px = mod(x, C), pz = mod(z, C);
   let h = 0;
-  eachForm(px, pz, (f) => { if (!f.overhead) h = Math.max(h, landformTop(f, px, pz)); });
+  eachForm(px, pz, (f) => { if (!f.overhead && !isBroken(f)) h = Math.max(h, landformTop(f, px, pz)); });
   return h;
 }
 
@@ -607,7 +648,7 @@ export function terrainHeight(x: number, z: number): number {
 export function terrainTop(x: number, z: number): number {
   const px = mod(x, C), pz = mod(z, C);
   let h = 0;
-  eachForm(px, pz, (f) => { h = Math.max(h, landformTop(f, px, pz)); });
+  eachForm(px, pz, (f) => { if (!isBroken(f)) h = Math.max(h, landformTop(f, px, pz)); });
   return h;
 }
 
