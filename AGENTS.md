@@ -296,9 +296,15 @@ universe, not a conventional open world decorated with neon.
   never on wheels. A Bit is a rigid polyhedron that hovers; it has no legs and no animation
   rig. It speaks only by which of its four figures it shows (`src/people/bit.ts`): blue idle 1
   and idle 2 (it pulses between them), yellow YES, red NO.
-- **They behave like people** (`src/sim/bits.ts`): they live on a block, walk its kerb, stand,
-  meet and talk, step back from fast vehicles and explosions, and derez when run over. Seeded
-  and deterministic per block; streamed around the player.
+- **They behave like people** (`src/sim/bits.ts`): they live on a lot, indoors in its building's
+  room and on the kerb round it; they go in and out by the doors, stand, meet and talk, step
+  back from fast vehicles and explosions, and derez when run over. Seeded and deterministic per
+  lot; streamed around the player. A Bit is never inside a wall or the machinery.
+- **Buildings have rooms for their people** (§8). A structure generated solid gets a commons
+  hollowed out of its largest box mass on the ground or a low foundation (`inhabit` in
+  `src/arch/InteriorGenerator.ts`), unless that would fail one of the ten checks. The shell
+  keeps the mass's surface, tier and role, every door has a clear way out to the lot edge (with
+  steps where it is raised) and a clear aisle in. New interior furniture keeps the aisles clear.
 - **The player on foot is a Bit** (`BitWalker`): it steps out of a stopped vehicle, walks, and
   gets back in beside it. The vehicle stays parked.
 - The figures are the imported "BIT" meshes (CC-BY 4.0, credited in the README). Do not

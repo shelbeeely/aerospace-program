@@ -4,21 +4,24 @@
  * 1. The four figures are the imported polyhedra: closed, centred, unit circumradius.
  * 2. The state logic: idle alternates between the two blue figures, an answer shows for a
  *    moment and then it idles again.
- * 3. People: Bits live on blocks with streets and walk the kerb, deterministic for the world;
- *    they stand, turn back, stop to talk, flinch from fast vehicles and explosions, answer the
- *    player, and derez when run over.
+ * 3. People: Bits live on lots, deterministic for the world: indoors in their building's room
+ *    and on the kerb round it. They go in and out by the doors, never stand in a wall, stand,
+ *    turn back, stop to talk, flinch from fast vehicles and explosions, answer the player, and
+ *    derez when run over.
  * 4. On foot: the player steps out of a stopped vehicle as a Bit, walks, turns, sidesteps, is
- *    stopped by walls, and gets back in beside the vehicle.
+ *    stopped by walls, walks into a building's room through its door, and gets back in beside
+ *    the vehicle.
  */
 import { BIT, BIT_LOOK, BIT_SHAPES, bitState, type BitState } from '../src/people/bit.ts';
 import { LIGHT_CAR } from '../src/craft/lightCar.ts';
-import { BITS, BitPopulation, blockPopulation } from '../src/sim/bits.ts';
+import { BITS, BitPopulation, type BitHome, type BitPerson } from '../src/sim/bits.ts';
+import type { RoomDoor } from '../src/arch/InteriorGenerator.ts';
 import type { ControlInputs } from '../src/sim/controls.ts';
-import { CITY } from '../src/sim/layout.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 import { terrainHeight } from '../src/sim/terrain.ts';
-import { GRID } from '../src/world/planetCity.ts';
 import { worldStructures } from '../src/world/structures.ts';
+import { districtPlan } from '../src/arch/DistrictGenerator.ts';
+import { GRID } from '../src/arch/grid.ts';
 
 await initPhysics();
 let failures = 0;
@@ -73,42 +76,85 @@ console.log('\n--- states');
 
 console.log('\n--- people');
 const neutral: ControlInputs = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 };
+const inRoom = (p: BitPerson) => { const r = p.home.room; return !!r && p.x > r.x0 && p.x < r.x1 && p.z > r.z0 && p.z < r.z1; };
 {
   const sim = new Simulation(LIGHT_CAR);
   sim.traffic.enabled = false;
   const street = { x: sim.position.x, z: sim.position.z };
   for (let i = 0; i < 120; i++) sim.step(neutral);
   const people = sim.bits.people;
-  check(people.length >= 12 && people.length <= BITS.max, 'the streets around the player have people on them', `${people.length} Bits within ${BITS.radius} m`);
-  check(people.every((p) => blockPopulation(p.gi, p.gj) > p.slot), 'each lives on a block that has streets');
-  // On the kerb: just outside the block, clear of the lanes and of the buildings.
-  const P = CITY.block + CITY.street;
+  check(people.length >= 12 && people.length <= BITS.max, 'the lots around the player have people', `${people.length} Bits within ${BITS.radius} m, ${sim.bits.indoors} of them indoors`);
+  // On the kerb: just outside the lot, clear of the lanes and of the buildings.
   const offKerb = people.filter((p) => {
-    const lx = Math.abs(((p.x - GRID.x0) % P + P) % P - P / 2), lz = Math.abs(((p.z - GRID.z0) % P + P) % P - P / 2);
-    const out = Math.max(lx, lz) - CITY.block / 2; // distance outside the block edge
-    return out < BITS.kerb - 2.8 || out > BITS.kerb + 0.05;
+    if (p.place !== 'kerb') return false;
+    const h = p.home;
+    const out = Math.max(h.x0 - p.x, p.x - h.x1, h.z0 - p.z, p.z - h.z1); // 0 on the kerb line, negative stepped back
+    return out > 0.05 || out < -2.8;
   }).length;
-  check(offKerb === 0, 'they keep to the kerb, off the lanes', `${offKerb} off it`);
-  check(people.every((p) => Math.abs(p.y - terrainHeight(p.x, p.z) - BIT.hover) < 1e-6), 'each hovers over the ground');
+  check(offKerb === 0, 'outdoors they keep to the kerb round their lot, off the lanes', `${offKerb} off it`);
+  check(people.every((p) => Math.abs(p.y - (inRoom(p) ? p.home.room!.y : terrainHeight(p.x, p.z)) - BIT.hover) < 1e-6), 'each hovers over the floor it is on');
   // Deterministic: the same streets hold the same people.
   const again = new Simulation(LIGHT_CAR);
   again.traffic.enabled = false;
   for (let i = 0; i < 120; i++) again.step(neutral);
-  const sig = (s: Simulation) => s.bits.people.map((p) => `${p.gi},${p.gj},${p.slot},${p.x.toFixed(3)},${p.z.toFixed(3)}`).join(';');
+  const sig = (s: Simulation) => s.bits.people.map((p) => `${p.home.key},${p.slot},${p.place},${p.x.toFixed(3)},${p.z.toFixed(3)}`).join(';');
   check(sig(sim) === sig(again), 'the same world has the same people in the same places');
-  // They walk, stand, and stop to talk.
+
   const start = new Map(people.map((p) => [p.id, [p.x, p.z]]));
   const moods = new Set<string>(), said = new Set<string>();
-  for (let i = 0; i < 90 * 120; i++) {
+  for (let i = 0; i < 180 * 120; i++) {
     sim.step(neutral);
     if (i % 30 === 0) for (const p of sim.bits.people) { moods.add(p.mood); said.add(sim.bits.stateOf(p, sim.time)); }
   }
   const moved = sim.bits.people.filter((p) => { const a = start.get(p.id); return a && Math.hypot(p.x - a[0], p.z - a[1]) > 5; }).length;
-  check(moved > people.length * 0.6, 'they walk their blocks', `${moved} of ${people.length} moved on in 90 s`);
+
+  console.log('\n--- daily life');
+  check(moved > people.length * 0.5, 'they get about', `${moved} of ${people.length} moved on in 3 min`);
   check(moods.has('walk') && moods.has('stand'), 'they stop and stand a while', [...moods].join(', '));
-  check(sim.bits.talks > 0 && moods.has('talk') && said.has('yes') && said.has('no'), 'two that meet stop to talk: YES and NO are said', `${sim.bits.talks} conversations in 90 s`);
+  check(sim.bits.talks > 0 && moods.has('talk') && said.has('yes') && said.has('no'), 'two that meet stop to talk: YES and NO are said', `${sim.bits.talks} conversations in 3 min`);
   check(said.has('idle1') && said.has('idle2'), 'left alone they idle between the two blue figures');
   check(sim.bits.derezzed === 0 && Math.hypot(sim.position.x - street.x, sim.position.z - street.z) < 5, 'a parked vehicle hurts nobody');
+}
+{
+  console.log('\n--- interiors');
+  // A built-up part of town, away from the airfield.
+  const c = { x: -2600, z: -1500 };
+  const pop = new BitPopulation();
+  pop.step(1 / 30, 0, c);
+  const homes = [...pop.homes.values()];
+  const rooms = homes.filter((h) => h.room);
+  const programs = new Map<string, number>();
+  for (const h of rooms) programs.set(h.room!.program, (programs.get(h.room!.program) ?? 0) + 1);
+  check(rooms.length >= 5, 'buildings have rooms for their people', `${rooms.length} of ${homes.length} lots near (${c.x}, ${c.z}): ${[...programs].map(([k, n]) => `${n} ${k}`).join(', ')}`);
+  check(rooms.every((h) => h.room!.doors.every((d) => d.depth >= 3 && Math.abs(d.nx) + Math.abs(d.nz) === 1)), 'every door has a clear aisle behind it');
+  check(pop.indoors > 5 && pop.people.filter((p) => p.place === 'inside').every(inRoom), 'some are at home indoors when their lot comes into view', `${pop.indoors} of ${pop.people.length} indoors`);
+  // Nobody stands in a wall or in the machinery: check against the buildings' own colliders.
+  const solid: Array<{ x: number; y: number; z: number; sx: number; sy: number; sz: number }> = [];
+  const seen = new Set<string>();
+  for (const h of homes) {
+    const ci = Math.floor(h.gi / GRID.chunkBlocks), cj = Math.floor(h.gj / GRID.chunkBlocks);
+    if (seen.has(`${ci},${cj}`)) continue;
+    seen.add(`${ci},${cj}`);
+    for (const st of districtPlan(ci, cj).structures) solid.push(...st.colliders);
+  }
+  const inSolid = (p: BitPerson) => solid.some((b) => Math.abs(p.x - b.x) < b.sx / 2 - 0.1 && Math.abs(p.z - b.z) < b.sz / 2 - 0.1 && Math.abs(p.y - b.y) < b.sy / 2);
+  const places = new Set<string>();
+  let stuck = 0, indoorTalk = false, astray = 0, peak = 0;
+  for (let i = 0; i < 480 * 30; i++) {
+    pop.step(1 / 30, i / 30, c);
+    if (i % 15 === 0) for (const p of pop.people) {
+      places.add(p.place);
+      if (p.place === 'inside' && p.mood === 'talk') indoorTalk = true;
+      if (p.place === 'inside' && !inRoom(p)) astray++;
+      if (inSolid(p)) stuck++;
+    }
+    peak = Math.max(peak, pop.indoors);
+  }
+  check(pop.entries > 3 && pop.exits > 3 && places.has('way'), 'they go in by the doors and come out again', `${pop.entries} went in, ${pop.exits} came out in 8 min`);
+  check(astray === 0, 'indoors they stay in their room');
+  check(stuck === 0, 'nobody is ever inside a wall or the machinery', `${solid.length} colliders, ${stuck} bad samples`);
+  check(indoorTalk, 'they talk indoors too');
+  check(pop.indoors > 0 && pop.indoors < pop.people.length, 'the town is never all indoors or all out', `${pop.indoors} of ${pop.people.length} indoors after 8 min (peak ${peak})`);
 }
 {
   // A vehicle coming past fast: they say NO and step back; one that is run over derezzes.
@@ -116,17 +162,17 @@ const neutral: ControlInputs = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 
   const sim = new Simulation(LIGHT_CAR);
   const c = { x: sim.position.x, z: sim.position.z };
   pop.step(1 / 120, 0, c);
-  const p = pop.people[0];
+  const p = pop.people.find((q) => q.place === 'kerb')!;
   const threat = { x: p.x - 10, y: p.y, z: p.z, vx: 20, vz: 0 };
   pop.step(1 / 120, 0.01, c, [threat]);
   check(p.mood === 'scared' && pop.stateOf(p, 0.02) === 'no' && p.backTo > 0, 'a vehicle bearing down: it says NO and steps back from the road');
   const away = pop.people.find((q) => Math.hypot(q.x - threat.x, q.z - threat.z) > BITS.scareRange * 2)!;
   check(away.mood !== 'scared', 'the ones farther off carry on');
-  const n = pop.people.length, slot = p.slot, gi = p.gi, gj = p.gj;
+  const n = pop.people.length, slot = p.slot, home = p.home;
   pop.step(1 / 120, 0.02, c, [{ ...threat, x: p.x, z: p.z }]);
   check(pop.people.length === n - 1 && pop.derezzed === 1 && pop.derezEvents.length === 1, 'run over, it derezzes');
   for (let t = 0.03; t < 5; t += 0.5) pop.step(0.5, t, c);
-  check(!pop.people.some((q) => q.gi === gi && q.gj === gj && q.slot === slot), 'and does not pop back while its block is in view');
+  check(!pop.people.some((q) => q.home === home && q.slot === slot), 'and does not pop back while its lot is in view');
   // The player's Bit speaks: those in earshot turn and answer.
   const q = pop.people[0];
   const heard = pop.hear(q.x + 2, q.z, 6);
@@ -183,6 +229,35 @@ console.log('\n--- on foot');
     let closest = Infinity;
     for (let i = 0; i < 60 * 120; i++) { sim.step(neutral); closest = Math.min(closest, Math.hypot(best.x - w.x, best.z - w.z)); }
     check(closest > 1 && closest < best.d, 'a building stops it: it does not walk through walls', `stopped ${r2(closest)} m from the centre of a structure ${r2(best.d)} m away`);
+  }
+  // Through a door on foot: the rooms are real space, with a real opening.
+  {
+    sim.bits.enabled = true;
+    sim.step(neutral);
+    sim.bits.enabled = false;
+    let best: { d: number; h: BitHome; door: RoomDoor } | null = null;
+    for (const h of sim.bits.homes.values()) for (const door of h.room?.doors ?? []) {
+      const d = Math.hypot(door.x - sim.position.x, door.z - sim.position.z);
+      if (door.rise < 0.3 && (!best || d < best.d)) best = { d, h, door };
+    }
+    if (best) {
+      const { door, h } = best;
+      w.exit(door.x + door.nx * 5, terrainHeight(door.x + door.nx * 5, door.z + door.nz * 5), door.z + door.nz * 5, Math.atan2(door.nx, door.nz));
+      sim.walkInput = { forward: 1, turn: 0, strafe: 0 };
+      const want = Math.min(door.depth - 1, 8);
+      for (let i = 0; i < 4 * 120; i++) {
+        sim.step(neutral);
+        if ((door.x - w.x) * door.nx + (door.z - w.z) * door.nz >= want) break;
+      }
+      const r = h.room!;
+      const inside = w.x > r.x0 && w.x < r.x1 && w.z > r.z0 && w.z < r.z1;
+      check(inside && Math.abs(w.y - r.y) < 0.4, 'it walks in through a door and stands in the room', `${r.program} ${r2(best.d)} m from the vehicle, ${r2((door.x - w.x) * door.nx + (door.z - w.z) * door.nz)} m inside`);
+      // And the walls of the room hold it in.
+      w.yaw += Math.PI / 2;
+      for (let i = 0; i < 30 * 120; i++) sim.step(neutral);
+      check(w.x > r.x0 - 0.5 && w.x < r.x1 + 0.5 && w.z > r.z0 - 0.5 && w.z < r.z1 + 0.5, 'and the walls keep it in');
+    } else check(false, 'a room with a ground-level door near the vehicle');
+    sim.walkInput = { forward: 0, turn: 0, strafe: 0 };
   }
   check(w.say('yes', sim.time) && w.state(sim.time + 0.1) === 'yes' && !w.say('yes', sim.time + 0.2), 'it says YES (a held key is one answer)');
   // Back to the vehicle and aboard.

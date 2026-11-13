@@ -300,11 +300,20 @@ by which of four figures they show (`src/people/bit.ts`).
 | YES | octahedron | yellow |
 | NO | stellated icosahedron | red |
 
-- **They live on the streets** (`src/sim/bits.ts`). Each block with streets around it has up to
-  six, more toward the downtown hubs. They walk the kerb around their block at their own pace,
+- **They live on the lots** (`src/sim/bits.ts`). Each block of a lot adds up to six, more
+  toward the downtown hubs. Outdoors they walk the kerb around their lot at their own pace,
   stand a while, turn back, and go and find a neighbour: two that meet stop, face each other,
   and one answers YES or NO. Idle, each pulses between the two blue figures. The same world
   always has the same people in the same places; they stream in around you like the traffic.
+- **They live indoors too.** About half of the buildings have a room their people use
+  (`inhabit` and `structureRoom` in `src/arch/InteriorGenerator.ts`): the industrial halls and
+  stepped blocks that were already hollow, and now any structure with a large box mass on the
+  ground or on a low foundation, which is hollowed into a *commons* with lit doorways, clear
+  aisles in from each door, terminal banks along the walls, memory columns, and a meeting ring
+  under a halo. A room on a foundation has steps down from its door. Bits are at home when
+  their lot comes into view, walk round the kerb to a door and go in, stand at places down the
+  aisle, move about and talk, and come out again. On foot you can walk in through the same
+  doors; the walls are real.
 - **They react.** A vehicle bearing down on them fast, or an explosion nearby, and they say NO
   and step back from the road. One that is run over derezzes into chips.
 - **You can be one.** `;` (touch: More → *On foot*) steps out of a stopped vehicle as a Bit.
@@ -313,8 +322,9 @@ by which of four figures they show (`src/people/bit.ts`).
   it; `;` beside it gets back in. A new vehicle (R) starts with you aboard.
 - Drawn by `src/render/BitsView.ts` (one instanced mesh per figure, so a crowd costs four draw
   calls) and `src/render/BitFigure.ts` (your own). Check: `npm run bit`.
-- Not yet: other players do not see you on foot, and the world still streams around your
-  parked vehicle, so stay within a few hundred metres of it.
+- Not yet: round towers, radial structures and the kit towers have no rooms (their people
+  stay on the kerb); other players do not see you on foot; and the world still streams around
+  your parked vehicle, so stay within a few hundred metres of it.
 
 ## Light-cycle traffic
 

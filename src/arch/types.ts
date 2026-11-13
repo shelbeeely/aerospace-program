@@ -121,8 +121,11 @@ export interface InteriorConfig {
   x0: number; x1: number; z0: number; z1: number; y0: number; y1: number;
   wall: number;
   entrances: Entrance[];
-  /** Interior programme: 'hall' (bays, nave, walkways), 'chamber' (machinery), 'shaft' (vertical). */
-  program: 'hall' | 'chamber' | 'shaft';
+  /**
+   * Interior programme: 'hall' (bays, nave, walkways), 'chamber' (machinery), 'shaft' (vertical),
+   * 'commons' (a room at the scale of the people: terminal banks, memory columns, a meeting ring).
+   */
+  program: 'hall' | 'chamber' | 'shaft' | 'commons';
 }
 
 export interface Illumination {
