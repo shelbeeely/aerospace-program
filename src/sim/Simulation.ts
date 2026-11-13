@@ -1071,7 +1071,8 @@ export class Simulation {
     if (this.staticWorld.version !== this.fracturesSeen) {
       this.fracturesSeen = this.staticWorld.version;
       for (const id of this.staticWorld.fractured.keys()) {
-        const arch = this.staticWorld.structures.groups[id].arch;
+        const g = this.staticWorld.structures.groups[id];
+        const arch = g.room?.id ?? g.arch;
         if (arch && !this.ruins.has(arch)) { this.ruins.add(arch); this.bits.collapse(arch, this.time); }
       }
       if (this.staticWorld.fractured.size === 0) this.ruins.clear();

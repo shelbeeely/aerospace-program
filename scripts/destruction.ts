@@ -287,6 +287,24 @@ console.log('\n--- things that rest on others');
   } else console.log('note: no Solar Sailer pylon in the central plan to test');
 }
 
+// ---------------------------------------------------------------- 7b. hollow kit towers
+console.log('\n--- kit towers keep their rooms when they break');
+{
+  const sim = new Simulation(TEST_PLANE);
+  const groups = sim.staticWorld.structures.groups.filter((g) => g.kit && g.room);
+  check(groups.length > 0, 'placed kit towers carry their rooms', `${groups.length} with rooms`);
+  let hollow = 0, open = 0;
+  for (const g of groups.slice(0, 6)) {
+    const mask = structureMask(g, sim.staticWorld.structures.list);
+    const s = g.blockSize, r = g.room!;
+    const cell = (x: number, y: number, z: number) => mask(Math.floor((x - g.x0) / s), Math.floor(y / s), Math.floor((z - g.z0) / s));
+    if (!cell((r.x0 + r.x1) / 2, Math.min(s / 2, r.y1 / 2), (r.z0 + r.z1) / 2)) hollow++;
+    const d = r.doors[0];
+    if (!cell(d.x, Math.min(s / 2, d.height / 2), d.z)) open++;
+  }
+  check(hollow === Math.min(6, groups.length) && open === Math.min(6, groups.length), 'fractured, a kit tower is hollow where its room is and open at its doorway', `${hollow} hollow, ${open} open`);
+}
+
 // ---------------------------------------------------------------- 8. Outlands landforms
 console.log('\n--- Outlands landforms');
 {
