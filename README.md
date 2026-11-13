@@ -955,8 +955,13 @@ wind, surge, rain, scheduler lifecycle and actual Rapier ground motion.
     - **Seasons and scoring.** Scores reward reliable services, fulfilled contracts and
       useful shared infrastructure. The season is archived, then territory, armies and
       stockpiles reset; cosmetics and district blueprints carry over.
-    - **Server-authoritative.** Authenticated sessions, validated idempotent commands and
-      durable state on the Bun server beside the Grid Link relay. The sandbox keeps its
+    - **Server-authoritative.** Validated idempotent commands on the Bun server beside the
+      Grid Link relay, hosted on Render, with durable state in Supabase Postgres and sign-in
+      through Supabase Auth. Everyone sees the same world live: a building knocked over falls
+      for every player on that planet and stays down for those who arrive later.
+    - **Players who leave.** Guests can join without signing up. An absent mayor's city runs
+      on standing orders, then under a caretaker, then the seat reopens; votes count active
+      members only. The sandbox keeps its
       local resets, free team switching and last-turret captures.
     - **First playable slice:** Cyan and Amber on the Grid, two cities each, a shared freight
       crossing, one dormant portal to a generated second planet, one national vote, one

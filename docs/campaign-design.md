@@ -30,8 +30,8 @@ Goals:
 - Seasons that score well without a war.
 
 Non-goals for the first slice: free-form roads, in-place planet swaps, federations, combat
-(occupation, ceasefires and military objectives are the next milestone), accounts beyond a
-server-issued token, and scaling beyond one server process.
+(occupation, ceasefires and military objectives are the next milestone), and scaling beyond
+one server process per planet.
 
 **Sandbox stays sandbox.** Local world resets, free team switching and capture by destroying the
 last turret (`Territory.capture` in `src/sim/territory.ts`, called from the turret code) are
@@ -136,8 +136,9 @@ is the only way state moves forward besides commands.
 |---|---|
 | Planet | `PlanetConfig`, portals on it, discovery state |
 | Province | a region cell; four independent layers (below) |
+| Player | account id, country, offices, activity state (section 9) |
 | Country | a team: treasury, members and roles, policies; reuses team identity and livery from `src/sim/teams.ts` |
-| City | anchored in a province; mayor (player or neutral simulation), budget, policies, population, jobs, stockpile, standing orders |
+| City | anchored in a province; mayor (player, caretaker or neutral simulation), budget, policies, population, jobs, stockpile, standing orders |
 | Facility | utility, freight terminal, depot, bridge, portal terminal; has an owner, an operator and a state (§5: active, idle, damaged, inactive) |
 | Stockpile | food, fuel, construction materials |
 | Edit | a road or zoning edit on a block or segment (section 5) |
@@ -268,7 +269,34 @@ and nothing more; sovereignty changes only by the province and treaty rules.
 - **Offline play.** Standing orders (imports, exports, reserves, defences) run while a player
   is away. On return the feed shows what happened, what is pending and why.
 
-## 9. Seasons and scoring
+## 9. Players who leave
+
+Players may join and never return. No city, vote or route may depend on one person coming back.
+
+- **Joining is cheap.** A new player can sign in as a guest (Supabase anonymous sign-in) and
+  later upgrade to a full account with the same player id. They are placed in a vacant or
+  caretaker city, or a new settlement, in the country with the fewest active mayors.
+- **Activity states** per player, with thresholds set in configuration and counted in season
+  time:
+
+  | State | The player's city |
+  |---|---|
+  | active | run by the mayor |
+  | away | run by the mayor's standing orders |
+  | dormant | run by a caretaker: the neutral simulation that runs discovered cities. It stays in its country. |
+  | vacant | the seat is open: the country may assign it, or a newcomer may claim it |
+
+- **Returning.** Before the seat is reassigned, the mayor resumes the city as it stands and gets
+  the report of what happened. After reassignment they are offered another city.
+- **Government.** The electorate, quorum and thresholds of a vote count active members only.
+  An office held by a dormant player is vacated. Treaties and debts belong to the country, not
+  to a person.
+- **Loose ends.** A disconnected player's vehicle is removed after the idle timeout (as
+  `Lobby.sweep` does now). An unclaimed portal transfer expires back to its origin. Guest
+  accounts that never returned are deleted when the season is archived.
+- **Scoring.** A caretaker city still scores for its country. Departed members carry no penalty.
+
+## 10. Seasons and scoring
 
 - The world runs continuously on server time. Season length and clock rate are configuration.
 - Each season has a distinct starting portal network, discovery opportunities or a published
@@ -280,20 +308,24 @@ and nothing more; sovereignty changes only by the province and treaty rules.
   routes. Reset territory, armies and stockpiles. Carry forward cosmetics and district
   blueprints; veterans get no extra starting resources.
 
-## 10. Server
+## 11. Server
 
 Location: `server/campaign/`, beside the relay, in the same Bun process.
 
 - **Transport.** WebSocket at `/campaign`; Grid Link rooms keep the existing path and protocol
   untouched. Campaign messages get their own version number (`CAMPAIGN_VERSION`) in
   `src/campaign/protocol.ts`.
-- **Sessions.** The server issues a player id and a secret token on first join; the client keeps
-  it in local storage and presents it to resume. No passwords in the first slice.
+- **Sessions.** Players sign in with Supabase Auth (guest, email or OAuth). The client presents
+  its Supabase JWT on `auth`; the server verifies it and maps the user id to a player. The
+  server never sees a password.
 - **Messages.** Client: `auth`, `command`, `subscribe` (city, country, planet, portal network),
   `ack`. Server: `snapshot` (versioned), `delta`, `result` (per command id), `feed`.
-- **Storage.** `bun:sqlite` on a persistent volume: tables for the clock, an append-only command
-  log, state snapshots, scheduled events, transfers and sessions. Each command and each tick
-  batch commits in one transaction.
+- **Storage.** A `CampaignStore` interface with two drivers and the same tables (clock,
+  append-only command log, snapshots, scheduled events, world events, transfers, players):
+  - **Postgres** in production: Supabase Postgres, reached with Bun's built-in SQL client.
+  - **SQLite** (`bun:sqlite`) for local play and `bun test`, with no network.
+
+  Each command and each tick batch commits in one transaction.
 - **Clock and restarts.** The last applied tick is stored. On start the server computes the
   ticks owed from wall time and applies them, with scheduled events, in order; each event has
   an applied flag set in the same transaction, so overdue events apply exactly once. Pending
@@ -301,11 +333,72 @@ Location: `server/campaign/`, beside the relay, in the same Bun process.
   survive restarts.
 - **Testing aids.** A local-only command advances time by a number of ticks. A seeding script
   creates the test scenario.
-- **Requirements.** A persistent disk (the current free Render plan has none and sleeps after
-  15 minutes; the campaign needs an always-on instance with a volume), one process, regular
-  database backups. To be documented in the README when the server lands.
 
-## 11. Client
+### Deployment: Render and Supabase
+
+| Piece | Where |
+|---|---|
+| Authoritative campaign server and the Grid Link relay (Bun, WebSocket) | Render web service (`render.yaml`, `server/Dockerfile`) |
+| Durable state | Supabase Postgres |
+| Accounts and sign-in | Supabase Auth |
+| Season archives, district blueprints | Supabase Storage |
+| Game client | GitHub Pages as now, or a Render static site |
+
+Rules:
+
+- **Clients never write tables.** Row-level security denies the browser everything. Only the
+  server connects with database credentials.
+- **Supabase Realtime is not used for the simulation.** The server's own WebSocket is the live
+  channel; it is the only path that validates commands.
+- **One writer.** The server takes a Postgres advisory lock at start, so two processes can
+  never both advance the clock.
+- **Secrets.** The database URL and the JWT verification key are Render environment variables.
+  The browser gets only the Supabase project URL and its public anon key.
+- **Tiers.** Free tiers suit a prototype. A free Render instance sleeps when idle: state
+  survives in Postgres and the ticks owed are applied on wake, at the cost of a wait for the
+  first player. A free Supabase project pauses when left idle. A live season needs an
+  always-on Render instance and a Supabase plan that does not pause.
+- **Verify at build time:** current tier limits and prices; and that Render reaches the
+  database through Supabase's connection pooler address (the direct address may be IPv6 only).
+
+## 12. Realtime sync and capacity
+
+Every player sees the same world live. A building knocked over is sent to every player on that
+planet, and is still down for anyone who arrives later.
+
+Three channels on the campaign socket:
+
+1. **Vehicle state**, 20 Hz, simulated by each player's own client as in Grid Link (`NetState`
+   in `src/net/protocol.ts`). The server relays it only within an area of interest: the
+   district chunks around each player, at a lower rate with distance.
+2. **World events:** the existing `NetEvent` kinds (`fracture`, `explosion`, `nuke`, `emp`) plus
+   road closures and edits. The server gives each a sequence number, stores it, broadcasts it
+   to the whole planet and replays what is still in force to arrivals.
+3. **Campaign deltas** (cities, borders, treaties, freight) to subscribers.
+
+**Persistent damage.** Per planet the server keeps the ordered world-event log and a compacted
+record of fractured groups and removed blocks, cleared by repair or by the season reset. Every
+client breaks a structure from the same event through the one destruction engine (§18), so the
+same blocks fall for all. The final block state is authoritative. The motion of loose debris is
+simulated locally and may look different from one player to the next.
+
+**Validation.** The server does not run physics. It checks plausibility (the sender is in
+range, holds the weapon, and is within rate limits), reusing `RateLimiter` from
+`server/rooms.ts` and the hit rules in `src/net/hits.ts`.
+
+**Capacity.** Estimates from the design, to be replaced by load-test results:
+
+| Load | Estimate | Limit |
+|---|---|---|
+| Vehicles in one area | 30 to 60; about 100 with distance-based rates | each player hears every nearby player |
+| Vehicles per server process | 300 to 500 | CPU relaying 20 updates a second each |
+| Players in city and map views | 1,000 to 5,000 | connections and database writes |
+| More | one server process per planet | portals already separate planets |
+
+Only lasting changes are written to Postgres, never the 20 Hz vehicle state, so the database is
+not in the hot path. Grid Link keeps its 16-player rooms.
+
+## 13. Client
 
 - New entry `campaign.html` with `src/campaign-ui/`, next to `index.html` and `explore.html`.
   It reuses the renderer, the world views and the simulation for driving and flying through
@@ -319,7 +412,7 @@ Location: `server/campaign/`, beside the relay, in the same Bun process.
   3. **Portal network:** a graph of known planets and links with access, queues and routes.
 - The client never decides ownership. It sends commands and draws snapshots.
 
-## 12. Code reused
+## 14. Code reused
 
 | Existing code | Use in the campaign |
 |---|---|
@@ -336,9 +429,9 @@ Location: `server/campaign/`, beside the relay, in the same Bun process.
 | `src/hud/RadarMap.ts`, `src/render/GlobeView.ts` | borders and the planet view |
 | `src/world/landingSites.ts`, `src/world/spawnSites.ts` (`nearestRoadPoint`) | portal terminal conventions and safe arrival points |
 | `src/world/BlockBuilding.ts` | everything built can break, by the one engine |
-| `server/rooms.ts` (`RateLimiter`, `Peer`), `src/net/protocol.ts` validators | rate limits and message validation for the campaign socket |
+| `server/rooms.ts` (`RateLimiter`, `Peer`, `Lobby.sweep`), `src/net/protocol.ts` (`NetState`, `NetEvent`, validators), `src/net/hits.ts` | vehicle and world-event sync, rate limits and validation on the campaign socket |
 
-## 13. First playable slice
+## 15. First playable slice
 
 Scenario: the Grid, two countries (Cyan and Amber), two cities each, a handful of region cells
 as provinces, a shared capacity-limited freight crossing, food, fuel and construction
@@ -350,10 +443,13 @@ Stages, each ending with passing checks and a commit:
 1. **Simulation core** (`src/campaign/`): state, tick, commands, economy, freight on the road
    graph, events, scoring. Check `npm run campaign`: determinism (same commands, same state),
    idempotent commands, conservation of goods, capacity limits, a season that ends with scores
-   and no war.
-2. **Server** (`server/campaign/`): sessions, socket, SQLite, clock, restart recovery, time
-   advance. `bun test server`: a restart with a shipment queued at the portal delivers it once;
-   overdue events apply once; pending votes and treaties survive.
+   and no war; a vote passes with absent members; a dormant mayor's city keeps its services;
+   a vacant seat is taken over with its edits intact.
+2. **Server** (`server/campaign/`): socket, the store interface with the SQLite driver, clock,
+   restart recovery, time advance, vehicle and world-event sync with areas of interest. `bun test server`: a restart with a shipment queued at the portal delivers it once;
+   overdue events apply once; pending votes and treaties survive; a late arrival sees a building
+   that fell before they joined. A load test with headless bot clients measures the capacity
+   figures of section 12.
 3. **Planet context and ids:** `PlanetConfig`, `?planet=`, planet-scoped ids, territory salt
    from the planet. Existing checks (`planet`, `orbit`, `city`, `teams`, `arch`) must not move
    for the home planet.
@@ -367,25 +463,30 @@ Stages, each ending with passing checks and a commit:
 7. **Diplomacy and scenario:** one national vote, a ratifiable transit treaty with reserved
    capacity, a peaceful transfer of a rural border province, the bridge closure solved by
    sharing the crossing or funding a bypass.
-8. **Handoff:** README sections for startup, seeding, time acceleration, persistence, code
-   reused and deferred work; `AGENTS.md` rules for the campaign.
+8. **Deployment:** the Postgres driver, the Supabase schema migration and row-level security,
+   Auth verification, Render environment variables.
+9. **Handoff:** README sections for startup, Supabase and Render setup, seeding, time
+   acceleration, persistence, code reused and deferred work; `AGENTS.md` rules for the
+   campaign.
 
 Demonstration at the end: separate browser sessions run different cities, ratify a treaty and
 see freight volumes and local congestion change; both reach the same generated planet, drive
 through a city there and come back; a province changes hands peacefully; the season ends with
 scores and no declaration of war; the sandbox room still works beside it.
 
-## 14. Deferred work and open questions
+## 16. Deferred work and open questions
 
 Deferred: free-form roads; in-place planet swap; air and orbital portals; per-planet radius,
-coast and central plan; war (occupation, ceasefires, objectives); federations; accounts;
-scaling past one process; LLM mayors for neutral cities.
+coast and central plan; war (occupation, ceasefires, objectives); federations; running
+one process per planet; LLM mayors for neutral cities.
 
 Open questions:
 
 - How many players per country and per season is the target? It sets snapshot size and the
   subscription model.
 - Tick length and season length for a real season.
+- How long before a player is away, dormant and vacant (section 9).
+- Which sign-in methods to offer besides guests (email, which OAuth providers).
 - Whether neutral cities are run by simple rules or by a model.
 - How district blueprints are stored and shared between seasons.
 - Whether the home Grid's hand-planned centre is a city a player can govern, or a neutral
