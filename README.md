@@ -912,6 +912,59 @@ wind, surge, rain, scheduler lifecycle and actual Rapier ground motion.
    - Modes: free flight, races (the LLM racing work becomes "humans vs models"), light-cycle
      arenas, and co-op deliveries. Room codes and share links; craft travel as JSON.
    - Later: accounts, persistent hangars and leaderboards (needs storage on the server).
+10. **Portals between Grids.** The world is already a pure function of its seed, so another
+    Grid is another seed: a different planet with its own regions, territory, roads and sky.
+    - **A Grid has an address** (seed plus blend and theme), and a portal is a link between two
+      addresses. Portals are placed by the world generator, deterministically, so both ends
+      agree on where they are and where they lead.
+    - **Ground portals** are structures of the radial/communication family (§2E): a gate
+      standing on the road network, at the end of a pathed road, so the flight computer can
+      route any ground vehicle to it and through it. A closed or wrecked portal is a closed
+      road (§14): left out of routes and marked on the ground.
+    - **Air portals** are rings hanging in the sky (book p. 10, p. 39) on the airways, large
+      enough for the biggest craft, with an approach the flight autopilot and AI traffic can
+      fly like a runway approach. Orbit-height portals for the orbiter come after.
+    - **Crossing** keeps the craft, its speed and heading, damage, fuel, credits and escorts,
+      swaps the world seed, drops every derived cache and streams the destination in around
+      the exit portal. A short transit tunnel covers the rebuild; no loading screen.
+    - **Portals have states** (§5): active, idle, damaged, inactive. A portal belongs to the
+      side that holds its district, can be captured, hacked open for a minute, or broken by
+      the one destruction engine (§18).
+    - **The portal map:** the planet map and strike globe gain a network view of the known
+      Grids and the links between them.
+    - Multiplayer: a room is one Grid; crossing moves you to the room of the Grid you enter.
+    - Checks: `npm run portals` (both ends agree, every ground portal is reachable by road, a
+      crossing is deterministic and loses nothing).
+11. **Real-time strategy.** The war (teams, territory, credits, mercenaries, strikes, attack
+    orders, hacking, the strike globe) becomes a strategy game you can play from above as
+    well as from the cockpit.
+    - **Command view:** a top-down camera over the Grid with box selection, control groups
+      and right-click orders (move, attack, hold, patrol, escort, capture), on mouse and
+      touch. One key drops you into any unit you command and back out; a unit you leave
+      carries on under the flight computer.
+    - **Units are craft.** Everything commanded is a real craft in the same simulation, with
+      the same pilots, physics, weapons and damage: aircraft, light cycles, tanks, turrets.
+      Ground units move by the road graph, aircraft by the flight autopilot.
+    - **Economy:** energy and data instead of credits alone. Held districts produce by their
+      function (memory, processing, I/O, industrial), conduits and highways carry it, and
+      cutting a road or conduit cuts the supply.
+    - **Production:** structures build units by family: industrial megastructures build
+      ground vehicles, processing towers build aircraft, communication structures give
+      sight and strike range. Queues, rally points, and your own Studio designs as the unit
+      roster (priced like mercenaries).
+    - **Building:** place structures on lots you hold, from the five families and through the
+      ten checks; they go up block by block and bear load from the first block.
+    - **Sight:** fog of war from what your units, turrets and radar can see (ADS-B and the
+      radar already model this).
+    - **Opponents:** each AI side runs a commander that expands, defends and attacks by the
+      same rules and economy as the player. LLM commanders follow from the pilot task.
+    - **Across Grids:** portals are the strategic chokepoints. Hold one to move armies and
+      supply through it; a war can span several Grids.
+    - **Skirmish and campaign:** a seeded skirmish (pick a Grid, sides, start districts and a
+      win condition: all districts, all portals, or the enemy core) and then multiplayer
+      matches, with orders replicated as events like destruction is.
+    - Checks: `npm run rts` (orders reach their units, the economy balances, a headless AI
+      versus AI skirmish is deterministic and ends).
 
 Generation roadmap, using more of OpenRouter's model types:
 
