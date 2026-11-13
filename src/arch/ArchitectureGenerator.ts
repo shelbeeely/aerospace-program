@@ -1,7 +1,7 @@
 import { ARCHETYPES } from './BuildingArchetypeRegistry.ts';
 import { resolveParams } from './generators/common.ts';
 import { rotQ } from './grammar.ts';
-import { furnishInterior, inhabit } from './InteriorGenerator.ts';
+import { furnishInterior, inhabit, inhabitRound } from './InteriorGenerator.ts';
 import type { ActivityState } from './palette.ts';
 import { hash32, Rng } from './rng.ts';
 import type { GenRequest, StructureSpec } from './types.ts';
@@ -43,7 +43,7 @@ export function generateStructure(req: GenRequest, ctx: ValidationContext = {}):
     for (const lived of [true, false]) {
       const out = gen.build({ ...req, w, d }, rng.fork(3), params, func, variant);
       const made = lived && !out.interior;
-      if (made) out.interior = inhabit(out.b, w, d, rng.fork(5));
+      if (made) out.interior = inhabit(out.b, w, d, rng.fork(5)) ?? inhabitRound(out.b, w, d, rng.fork(6));
       if (lived && !out.interior) continue; // nothing to hollow: the plain build below
       if (out.interior) furnishInterior(out.b, out.interior, out.accent);
       spec = assemble(req, seed, func, variant, params, w, d, rotation, out, rng.fork(4));

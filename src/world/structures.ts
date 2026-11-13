@@ -166,7 +166,7 @@ export function insideRoom(r: CityRoom, cx: number, cy: number, cz: number, s: n
   // The room itself, drawn in by half a block all round so the walls and roof always keep a
   // whole layer of blocks.
   const k = s / 2;
-  if (cx > r.x0 + k && cx < r.x1 - k && cz > r.z0 + k && cz < r.z1 - k && cy < r.y1 - k) return true;
+  if (r.round ? Math.hypot(cx - r.round.x, cz - r.round.z) < r.round.r - k && cy < r.y1 - k : cx > r.x0 + k && cx < r.x1 - k && cz > r.z0 + k && cz < r.z1 - k && cy < r.y1 - k) return true;
   // The doorways: an opening at least one block wide and high, through the wall and out.
   for (const d of r.doors) {
     const along = (cx - d.x) * d.nx + (cz - d.z) * d.nz, across = Math.abs((cx - d.x) * d.nz - (cz - d.z) * d.nx);

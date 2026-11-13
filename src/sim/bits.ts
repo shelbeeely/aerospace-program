@@ -125,6 +125,10 @@ export interface BitPerson {
   yaw: number;
   /** Its own stream of chance. */
   rand: () => number;
+  /** Where the ground was last sampled under it, and its height there (sampling terrain is not free). */
+  gx: number;
+  gz: number;
+  gh: number;
 }
 
 /** A vehicle the people watch out for. */
@@ -258,7 +262,7 @@ export class BitPopulation {
         answer: null, answeredAt: -Infinity, pending: null, hurry: false,
         beat: rand() * 10,
         x: 0, y: 0, z: 0, yaw: 0,
-        rand,
+        rand, gx: Infinity, gz: Infinity, gh: 0,
       };
       const indoors = rand() < INDOORS;
       if (h.room && !h.ruined && indoors) {
@@ -280,11 +284,14 @@ export class BitPopulation {
     }
   }
 
-  /** Height of the figure's centre at (x, z) for a Bit of this home: the room's floor indoors, else the ground. */
-  private heightAt(h: BitHome, x: number, z: number): number {
-    const r = h.room;
-    if (r && x > r.x0 - 0.5 && x < r.x1 + 0.5 && z > r.z0 - 0.5 && z < r.z1 + 0.5) return r.y + BIT.hover;
-    return terrainHeight(wrapCoord(x), wrapCoord(z)) + BIT.hover;
+  /** Ground height under a Bit, sampled afresh only once it has moved a couple of metres. */
+  private ground(p: BitPerson): number {
+    if (Math.abs(p.x - p.gx) + Math.abs(p.z - p.gz) > 2) {
+      p.gx = p.x;
+      p.gz = p.z;
+      p.gh = terrainHeight(wrapCoord(p.x), wrapCoord(p.z));
+    }
+    return p.gh;
   }
 
   private place(p: BitPerson): void {
@@ -292,7 +299,7 @@ export class BitPopulation {
       // On the steps outside a raised door: it glides up to the threshold as it nears the wall.
       const d = p.door;
       const out = (p.x - d.x) * d.nx + (p.z - d.z) * d.nz;
-      const ground = terrainHeight(wrapCoord(p.x), wrapCoord(p.z));
+      const ground = this.ground(p);
       // Over whatever is underfoot there (ledge, step or ground), taking the higher of the two
       // samples it is between so it never dips into a riser.
       const i = Math.floor(Math.max(0, out) * 2);
@@ -306,7 +313,8 @@ export class BitPopulation {
       p.z = _k.z;
       if (p.mood === 'walk') p.yaw = Math.atan2(_k.tx * p.dir, -_k.tz * p.dir);
     }
-    p.y = this.heightAt(p.home, p.x, p.z);
+    const r = p.home.room;
+    p.y = r && p.x > r.x0 - 0.5 && p.x < r.x1 + 0.5 && p.z > r.z0 - 0.5 && p.z < r.z1 + 0.5 ? r.y + BIT.hover : this.ground(p) + BIT.hover;
   }
 
   /** Make the home for the lot whose origin block is (gi, gj) in this image, or null if nobody lives there. */
@@ -320,6 +328,7 @@ export class BitPopulation {
     const room: Room | null = canon && {
       ...canon, x0: canon.x0 + sx, x1: canon.x1 + sx, z0: canon.z0 + sz, z1: canon.z1 + sz,
       doors: canon.doors.map((d) => ({ ...d, x: d.x + sx, z: d.z + sz })),
+      ...(canon.round ? { round: { ...canon.round, x: canon.round.x + sx, z: canon.round.z + sz } } : {}),
     };
     return { key: blockKey(gi, gj), gi, gj, x0, x1, z0, z1, loop: 2 * (x1 - x0 + z1 - z0), room, ruined: false, gone: new Set() };
   }

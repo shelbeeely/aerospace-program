@@ -93,7 +93,7 @@ export function furnishInterior(b: Builder, cfg: InteriorConfig, light: LightRol
     }
   }
   if (cfg.program === 'hall') hall(b, cfg, light, W, D, H, cx, cz);
-  else if (cfg.program === 'chamber') chamber(b, cfg, light, W, D, H, cx, cz);
+  else if (cfg.program === 'chamber') chamber(b, cfg, light, cfg.round ? cfg.round.r * 2 : W, cfg.round ? cfg.round.r * 2 : D, H, cx, cz);
   else if (cfg.program === 'commons') commons(b, cfg, light, W, D, H, cx, cz);
   else shaft(b, cfg, light, W, D, H, cx, cz);
 }
@@ -252,6 +252,19 @@ function commons(b: Builder, cfg: InteriorConfig, light: LightRole, W: number, D
       b.ring(3, 'band', x, y0 + Math.min(2.2, H * 0.4), z, cr, cr + 0.12, 0.25, 8, { surface: 'glow', light: 'process', glow: 0.8, solid: false, ...I });
     }
   }
+  // A vast low room (the undercroft of a foundation) is carried on a grid of plain columns,
+  // clear of the aisles: they establish the scale, and they are what holds the slab up.
+  if (Math.min(W, D) > 44) {
+    const gap = Math.max(30, Math.max(W, D) / 4.5);
+    const nu = Math.floor((L - 8) / gap), nv = Math.floor((S - 8) / gap);
+    for (let i = 0; i <= nu; i++) for (let j = 0; j <= nv; j++) {
+      const u = (i - nu / 2) * gap, v = (j - nv / 2) * gap;
+      if (Math.abs(v) < main + 2.5 || Math.abs(u) < cross + 2.5 || Math.hypot(u, v) < rr + 3) continue;
+      if (Math.abs(Math.abs(u) - qu) < cr + 2 && Math.abs(Math.abs(v) - qv) < cr + 2) continue; // a memory column stands here
+      const [x, z] = P(u, v);
+      b.box(2, 'column', x, y0, z, 1.6, H, 1.6, { surface: 'hullDark', edges: 'none', ...I });
+    }
+  }
   // A lit seam along the ceiling over the main aisle.
   const [lx, lz] = P(0, 0);
   b.box(3, 'ceiling', lx, y0 + H - 0.25, lz, alongX ? W * 0.8 : 0.3, 0.15, alongX ? 0.3 : D * 0.8, { surface: 'glow', light: 'energy', glow: 0.5, solid: false, ...I });
@@ -261,9 +274,62 @@ const overlap = (c: ColliderPiece, x0: number, x1: number, y0: number, y1: numbe
   c.x + c.sx / 2 > x0 && c.x - c.sx / 2 < x1 && c.y + c.sy / 2 > y0 && c.y - c.sy / 2 < y1 && c.z + c.sz / 2 > z0 && c.z - c.sz / 2 < z1;
 
 /** Smallest box mass worth living in (m), the people's door (m), and the steps up to a raised one. */
-const HOME = { side: 14, height: 7, wall: 1, roof: 1.5, door: 8, doorHeight: 6, raised: 6.5, riser: 0.5, tread: 0.8 } as const;
+const HOME = { side: 14, height: 5.5, wall: 1, roof: 1.5, door: 8, doorHeight: 6, raised: 6.5, riser: 0.5, tread: 0.8 } as const;
 
 interface Step { t: number; top: number; base: number }
+
+/**
+ * The way out of a door: a strip `hw` either side of the point (fx, fz) on the wall's outer
+ * face, running out along `side` to the edge of the lot. Null if anything rises above the
+ * threshold `y` in it. Otherwise the steps needed to get down to the ground: what is left in
+ * the strip is floor (ledges below the threshold), and each drop gets a flight. `skip`: the
+ * collider being hollowed.
+ */
+function wayOut(b: Builder, skip: number | ReadonlySet<number>, side: number, fx: number, fz: number, y: number, dh: number, hw: number, w: number, d: number): Step[] | null {
+  const skipped = (j: number) => (typeof skip === 'number' ? j === skip : skip.has(j));
+  const reach = Math.max(2, side === 0 ? w / 2 - fx : side === 2 ? fx + w / 2 : side === 1 ? d / 2 - fz : fz + d / 2);
+  const strip = (ta: number, tb: number): [number, number, number, number] =>
+    side === 0 ? [fx + ta, fx + tb, fz - hw, fz + hw] : side === 2 ? [fx - tb, fx - ta, fz - hw, fz + hw]
+    : side === 1 ? [fx - hw, fx + hw, fz + ta, fz + tb] : [fx - hw, fx + hw, fz - tb, fz - ta];
+  const [sx0, sx1, sz0, sz1] = strip(0, reach);
+  if (b.cols.some((k, j) => !skipped(j) && k.y + k.sy / 2 > y + 0.3 && overlap(k, sx0, sx1, 0.3, y + dh, sz0, sz1))) return null;
+  const floor = (ta: number, tb: number): number => {
+    const [fx0, fx1, fz0, fz1] = strip(ta, tb);
+    let f = 0;
+    for (let j = 0; j < b.cols.length; j++) {
+      const k = b.cols[j];
+      if (!skipped(j) && overlap(k, fx0, fx1, -1, y + 0.3, fz0, fz1)) f = Math.max(f, k.y + k.sy / 2);
+    }
+    return f;
+  };
+  const steps: Step[] = [];
+  let level = y, t = 0;
+  while (t < reach) {
+    const f = floor(t, t + 0.5);
+    if (f > level + 0.3) return null; // a ledge higher than where we stand
+    if (f >= level - HOME.riser) { level = Math.min(level, Math.max(f, 0)); t += 0.5; continue; }
+    // A drop: a flight from `level` down to `f`, treads going outward from here.
+    const n = Math.ceil((level - f) / HOME.riser), riser = (level - f) / n;
+    const run = (n - 1) * HOME.tread;
+    if (t + run > reach + 1.5 || floor(t, t + run + 0.5) > f + 0.3) return null;
+    for (let k = 1; k < n; k++) steps.push({ t: t + (k - 1) * HOME.tread, top: level - k * riser, base: f });
+    level = f;
+    t += Math.max(0.5, run);
+  }
+  return level <= HOME.riser && steps.length <= 40 ? steps : null;
+}
+
+/** Build the treads of a door's steps: plain dark, the width of the door, outside the face at (fx, fz). */
+function buildSteps(b: Builder, steps: readonly Step[], side: number, fx: number, fz: number, width: number): void {
+  for (const st of steps) {
+    const m = st.t + HOME.tread / 2;
+    const x = side === 0 ? fx + m : side === 2 ? fx - m : fx;
+    const z = side === 1 ? fz + m : side === 3 ? fz - m : fz;
+    const sw = side % 2 === 0 ? HOME.tread : width, sd = side % 2 === 0 ? width : HOME.tread;
+    b.comps.push({ prim: { kind: 'box', w: sw, h: st.top - st.base, d: sd }, x, y: st.base, z, tier: 2, role: 'stair', surface: 'hullDark', edges: 'none' });
+    b.cols.push({ shape: 'box', x, y: (st.top + st.base) / 2, z, sx: sw, sy: st.top - st.base, sz: sd });
+  }
+}
 
 /**
  * Give a solid structure an interior for its people: the largest box mass standing on the
@@ -289,46 +355,13 @@ export function inhabit(b: Builder, w: number, d: number, rng: Rng): InteriorCon
     const yTop = c.y + p.h - HOME.roof;
     if (b.cols.some((k, j) => j !== col && overlap(k, x0 + 0.3, x1 - 0.3, c.y + 0.3, yTop - 0.3, z0 + 0.3, z1 - 0.3))) continue;
     const doors: Array<{ e: Entrance; steps: Step[] }> = [];
-    const dh = Math.min(HOME.doorHeight, p.h - HOME.roof - 1.5);
+    const dh = Math.min(HOME.doorHeight, p.h - HOME.roof - 1);
     for (let side = 0; side < 4; side++) {
       const len = side % 2 === 0 ? p.d : p.w;
       const width = Math.min(HOME.door, Math.max(4, Math.round(len * 0.3)));
       const hw = width / 2 + 0.6;
-      // The way out: a strip as wide as the door, from the wall (t = 0) to the edge of the lot.
-      const reach = Math.max(2, side === 0 ? w / 2 - x1 : side === 2 ? x0 + w / 2 : side === 1 ? d / 2 - z1 : z0 + d / 2);
-      const strip = (ta: number, tb: number): [number, number, number, number] =>
-        side === 0 ? [x1 + ta, x1 + tb, c.z - hw, c.z + hw] : side === 2 ? [x0 - tb, x0 - ta, c.z - hw, c.z + hw]
-        : side === 1 ? [c.x - hw, c.x + hw, z1 + ta, z1 + tb] : [c.x - hw, c.x + hw, z0 - tb, z0 - ta];
-      const [sx0, sx1, sz0, sz1] = strip(0, reach);
-      // Anything rising above the threshold in the strip blocks the door.
-      if (b.cols.some((k, j) => j !== col && k.y + k.sy / 2 > c.y + 0.3 && overlap(k, sx0, sx1, 0.3, c.y + dh, sz0, sz1))) continue;
-      // What is left in the strip is floor: ledges below the threshold. Step down off each.
-      const floor = (ta: number, tb: number): number => {
-        const [fx0, fx1, fz0, fz1] = strip(ta, tb);
-        let f = 0;
-        for (let j = 0; j < b.cols.length; j++) {
-          const k = b.cols[j];
-          if (j !== col && overlap(k, fx0, fx1, -1, c.y + 0.3, fz0, fz1)) f = Math.max(f, k.y + k.sy / 2);
-        }
-        return f;
-      };
-      const steps: Step[] = [];
-      let level = c.y, t = 0, ok = true;
-      while (t < reach && ok) {
-        const f = floor(t, t + 0.5);
-        if (f > level + 0.3) ok = false; // a ledge higher than where we stand
-        else if (f >= level - HOME.riser) { level = Math.min(level, Math.max(f, 0)); t += 0.5; }
-        else {
-          // A drop: a flight from `level` down to `f`, treads going outward from here.
-          const n = Math.ceil((level - f) / HOME.riser), riser = (level - f) / n;
-          const run = (n - 1) * HOME.tread;
-          if (t + run > reach + 1.5 || floor(t, t + run + 0.5) > f + 0.3) ok = false;
-          for (let k = 1; k < n && ok; k++) steps.push({ t: t + (k - 1) * HOME.tread, top: level - k * riser, base: f });
-          level = f;
-          t += Math.max(0.5, run);
-        }
-      }
-      if (ok && level <= HOME.riser && steps.length <= 40) doors.push({ e: { side, offset: 0, width, height: dh }, steps });
+      const steps = wayOut(b, col, side, side === 0 ? x1 : side === 2 ? x0 : c.x, side === 1 ? z1 : side === 3 ? z0 : c.z, c.y, dh, hw, w, d);
+      if (steps) doors.push({ e: { side, offset: 0, width, height: dh }, steps });
     }
     if (doors.length) best = { comp: i, col, doors, area: p.w * p.d };
   }
@@ -357,15 +390,128 @@ export function inhabit(b: Builder, w: number, d: number, rng: Rng): InteriorCon
     const k = b.comps[i];
     if (k.role === 'wall' || k.role === 'roof') { k.tier = c.tier; k.role = c.role; }
   }
-  // The steps: plain dark treads the width of the door, outside it.
-  for (const q of doors) for (const st of q.steps) {
-    const m = st.t + HOME.tread / 2, e = q.e;
-    const x = e.side === 0 ? c.x + p.w / 2 + m : e.side === 2 ? c.x - p.w / 2 - m : c.x;
-    const z = e.side === 1 ? c.z + p.d / 2 + m : e.side === 3 ? c.z - p.d / 2 - m : c.z;
-    const sw = e.side % 2 === 0 ? HOME.tread : e.width, sd = e.side % 2 === 0 ? e.width : HOME.tread;
-    b.comps.push({ prim: { kind: 'box', w: sw, h: st.top - st.base, d: sd }, x, y: st.base, z, tier: 2, role: 'stair', surface: 'hullDark', edges: 'none' });
-    b.cols.push({ shape: 'box', x, y: (st.top + st.base) / 2, z, sx: sw, sy: st.top - st.base, sz: sd });
+  for (const q of doors) buildSteps(b, q.steps, q.e.side, q.e.side === 0 ? c.x + p.w / 2 : q.e.side === 2 ? c.x - p.w / 2 : c.x, q.e.side === 1 ? c.z + p.d / 2 : q.e.side === 3 ? c.z - p.d / 2 : c.z, q.e.width);
+  return cfg;
+}
+
+/**
+ * The same for round masses: a solid drum (a prism of near-constant radius) standing on the
+ * ground or a low foundation has its foot rebuilt as a ring wall with real gaps for doors, a
+ * roof disc, and the rest of the drum carried on above. Doors face the four axes, where the way
+ * out is clear. The room is round; it is furnished as a chamber.
+ */
+export function inhabitRound(b: Builder, w: number, d: number, rng: Rng): InteriorConfig | null {
+  const T = HOME.wall + 0.5; // a drum's wall is a little thicker
+  let best: { comp: number; cols: number[]; doors: Array<{ side: number; width: number; steps: Step[] }>; r: number; band: number } | null = null;
+  for (let i = 0; i < b.comps.length; i++) {
+    const c = b.comps[i];
+    const p = c.prim;
+    if (p.kind !== 'prism' || p.sides < 6 || c.rx || c.rz || c.tier === 3 || c.interior || c.surface === 'glow' || c.surface === 'translucent') continue;
+    if (c.y > HOME.raised || c.y < -0.5 || p.h < HOME.height || Math.min(p.r0, p.r1) < 9 || Math.abs(p.r1 - p.r0) > 0.2 * p.r0) continue;
+    // The foot of the drum: all of a low one, the first eight metres of a tall one.
+    const band = p.h <= 10 ? p.h : 8;
+    const r = Math.min(p.r0, p.r0 + ((p.r1 - p.r0) * band) / p.h);
+    if (best && r <= best.r) continue;
+    const cols: number[] = [];
+    b.cols.forEach((k, j) => {
+      if (k.shape !== 'box' && Math.abs(k.x - c.x) < 0.01 && Math.abs(k.z - c.z) < 0.01 && k.y - k.sy / 2 >= c.y - 0.01 && k.y + k.sy / 2 <= c.y + p.h + 0.01 && k.sx <= 2 * Math.max(p.r0, p.r1) + 0.6 && k.sx >= 2 * Math.min(p.r0, p.r1) - 0.6) cols.push(j);
+    });
+    if (!cols.length) continue;
+    const skip = new Set(cols);
+    const rin = r - T, q = rin * 0.72;
+    if (b.cols.some((k, j) => !skip.has(j) && overlap(k, c.x - q, c.x + q, c.y + 0.3, c.y + band - HOME.roof - 0.3, c.z - q, c.z + q))) continue;
+    const dh = Math.min(HOME.doorHeight, band - HOME.roof - 1);
+    const width = Math.min(HOME.door, Math.max(4, Math.round(r * 0.35)));
+    const doors: Array<{ side: number; width: number; steps: Step[] }> = [];
+    for (let side = 0; side < 4; side++) {
+      const steps = wayOut(b, skip, side, c.x + (side === 0 ? r : side === 2 ? -r : 0), c.z + (side === 1 ? r : side === 3 ? -r : 0), c.y, dh, width / 2 + 0.6, w, d);
+      if (steps) doors.push({ side, width, steps });
+    }
+    if (doors.length) best = { comp: i, cols, doors, r, band };
   }
+  if (!best) return null;
+  const c = b.comps[best.comp];
+  const p = c.prim as { kind: 'prism'; sides: number; r0: number; r1: number; h: number; phase?: number };
+  let doors = best.doors;
+  if (doors.length > 2) {
+    const pairs = [[0, 2], [1, 3]].filter(([a, e]) => doors.some((q) => q.side === a) && doors.some((q) => q.side === e));
+    const pick = pairs.length ? pairs[rng.int(0, pairs.length - 1)] : [doors[0].side, doors[1].side];
+    doors = doors.filter((q) => pick.includes(q.side));
+  }
+  const { r, band } = best;
+  const rin = r - T, wallH = band - HOME.roof, dh = Math.min(HOME.doorHeight, wallH - 1);
+  const side = rin / Math.SQRT2 - 0.3;
+  const cfg: InteriorConfig = {
+    accessible: true,
+    x0: c.x - side, x1: c.x + side, z0: c.z - side, z1: c.z + side, y0: c.y, y1: c.y + wallH, wall: T,
+    entrances: doors.map((q) => ({ side: q.side, offset: 0, width: q.width, height: dh })),
+    program: 'chamber', round: { cx: c.x, cz: c.z, r: rin },
+  };
+  const round = p.sides >= 10;
+  b.comps.splice(best.comp, 1);
+  for (const j of [...best.cols].sort((m, n) => n - m)) b.cols.splice(j, 1);
+  const look = { surface: c.surface, pattern: c.pattern, light: c.light, mass: c.mass ?? 91 } as const;
+  const from = b.comps.length;
+  // The wall: arcs of ring between the doors (drawn; the colliders are laid by hand below so
+  // the doorways are exactly open).
+  const gap = (wd: number) => Math.asin(Math.min(0.9, (wd / 2 + 0.2) / r));
+  const angles = doors.map((q) => ({ a: q.side * (Math.PI / 2), g: gap(q.width) })).sort((m, n) => m.a - n.a);
+  for (let k = 0; k < angles.length; k++) {
+    const cur = angles[k], next = angles[(k + 1) % angles.length];
+    const start = cur.a + cur.g, end = (k + 1 < angles.length ? next.a : next.a + Math.PI * 2) - next.g;
+    b.ring(c.tier, c.role, c.x, c.y, c.z, rin, r, wallH, Math.max(16, p.sides), { ...look, edges: c.edges === 'none' ? 'none' : 'base', arc: end - start, arcStart: start, solid: false });
+  }
+  for (const q of doors) {
+    // Above each doorway the wall carries on over a lintel.
+    const a = q.side * (Math.PI / 2), g = gap(q.width);
+    if (wallH - dh > 0.5) b.ring(c.tier, c.role, c.x, c.y + dh, c.z, rin, r, wallH - dh, Math.max(16, p.sides), { ...look, edges: 'none', arc: 2 * g, arcStart: a - g, solid: false });
+  }
+  b.prism(c.tier, c.role, c.x, c.y + wallH, c.z, p.sides, r, r, HOME.roof, { ...look, edges: band >= p.h ? c.edges : 'none', phase: p.phase });
+  if (p.h > band) {
+    const rb = p.r0 + ((p.r1 - p.r0) * band) / p.h;
+    b.prism(c.tier, c.role, c.x, c.y + band, c.z, p.sides, rb, p.r1, p.h - band, { ...look, edges: c.edges, phase: p.phase });
+  }
+  for (let i = from; i < b.comps.length; i++) if (c.glow !== undefined) b.comps[i].glow = c.glow;
+  // Wall colliders: boxes round the ring, left out where they would reach into a doorway, and
+  // a jamb box each side of every door to close the wall up to the opening.
+  const N = 16, step = (Math.PI * 2) / N, rm = (rin + r) / 2;
+  const seg = 2 * rm * Math.tan(Math.PI / N) + 0.2;
+  const rel = (a: number, to: number) => Math.abs((((a - to) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI);
+  for (let k = 0; k < N; k++) {
+    const a = (k + 0.5) * step;
+    if (angles.some((q) => rel(a, q.a) < q.g + step / 2 + 0.01)) continue;
+    const c2 = Math.abs(Math.cos(a)), s2 = Math.abs(Math.sin(a));
+    b.cols.push({ shape: 'box', x: c.x + Math.cos(a) * rm, y: c.y + wallH / 2, z: c.z + Math.sin(a) * rm, sx: c2 * T + s2 * seg, sy: wallH, sz: s2 * T + c2 * seg });
+  }
+  for (const q of doors) {
+    const a = q.side * (Math.PI / 2), g = gap(q.width);
+    // The first box kept on each side of the door starts at this angle from it.
+    let edge = Math.PI;
+    for (let k = 0; k < N; k++) {
+      const da = rel((k + 0.5) * step, a);
+      if (da >= g + step / 2 + 0.01) edge = Math.min(edge, da - step / 2);
+    }
+    const lat0 = q.width / 2, lat1 = rm * Math.sin(Math.min(edge, Math.PI / 2)) + 0.3;
+    const out: [number, number] = q.side === 0 ? [1, 0] : q.side === 1 ? [0, 1] : q.side === 2 ? [-1, 0] : [0, -1];
+    if (lat1 - lat0 > 0.3) {
+      const near = rin * Math.cos(Math.min(edge, Math.PI / 2)) - 0.2; // from here out to the face
+      const depth = r - near, mid = (near + r) / 2;
+      for (const sgn of [-1, 1]) {
+        const lat = sgn * (lat0 + lat1) / 2;
+        b.cols.push({
+          shape: 'box', x: c.x + out[0] * mid - out[1] * lat, y: c.y + wallH / 2, z: c.z + out[1] * mid + out[0] * lat,
+          sx: out[0] ? depth : lat1 - lat0, sy: wallH, sz: out[0] ? lat1 - lat0 : depth,
+        });
+      }
+    }
+    // The lintel, and the lit frame of the doorway (entrance light).
+    if (wallH - dh > 0.5) b.cols.push({ shape: 'box', x: c.x + out[0] * rm, y: c.y + dh + (wallH - dh) / 2, z: c.z + out[1] * rm, sx: out[0] ? T : q.width, sy: wallH - dh, sz: out[0] ? q.width : T });
+    const fx = c.x + out[0] * (r + 0.15), fz = c.z + out[1] * (r + 0.15);
+    b.box(3, 'portal', fx, c.y + dh, fz, out[0] ? 0.3 : q.width, 0.6, out[0] ? q.width : 0.3, { surface: 'glow', light: 'entrance', glow: 1.2, solid: false });
+    for (const sgn of [-1, 1]) b.box(3, 'portal', fx - out[1] * sgn * (q.width / 2), c.y, fz + out[0] * sgn * (q.width / 2), 0.5, dh, 0.5, { surface: 'glow', light: 'entrance', glow: 0.9, solid: false });
+    buildSteps(b, q.steps, q.side, c.x + out[0] * r, c.z + out[1] * r, q.width);
+  }
+  void round;
   return cfg;
 }
 
@@ -394,6 +540,8 @@ export interface RoomDoor {
 export interface Room {
   id: string;
   program: InteriorConfig['program'];
+  /** A round room: its centre and inner radius (world, m). */
+  round?: { x: number; z: number; r: number };
   /** Floor height and the room's rectangle (world, m). */
   y: number;
   x0: number;
@@ -413,12 +561,16 @@ export function structureRoom(s: StructureSpec): Room | null {
   if (!I || !I.accessible) return null;
   const cx = (I.x0 + I.x1) / 2, cz = (I.z0 + I.z1) / 2;
   const W = (lx: number, lz: number): [number, number] => { const [x, z] = rotQ(lx, lz, s.rotation); return [s.x + x, s.z + z]; };
-  const [ax, az] = W(I.x0, I.z0), [bx, bz] = W(I.x1, I.z1);
+  // A round room is known to the people by the square round its floor.
+  const R = I.round;
+  const [ax, az] = R ? W(R.cx - R.r, R.cz - R.r) : W(I.x0, I.z0), [bx, bz] = R ? W(R.cx + R.r, R.cz + R.r) : W(I.x1, I.z1);
   const room: Room = { id: s.id, program: I.program, y: s.y + I.y0, x0: Math.min(ax, bx), x1: Math.max(ax, bx), z0: Math.min(az, bz), z1: Math.max(az, bz), doors: [] };
+  if (R) { const [rx, rz] = W(R.cx, R.cz); room.round = { x: rx, z: rz, r: R.r }; }
   for (const e of I.entrances) {
     const out: [number, number] = e.side === 0 ? [1, 0] : e.side === 1 ? [0, 1] : e.side === 2 ? [-1, 0] : [0, -1];
-    const lx = e.side === 0 ? I.x1 + I.wall / 2 : e.side === 2 ? I.x0 - I.wall / 2 : cx + e.offset;
-    const lz = e.side === 1 ? I.z1 + I.wall / 2 : e.side === 3 ? I.z0 - I.wall / 2 : cz + e.offset;
+    const reach = R ? R.r + I.wall / 2 : 0; // a drum's door is on its wall, not on the square inside it
+    const lx = e.side === 0 ? (R ? R.cx + reach : I.x1 + I.wall / 2) : e.side === 2 ? (R ? R.cx - reach : I.x0 - I.wall / 2) : cx + e.offset;
+    const lz = e.side === 1 ? (R ? R.cz + reach : I.z1 + I.wall / 2) : e.side === 3 ? (R ? R.cz - reach : I.z0 - I.wall / 2) : cz + e.offset;
     const [x, z] = W(lx, lz);
     const [nx, nz] = rotQ(out[0], out[1], s.rotation);
     // March in from the door until something stands in the way (or the far wall).

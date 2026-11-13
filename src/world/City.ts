@@ -57,6 +57,8 @@ export interface CityRoom {
   z1: number;
   y0: number;
   y1: number;
+  /** A round room: centre and inner radius (the rectangle above is the square round it). */
+  round?: { x: number; z: number; r: number };
   doors: Array<{ x: number; z: number; nx: number; nz: number; width: number; height: number }>;
 }
 
@@ -145,7 +147,7 @@ export function appendDistrict(plan: CityPlan, d: DistrictPlan, central: boolean
     const I = s.interior;
     plan.buildings.push({
       id: building, arch: s.id, x: s.x, z: s.z, top: s.height, color,
-      ...(room && I ? { room: { x0: room.x0, x1: room.x1, z0: room.z0, z1: room.z1, y0: room.y, y1: s.y + I.y1, doors: room.doors.map((d) => ({ x: d.x, z: d.z, nx: d.nx, nz: d.nz, width: d.width, height: d.height })) } } : {}),
+      ...(room && I ? { room: { x0: room.x0, x1: room.x1, z0: room.z0, z1: room.z1, y0: room.y, y1: s.y + I.y1, ...(room.round ? { round: room.round } : {}), doors: room.doors.map((d) => ({ x: d.x, z: d.z, nx: d.nx, nz: d.nz, width: d.width, height: d.height })) } } : {}),
     });
     for (const c of s.colliders) plan.pieces.push({ shape: c.shape, x: c.x, y: c.y, z: c.z, sx: c.sx, sy: c.sy, sz: c.sz, taper: c.taper, color, building, windows: false, arch: s.id });
     if (s.landmark && (s.archetype === 'tower' || s.archetype === 'radial')) plan.spires.push({ x: s.x, z: s.z, y0: s.height * 0.7, y1: s.height, color });

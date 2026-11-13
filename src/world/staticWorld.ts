@@ -154,7 +154,7 @@ export class StaticWorld {
           ...g, id, name: `${g.name}@${ox},${oz}`, x0: g.x0 + ox, z0: g.z0 + oz,
           pieces: g.pieces.map((i) => pieceStart + i),
           kit: g.kit ? { ...g.kit, x: g.kit.x + ox, z: g.kit.z + oz } : undefined,
-          room: g.room && { ...g.room, x0: g.room.x0 + ox, x1: g.room.x1 + ox, z0: g.room.z0 + oz, z1: g.room.z1 + oz, doors: g.room.doors.map((d) => ({ ...d, x: d.x + ox, z: d.z + oz })) },
+          room: g.room && { ...g.room, x0: g.room.x0 + ox, x1: g.room.x1 + ox, z0: g.room.z0 + oz, z1: g.room.z1 + oz, doors: g.room.doors.map((d) => ({ ...d, x: d.x + ox, z: d.z + oz })), ...(g.room.round ? { round: { ...g.room.round, x: g.room.round.x + ox, z: g.room.round.z + oz } } : {}) },
           heldBy: g.heldBy?.map((e) => ({ ...e, x: e.x + ox, z: e.z + oz })),
         });
       }
