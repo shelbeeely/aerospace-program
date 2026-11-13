@@ -11,7 +11,7 @@ import { neutralControls, sanitizeControls, type ControlInputs } from './control
 import { Ocean } from './ocean.ts';
 import { CITY, COAST, isSea, LAYOUT, PLANET } from './layout.ts';
 import { terrainHeight } from './terrain.ts';
-import { BIT_LOOK } from '../people/bit.ts';
+import { BIT, BIT_LOOK } from '../people/bit.ts';
 import { BitPopulation, BitWalker, ON_FOOT, type BitThreat, type WalkInput } from './bits.ts';
 import { TrailSystem } from './trails.ts';
 import { TrailEmitter } from '../modules/TrailEmitter.ts';
@@ -544,6 +544,11 @@ export class Simulation {
   walkInput: WalkInput = { forward: 0, turn: 0, strafe: 0 };
   private readonly bitThreat: BitThreat = { x: 0, y: 0, z: 0, vx: 0, vz: 0 };
   private lastScare = -Infinity;
+  private fracturesSeen = -1;
+  private bitTick = 3;
+  private readonly ruins = new Set<string>();
+  private breaksSeen = -Infinity;
+  private blastsSeen = -Infinity;
 
   /** The player, wherever it is: on foot, or its vehicle. */
   get playerPoint(): { x: number; y: number; z: number } {
@@ -890,6 +895,10 @@ export class Simulation {
     this.bits.reset();
     this.walker.board();
     this.lastScare = -Infinity;
+    this.ruins.clear();
+    this.fracturesSeen = -1;
+    this.breaksSeen = -Infinity;
+    this.blastsSeen = -Infinity;
     this.airTraffic.clear();
     this.groundTurrets.clear();
     this.staticWorld.reset();
@@ -1039,7 +1048,32 @@ export class Simulation {
       for (const e of this.explosions) if (e.time > this.lastScare) this.bits.scare(e.x, e.z, 40 + e.radius * 3, this.time);
       this.lastScare = latest.time;
     }
-    this.bits.step(this.dt, this.time, this.playerPoint, this.exploded ? [] : [th]);
+    // Wrecked buildings empty out; rubble and blasts derez whoever they reach, the player on foot included.
+    if (this.staticWorld.version !== this.fracturesSeen) {
+      this.fracturesSeen = this.staticWorld.version;
+      for (const id of this.staticWorld.fractured.keys()) {
+        const arch = this.staticWorld.structures.groups[id].arch;
+        if (arch && !this.ruins.has(arch)) { this.ruins.add(arch); this.bits.collapse(arch, this.time); }
+      }
+      if (this.staticWorld.fractured.size === 0) this.ruins.clear();
+    }
+    const w = this.walker;
+    const strike = (x: number, y: number, z: number, r: number) => {
+      this.bits.strike(x, y, z, r, this.time);
+      if (w.active && w.downAt === null && (w.x - x) ** 2 + (w.y + BIT.hover - y) ** 2 + (w.z - z) ** 2 < r * r) {
+        w.downAt = this.time;
+        this.chips.emit({ x: w.x, y: w.y + BIT.hover, z: w.z, radius: 0.6, vx: 0, vy: 2, vz: 0, speed: 6, count: 26, size: 0.14, color: BIT_LOOK.idle1.color });
+      }
+    };
+    const breaks = this.town.breaks;
+    for (let i = breaks.length - 1; i >= 0 && breaks[i].time > this.breaksSeen; i--) strike(breaks[i].x, breaks[i].y, breaks[i].z, 2.6);
+    if (breaks.length) this.breaksSeen = Math.max(this.breaksSeen, breaks[breaks.length - 1].time);
+    for (const e of this.explosions) if (e.time > this.blastsSeen) strike(e.x, e.y, e.z, e.radius * 0.6);
+    if (latest) this.blastsSeen = Math.max(this.blastsSeen, latest.time);
+    // Down on foot: a moment later the player is back in their vehicle.
+    if (w.active && w.downAt !== null && this.time - w.downAt > TUNING.respawnDelay) w.board();
+    // The people think at a quarter of the physics rate: plenty for walkers, and cheap.
+    if (++this.bitTick % 4 === 0) this.bits.step(this.dt * 4, this.time, this.playerPoint, this.exploded ? [] : [th]);
     // A Bit run over derezzes into chips of its own light.
     for (const d of this.bits.derezEvents) {
       this.chips.emit({ x: d.x, y: d.y, z: d.z, radius: 0.6, vx: th.vx * 0.5, vy: 2, vz: th.vz * 0.5, speed: 6, count: 26, size: 0.14, color: BIT_LOOK.idle1.color });

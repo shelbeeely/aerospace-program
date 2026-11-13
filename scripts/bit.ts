@@ -19,7 +19,8 @@ import type { RoomDoor } from '../src/arch/InteriorGenerator.ts';
 import type { ControlInputs } from '../src/sim/controls.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 import { terrainHeight } from '../src/sim/terrain.ts';
-import { worldStructures } from '../src/world/structures.ts';
+import { structureMask, worldStructures } from '../src/world/structures.ts';
+import { TUNING } from '../src/tuning.ts';
 import { districtPlan } from '../src/arch/DistrictGenerator.ts';
 import { GRID } from '../src/arch/grid.ts';
 
@@ -266,6 +267,69 @@ console.log('\n--- on foot');
   for (let i = 0; i < 360; i++) sim.step({ ...neutral, brake: 0, throttle: 1 });
   check(sim.position.distanceTo(car) > 5, 'and drives off', `${r2(sim.position.distanceTo(car))} m`);
   void parked;
+}
+
+console.log('\n--- destruction');
+{
+  // A wrecked building empties: its people run out by the door and nobody goes back in.
+  const c = { x: -2600, z: -1500 };
+  const pop = new BitPopulation();
+  pop.step(1 / 30, 0, c);
+  const busy = [...pop.homes.values()].filter((h) => h.room).map((h) => ({ h, n: pop.people.filter((p) => p.home === h && p.place === 'inside').length })).sort((a, b) => b.n - a.n)[0];
+  const h = busy.h;
+  const indoors = pop.collapse(h.room!.id, 1);
+  check(indoors === busy.n && indoors > 0 && h.ruined, 'a wrecked building: everyone indoors makes for the door', `${indoors} indoors`);
+  check(pop.people.filter((p) => p.home === h).every((p) => pop.stateOf(p, 1.1) === 'no'), 'and its people say NO');
+  let t = 1;
+  for (; t < 120 && pop.people.some((p) => p.home === h && p.place !== 'kerb'); t += 1 / 30) pop.step(1 / 30, t, c);
+  check(pop.people.filter((p) => p.home === h).every((p) => p.place === 'kerb' && !inRoom(p)), 'they get out to the kerb', `clear in ${(t - 1).toFixed(0)} s`);
+  for (; t < 400; t += 1 / 30) pop.step(1 / 30, t, c);
+  check(pop.people.filter((p) => p.home === h).every((p) => p.place === 'kerb'), 'and nobody goes back into the ruin');
+  // Rubble and blasts derez whoever they reach.
+  const q = pop.people[0];
+  const n0 = pop.people.length;
+  check(pop.strike(q.x, q.y, q.z, 2.6, t) >= 1 && pop.people.length < n0 && !pop.people.includes(q), 'rubble landing on a Bit derezzes it');
+}
+{
+  // In the simulation: fracture a building with a room and its people are told; a block
+  // breaking beside the player on foot takes the player down, and they come back aboard.
+  const sim = new Simulation(LIGHT_CAR);
+  sim.traffic.enabled = false;
+  for (let i = 0; i < 60; i++) sim.step(neutral);
+  const groups = sim.staticWorld.structures.groups;
+  const withRoom = groups.filter((g) => g.room);
+  check(withRoom.length > 20, 'structures carry their rooms into the destruction engine', `${withRoom.length} of ${groups.length} groups`);
+  // The fracture grid is hollow where the room is, and open at a door.
+  let hollow = 0, open = 0, tried = 0;
+  for (const g of withRoom.slice(0, 40)) {
+    const r = g.room!, s = g.blockSize;
+    if (r.x1 - r.x0 < 3 * s || r.z1 - r.z0 < 3 * s || r.y1 - r.y0 < 2 * s) continue; // a room smaller than its blocks is just walls
+    tried++;
+    const mask = structureMask(g, sim.staticWorld.structures.list);
+    const cell = (x: number, y: number, z: number) => mask(Math.floor((x - g.x0) / s), Math.floor(y / s), Math.floor((z - g.z0) / s));
+    if (!cell((r.x0 + r.x1) / 2, r.y0 + s / 2, (r.z0 + r.z1) / 2)) hollow++;
+    const d = r.doors[0];
+    if (!cell(d.x, r.y0 + s / 2, d.z)) open++;
+  }
+  check(tried > 5 && hollow === tried && open === tried, 'fractured, a hollow structure is still hollow, with its doorway open', `${hollow} hollow and ${open} open of ${tried}`);
+  const home = [...sim.bits.homes.values()].find((x) => x.room && groups.some((g) => g.arch === x.room!.id));
+  if (home) {
+    const g = groups.find((x) => x.arch === home.room!.id)!;
+    sim.staticWorld.fracture(g.id, { impulse: 0, x: 0, y: 0, z: 0 }, sim.time, false);
+    sim.step(neutral);
+    check(home.ruined, 'when a building fractures its people are told');
+  } else check(false, 'a home with a room near the vehicle');
+  for (let i = 0; i < 600; i++) sim.step(neutral);
+  check(sim.exitVehicle() === null, 'the player steps out');
+  sim.town.breaks.push({ x: sim.walker.x + 1, y: sim.walker.y + 1, z: sim.walker.z, color: '#fff', time: sim.time + 1e-6 });
+  sim.step(neutral);
+  check(sim.walker.downAt !== null, 'a block breaking beside the player on foot derezzes them');
+  const at = [sim.walker.x, sim.walker.z];
+  sim.walkInput = { forward: 1, turn: 0, strafe: 0 };
+  for (let i = 0; i < 120; i++) sim.step(neutral);
+  check(Math.hypot(sim.walker.x - at[0], sim.walker.z - at[1]) < 0.01, 'down, they cannot walk');
+  for (let i = 0; i < (TUNING.respawnDelay + 1) * 120; i++) sim.step(neutral);
+  check(!sim.walker.active, 'and a moment later they are back in their vehicle');
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nAll Bit checks passed');

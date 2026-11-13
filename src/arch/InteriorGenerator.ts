@@ -377,6 +377,8 @@ export interface RoomDoor {
   nx: number;
   nz: number;
   width: number;
+  /** Height of the opening (m). */
+  height: number;
   /** How far in from the door the aisle runs clear (m). */
   depth: number;
   /** Height of the threshold over the ground outside (m): there are steps down when it is not 0. */
@@ -446,7 +448,7 @@ export function structureRoom(s: StructureSpec): Room | null {
         if (f < 0.05 && floor.length > 6 && floor.slice(-6).every((v) => v < 0.05)) break;
       }
     }
-    room.doors.push({ x, z, nx: nx + 0, nz: nz + 0, width: e.width, depth, rise: Math.max(0, I.y0), floor });
+    room.doors.push({ x, z, nx: nx + 0, nz: nz + 0, width: e.width, height: e.height, depth, rise: Math.max(0, I.y0), floor });
   }
   return room.doors.length ? room : null;
 }

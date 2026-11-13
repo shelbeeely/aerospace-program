@@ -1375,7 +1375,8 @@ async function start() {
     if (sim.exploded && explodedAt === null) explodedAt = sim.time;
     if (!sim.exploded) explodedAt = null;
     const respawnLeft = explodedAt === null ? 0 : TUNING.respawnDelay - (sim.time - explodedAt);
-    hud.setDestroyed(sim.exploded, Math.max(0, respawnLeft), sim.derezCause === 'shot');
+    const footDown = sim.walker.active && sim.walker.downAt !== null;
+    hud.setDestroyed(sim.exploded || footDown, footDown && !sim.exploded ? Math.max(0, TUNING.respawnDelay - (sim.time - sim.walker.downAt!)) : Math.max(0, respawnLeft), sim.derezCause === 'shot');
     if (explodedAt !== null && respawnLeft <= 0) {
       explodedAt = null;
       reset(false);

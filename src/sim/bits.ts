@@ -69,6 +69,8 @@ export interface BitHome {
   loop: number;
   /** The building's interior, when it has one the people can use. */
   room: Room | null;
+  /** The building has been wrecked: its room is no longer a place to go. */
+  ruined: boolean;
   /** People of this lot who have derezzed (they stay gone while the lot is in view). */
   gone: Set<number>;
 }
@@ -112,6 +114,8 @@ export interface BitPerson {
   answeredAt: number;
   /** Something it has decided to say at a later moment. */
   pending: { answer: BitAnswer; at: number } | null;
+  /** Running for its life (out of a collapsing building): it does not stop to talk. */
+  hurry: boolean;
   /** Offset of its idle beat, so a street of Bits does not pulse in step (s). */
   beat: number;
   /** World pose: position (centre of the figure) and where it faces. */
@@ -251,13 +255,13 @@ export class BitPopulation {
         back: 0, backTo: 0,
         mood: 'walk', until: time + 4 + rand() * 20, quietUntil: time + rand() * 4,
         door: null, doorS: 0, path: [], then: 'kerb', shiftAt: 0, stayUntil: 0,
-        answer: null, answeredAt: -Infinity, pending: null,
+        answer: null, answeredAt: -Infinity, pending: null, hurry: false,
         beat: rand() * 10,
         x: 0, y: 0, z: 0, yaw: 0,
         rand,
       };
       const indoors = rand() < INDOORS;
-      if (h.room && indoors) {
+      if (h.room && !h.ruined && indoors) {
         // At home when the lot streams in: standing at its place down an aisle.
         const d = h.room.doors[Math.floor(rand() * h.room.doors.length)];
         const spot = spotBehind(d, rand);
@@ -317,7 +321,7 @@ export class BitPopulation {
       ...canon, x0: canon.x0 + sx, x1: canon.x1 + sx, z0: canon.z0 + sz, z1: canon.z1 + sz,
       doors: canon.doors.map((d) => ({ ...d, x: d.x + sx, z: d.z + sz })),
     };
-    return { key: blockKey(gi, gj), gi, gj, x0, x1, z0, z1, loop: 2 * (x1 - x0 + z1 - z0), room, gone: new Set() };
+    return { key: blockKey(gi, gj), gi, gj, x0, x1, z0, z1, loop: 2 * (x1 - x0 + z1 - z0), room, ruined: false, gone: new Set() };
   }
 
   /** Fill the lots near the player and drop the far ones. */
@@ -399,6 +403,58 @@ export class BitPopulation {
     }
   }
 
+  /**
+   * The building with this room has been wrecked (it fractured). Its people say NO and run:
+   * those indoors, or on their way in, make for the door they know and out to the kerb at a
+   * run. Nobody goes in again. Returns how many were indoors.
+   */
+  collapse(roomId: string, time: number): number {
+    let n = 0;
+    for (const h of this.homes.values()) {
+      if (!h.room || h.room.id !== roomId || h.ruined) continue;
+      h.ruined = true;
+      for (const p of this.people) {
+        if (p.home !== h) continue;
+        this.say(p, 'no', time);
+        if (p.place === 'kerb') { if (p.door) p.door = null; this.frighten(p, time); continue; }
+        if (p.place === 'way' && p.then === 'kerb') { p.hurry = true; continue; }
+        const d = p.door!;
+        n++;
+        kerbPoint(h, p.doorS, 0, _k);
+        // Already through the door going in, or still outside it: either way, out by the door.
+        const outside = (p.x - d.x) * d.nx + (p.z - d.z) * d.nz > 0;
+        p.path = outside ? [{ x: _k.x, z: _k.z }] : [{ x: d.x - d.nx * 1.6, z: d.z - d.nz * 1.6 }, { x: d.x + d.nx * 1.6, z: d.z + d.nz * 1.6 }, { x: _k.x, z: _k.z }];
+        p.then = 'kerb';
+        p.place = 'way';
+        p.mood = 'walk';
+        p.hurry = true;
+        p.pending = null;
+      }
+    }
+    return n;
+  }
+
+  /** Something lands or goes off at (x, y, z): every Bit within `r` of it derezzes. Returns how many. */
+  strike(x: number, y: number, z: number, r: number, time: number): number {
+    let n = 0;
+    for (let i = this.people.length - 1; i >= 0; i--) {
+      const p = this.people[i];
+      const dx = p.x - x, dy = p.y - y, dz = p.z - z;
+      if (dx * dx + dy * dy + dz * dz > r * r) continue;
+      this.derez(p, i, time);
+      n++;
+    }
+    return n;
+  }
+
+  private derez(p: BitPerson, i: number, time: number): void {
+    this.derezzed++;
+    this.derezEvents.push({ x: p.x, y: p.y, z: p.z, time });
+    if (this.derezEvents.length > 32) this.derezEvents.shift();
+    p.home.gone.add(p.slot);
+    this.people.splice(i, 1);
+  }
+
   private frighten(p: BitPerson, time: number): void {
     if (p.mood !== 'scared') this.say(p, 'no', time);
     p.mood = 'scared';
@@ -421,7 +477,7 @@ export class BitPopulation {
 
   /** Walk the current path; true when it is done. */
   private follow(p: BitPerson, dt: number): boolean {
-    let left = p.pace * dt;
+    let left = p.pace * (p.hurry ? 2.5 : 1) * dt;
     while (left > 0 && p.path.length) {
       const w = p.path[0];
       const dx = w.x - p.x, dz = w.z - p.z;
@@ -460,11 +516,7 @@ export class BitPopulation {
         if (d2 < BITS.scareRange * BITS.scareRange && speed > BITS.scareSpeed && t.vx * dx + t.vz * dz > 0) this.frighten(p, time);
       }
       if (hit) {
-        this.derezzed++;
-        this.derezEvents.push({ x: p.x, y: p.y, z: p.z, time });
-        if (this.derezEvents.length > 32) this.derezEvents.shift();
-        h.gone.add(p.slot);
-        people.splice(i, 1);
+        this.derez(p, i, time);
         continue;
       }
       if (p.pending && time >= p.pending.at) {
@@ -473,7 +525,7 @@ export class BitPopulation {
       }
       if (p.place === 'way') {
         // Through a door: it stops to talk or flinch, otherwise it keeps walking.
-        if (p.mood !== 'walk' && time >= p.until) p.mood = 'walk';
+        if (p.mood !== 'walk' && (p.hurry || time >= p.until)) p.mood = 'walk';
         if (p.mood === 'walk' && this.follow(p, dt)) {
           if (p.then === 'inside') {
             p.place = 'inside';
@@ -488,6 +540,7 @@ export class BitPopulation {
             p.shiftAt = time + 6 + p.rand() * 18;
           } else {
             p.place = 'kerb';
+            p.hurry = false;
             p.s = p.doorS;
             p.door = null;
             p.dir = p.rand() < 0.5 ? 1 : -1;
@@ -543,7 +596,7 @@ export class BitPopulation {
           const r = p.rand();
           if (r < 0.2) { p.mood = 'stand'; p.until = time + 1.5 + p.rand() * 5; }
           else if (r < 0.3) { p.dir = -p.dir as 1 | -1; p.until = time + 6 + p.rand() * 20; }
-          else if (r < 0.85 && h.room) this.seekDoor(p, time);
+          else if (r < 0.85 && h.room && !h.ruined) this.seekDoor(p, time);
           else {
             let gap = Infinity;
             for (const q of people) {
@@ -566,7 +619,7 @@ export class BitPopulation {
     // Meetings: two of a lot's people close together, both on the kerb or both indoors, stop to talk.
     for (let i = 0; i < people.length; i++) {
       const a = people[i];
-      if (a.place === 'way' || a.mood === 'talk' || a.mood === 'scared' || time < a.quietUntil) continue;
+      if (a.place === 'way' || a.hurry || a.mood === 'talk' || a.mood === 'scared' || time < a.quietUntil) continue;
       for (let j = i + 1; j < people.length; j++) {
         const b = people[j];
         if (b.home !== a.home || b.place !== a.place || b.mood === 'talk' || b.mood === 'scared' || time < b.quietUntil) continue;
@@ -634,6 +687,8 @@ export class BitWalker {
   prevYaw = 0;
   answer: BitAnswer | null = null;
   answeredAt = -Infinity;
+  /** Derezzed (struck by rubble or a blast) at this time; null while it lives. */
+  downAt: number | null = null;
   private readonly ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
 
   /** Step out at (x, z), facing `yaw`. */
@@ -645,10 +700,12 @@ export class BitWalker {
     this.yaw = this.prevYaw = yaw;
     this.vx = this.vz = 0;
     this.answer = null;
+    this.downAt = null;
   }
 
   board(): void {
     this.active = false;
+    this.downAt = null;
   }
 
   say(answer: BitAnswer, time: number): boolean {
@@ -675,7 +732,7 @@ export class BitWalker {
    * own parked vehicle, so it can get back to the door).
    */
   step(dt: number, input: WalkInput, world: RAPIER.World, ground: (x: number, z: number) => number, skip?: RAPIER.RigidBody): void {
-    if (!this.active) return;
+    if (!this.active || this.downAt !== null) return;
     this.prevX = this.x; this.prevY = this.y; this.prevZ = this.z; this.prevYaw = this.yaw;
     this.yaw -= input.turn * ON_FOOT.turn * dt;
     const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw); // forward

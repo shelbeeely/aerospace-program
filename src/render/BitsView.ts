@@ -103,8 +103,8 @@ export class BitsView {
     if (this.pools.instanceColor) this.pools.instanceColor.needsUpdate = true;
 
     const w = this.walker;
-    this.player.root.visible = w.active;
-    if (w.active) {
+    this.player.root.visible = w.active && w.downAt === null;
+    if (w.active && w.downAt === null) {
       this.player.root.position.set(w.prevX + (w.x - w.prevX) * alpha, w.prevY + (w.y - w.prevY) * alpha, w.prevZ + (w.z - w.prevZ) * alpha);
       this.player.update(time, w.state(time));
     }
