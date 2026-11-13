@@ -53,13 +53,16 @@ import { STRATEGIC } from './sim/strategic.ts';
 import { predictDrop } from './sim/weapons.ts';
 import { StrategicView } from './render/StrategicView.ts';
 import type { TurretDensity } from './sim/groundTurrets.ts';
-import { hostile, isTeam, TEAMS, type Team } from './sim/teams.ts';
+import { hostile, isTeam, sideLivery, TEAMS, type Team } from './sim/teams.ts';
+import { craftRecord } from './sim/adsb.ts';
 import { MercPanel } from './ui/MercPanel.ts';
 import { flyerKind, type Foe } from './sim/aiTraffic.ts';
 import { HostileMarkers, LockMarker, type HostileMark } from './hud/HostileMarkers.ts';
 import type { LockTarget } from './sim/lock.ts';
 import { RadarMap } from './hud/RadarMap.ts';
+import { AdsbTags } from './hud/AdsbTags.ts';
 import { GlobeView } from './render/GlobeView.ts';
+import { HackBeamView } from './render/HackBeamView.ts';
 import { StrikePanel } from './ui/StrikePanel.ts';
 import { simContacts, wrapDelta, type Contact } from './sim/contacts.ts';
 import { terrainHeight } from './sim/terrain.ts';
@@ -212,6 +215,8 @@ async function start() {
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
   const weaponsView = new WeaponsView(scene, () => sim.allWeapons());
+  const hackBeamView = new HackBeamView(scene);
+  const _beamFrom = new THREE.Vector3(), _beamTo = new THREE.Vector3();
   const craterView = new CraterView(scene);
   const boomView = new BoomView(scene);
   const aiTrafficView = new AiTrafficView(scene, sim.airTraffic);
@@ -412,6 +417,7 @@ async function start() {
   const aiCountLabel = document.getElementById('w-ai-count-v');
   const hostileMarkers = new HostileMarkers(document.getElementById('hostile-marks'));
   const radarMap = new RadarMap();
+  const adsbTags = new AdsbTags(document.getElementById('hostile-marks'));
   const lockMarker = new LockMarker(document.getElementById('hostile-marks'));
   const dropMarker = new LockMarker(document.getElementById('hostile-marks'), 'lock-mark drop-mark');
   const _dropFrom = new THREE.Vector3();
@@ -419,6 +425,7 @@ async function start() {
   const playerTargets = new Map<string, LockTarget>();
   const playerFoes = new Map<string, Foe>();
   const _nose = new THREE.Vector3();
+  const _globeEuler = new THREE.Euler();
   /** A war slider's value, shown beside it. */
   const sideSlider = (id: string): number => {
     const input = document.getElementById(id) as HTMLInputElement | null;
@@ -481,6 +488,10 @@ async function start() {
   // Credits (remembered) and the mercenaries they hire.
   const CREDIT_STORAGE = 'credits';
   sim.credits = Math.max(0, Math.floor(Number(stored(CREDIT_STORAGE)) || 0));
+  // Hacking charges are kept with the credits.
+  const HACK_STORAGE = 'hackCharges';
+  sim.hackCharges = Math.max(0, Math.min(9, Math.floor(Number(stored(HACK_STORAGE)) || 0)));
+  let savedHacks = sim.hackCharges;
   let savedCredits = sim.credits;
   { const shown = document.getElementById('w-credits-v'); if (shown) shown.textContent = sim.credits.toLocaleString(); }
   const STRATEGIC_STORAGE = 'strategic';
@@ -489,7 +500,8 @@ async function start() {
   let savedStrategic = sim.strategic;
   const mercPanel = new MercPanel(sim, () => sim.airTraffic.pool.filter((d) => flyerKind(d) !== 'ground'), (t) => toast(t));
   // The 3D strike globe (the map's Globe button, Shift+Tab): pick a spot, send aircraft, call strikes.
-  const globe = new GlobeView();
+  // Detailed (real models, full architecture up close) unless the device is a phone or set low.
+  const globe = new GlobeView(!mobile && quality !== 'low' && !perf.powerSaver);
   const strikePanel = new StrikePanel(sim, globe, (t) => toast(t));
   const toggleGlobe = (on = !globe.visible) => {
     if (on) radarMap.toggleMap(false);
@@ -1144,7 +1156,7 @@ async function start() {
         // Step out as a Bit, or get back in.
         const why = sim.walker.active ? sim.boardVehicle() : sim.exitVehicle();
         if (why) toast(why);
-        else if (sim.walker.active) { autopilot.disengage(); toast('On foot · W/S walk, A/D turn, Q/E sidestep · V says YES, O says NO · ; gets back in'); }
+        else if (sim.walker.active) { autopilot.disengage(); toast('On foot · W/S walk, A/D turn, Q/E sidestep · V says YES, O says NO · = gets back in'); }
         else { player.reset(); toast('Aboard'); }
       }
       else if (a === 'strategic') toast(sim.launchStrategic() ?? 'Launched');
@@ -1176,6 +1188,8 @@ async function start() {
     const onFoot = sim.walker.active;
     sim.weapons.trigger.primary = trig.primary && !onFoot;
     sim.weapons.trigger.secondary = trig.secondary && !onFoot;
+    sim.hackHeld = trig.hack && !onFoot;
+    document.body.classList.toggle('hacking', sim.hackCharges > 0);
     // On foot the triggers are the Bit's two answers; the people in earshot answer back.
     if (onFoot && (trig.primary || trig.secondary) && sim.walker.say(trig.primary ? 'yes' : 'no', sim.time)) {
       sim.bits.hear(sim.walker.x, sim.walker.z, sim.time);
@@ -1248,6 +1262,16 @@ async function start() {
     chipsView.update(dt);
     explosionView.update(sim.time, sim.explosions);
     weaponsView.update(sim.time);
+    // The hacking beam: from the nose to the locked target while it holds.
+    {
+      const target = sim.hackBeam.status === 'beam' ? sim.lock.target : null;
+      if (target) {
+        _beamFrom.set(0, 0, -2).applyQuaternion(renderRot).add(renderPos);
+        target.position(_beamTo);
+        _beamTo.set(renderPos.x + wrapDelta(renderPos.x, _beamTo.x), _beamTo.y, renderPos.z + wrapDelta(renderPos.z, _beamTo.z));
+      }
+      hackBeamView.update(target ? _beamFrom : null, target ? _beamTo : null, TEAMS[sim.team].light, sim.hackBeam.progress, sim.time);
+    }
     aiTrafficView.update(dt);
     aiTrafficView.simTime = turretsView.simTime = sim.time;
     turretsView.update(dt);
@@ -1323,11 +1347,20 @@ async function start() {
     if (mode === 'flight') {
       // Radar and planet map: the simulation's vehicles, and the other players on the Grid.
       const contacts: Contact[] = simContacts(sim);
+      const playerAdsb = [];
       for (const p of net.players.values()) {
         if (!p.pose.visible) continue;
         _nose.set(0, 0, -1).applyQuaternion(p.pose.rotation);
-        contacts.push({ id: `player:${p.id}`, kind: 'player', foe: p.team !== sim.team, x: p.pose.position.x, z: p.pose.position.z, y: p.pose.position.y, heading: Math.atan2(_nose.x, -_nose.z), color: p.color, name: p.name });
+        const heading = Math.atan2(_nose.x, -_nose.z);
+        contacts.push({ id: `player:${p.id}`, kind: 'player', foe: p.team !== sim.team, x: p.pose.position.x, z: p.pose.position.z, y: p.pose.position.y, heading, color: p.color, name: p.name });
+        // Their ADS-B: name as the callsign, velocity from their latest state.
+        const v = p.latest?.v ?? [0, 0, 0];
+        playerAdsb.push(craftRecord({
+          id: `player:${p.id}`, callsign: p.name.toUpperCase().slice(0, 10), type: p.craft.name, self: false, side: p.team, team: sim.team, color: p.color,
+          x: p.pose.position.x, y: p.pose.position.y, z: p.pose.position.z, vx: v[0], vy: v[1], vz: v[2], heading,
+        }, sim.position));
       }
+      sim.extraAdsb = playerAdsb;
       // Carrying a nuke in the air: where it would burst if dropped now.
       let drop: { x: number; z: number; radius: number; armed: boolean } | null = null;
       if (sim.strategic === 'nuke' && !sim.exploded && sim.position.y - terrainHeight(sim.position.x, sim.position.z) > 20) {
@@ -1338,12 +1371,35 @@ async function start() {
         dropMarker.update(camera, { pos: pr.point, range: pr.point.distanceTo(sim.position), name: '', locked: pr.armed, text: pr.armed ? 'DROP' : 'DUD: TOO LOW' }, window.innerWidth, window.innerHeight);
       } else dropMarker.update(camera, null, window.innerWidth, window.innerHeight);
       _nose.set(0, 0, -1).applyQuaternion(sim.rotation);
-      const radarState = { drop, x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites(), lockedId: sim.lock.target?.id ?? null, territory: sim.groundTurrets.territory, teamColors: TEAMS.map((t) => t.light) };
+      // ADS-B: every vehicle's broadcast, for the radar, the tags in the view and the globe.
+      const adsb = sim.adsbRecords();
+      adsbTags.update(camera, mode === 'flight' && radarMap.adsbOn && !globe.visible ? adsb : null, sim.position, window.innerWidth, window.innerHeight);
+      const radarState = { adsb, drop, x: sim.position.x, z: sim.position.z, y: sim.position.y, heading: Math.atan2(_nose.x, -_nose.z), contacts, sites: landingSites(), lockedId: sim.lock.target?.id ?? null, territory: sim.groundTurrets.territory, teamColors: TEAMS.map((t) => t.light) };
       radarMap.update(now / 1000, radarState);
       if (globe.visible) {
+        // Designs for the models: the AI aircraft's, other players' (in their side's livery), yours.
+        const flyers = new Map(sim.airTraffic.flyers.map((f) => [`air:${f.id}`, f]));
+        const liveries = new Map<string, CraftDef>();
+        const model = (id: string) => {
+          if (id === 'self') {
+            _globeEuler.setFromQuaternion(sim.rotation, 'YXZ');
+            return { def: sim.craft.def, pitch: _globeEuler.x, bank: -_globeEuler.z };
+          }
+          const f = flyers.get(id);
+          if (f) return { def: f.def, pitch: f.pitch, bank: f.bank };
+          if (id.startsWith('player:')) {
+            const p = net.players.get(id.slice(7));
+            if (!p) return null;
+            let def = liveries.get(id);
+            if (!def) liveries.set(id, (def = sideLivery(p.craft, p.team)));
+            return { def };
+          }
+          return null;
+        };
         globe.render({
-          me: { x: sim.position.x, z: sim.position.z, heading: radarState.heading }, contacts, sites: radarState.sites,
-          strikes: sim.strikes.map((s) => { const at = sim.strikeSystem.position(s); return { kind: s.kind, x: s.x, z: s.z, fromX: s.fromX, fromZ: s.fromZ, at: at ? { x: at.x, z: at.z } : null, eta: s.eta - sim.time }; }),
+          me: { x: sim.position.x, z: sim.position.z, heading: radarState.heading }, adsb, tracks: sim.adsb.tracks,
+          turrets: contacts.filter((c) => c.kind === 'turret'), sites: radarState.sites, model,
+          strikes: sim.strikes.map((s) => { const at = sim.strikeSystem.position(s); return { kind: s.kind, x: s.x, z: s.z, fromX: s.fromX, fromZ: s.fromZ, at: at ? { x: at.x, z: at.z, y: at.y } : null, eta: s.eta - sim.time }; }),
           orders: sim.airTraffic.orders(), surface: radarMap.baseMap(), wash: radarMap.washMap(radarState), washVersion: sim.groundTurrets.territory.version,
         });
         strikePanel.update(dt);
@@ -1355,7 +1411,10 @@ async function start() {
         const range = Math.hypot(wrapDelta(sim.position.x, _lockPos.x), _lockPos.y - sim.position.y, wrapDelta(sim.position.z, _lockPos.z));
         _lockPos.set(sim.position.x + wrapDelta(sim.position.x, _lockPos.x), _lockPos.y, sim.position.z + wrapDelta(sim.position.z, _lockPos.z));
         lockMarker.update(camera, { pos: _lockPos, range, name: tracked.name, locked: sim.lock.locked }, window.innerWidth, window.innerHeight);
-        hud.setLock({ name: tracked.name, range, locked: sim.lock.locked });
+        // The hacking beam on it: its progress, or why it won't hold.
+        const hb = sim.hackBeam;
+        const hack = !sim.hackHeld ? null : hb.status === 'beam' ? `HACK ${Math.round(hb.progress * 100)}%` : hb.status === 'idle' ? null : hb.status.toUpperCase();
+        hud.setLock({ name: tracked.name, range, locked: sim.lock.locked, hack });
       } else {
         lockMarker.update(camera, null, window.innerWidth, window.innerHeight);
         hud.setLock(null);
@@ -1472,6 +1531,10 @@ async function start() {
     {
       const inFlight = sim.weapons.projectiles.find((p) => p.kind === 'nuke' || p.kind === 'emp');
       hud.setStrategic({ carried: sim.strategic, flight: inFlight ? inFlight.kind : null, emp: Math.max(0, sim.empUntil - sim.time) });
+    }
+    if (sim.hackCharges !== savedHacks) {
+      savedHacks = sim.hackCharges;
+      try { localStorage.setItem(HACK_STORAGE, String(sim.hackCharges)); } catch { /* not remembered */ }
     }
     if (sim.strategic !== savedStrategic) {
       savedStrategic = sim.strategic;

@@ -4,7 +4,7 @@ const GAME_CODES = new Set([
   'Backspace', 'KeyL',
   'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyB', 'KeyR', 'KeyC', 'KeyZ', 'KeyX',
   'KeyT', 'KeyG', 'KeyH', 'KeyY', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'F3',
-  'Space', 'KeyN', 'BracketLeft', 'BracketRight', 'KeyM', 'KeyP', 'KeyK', 'KeyF', 'Period', 'Comma', 'F6', 'F7', 'KeyU', 'KeyJ', 'KeyV', 'KeyO', 'KeyI', 'Tab', 'Backslash', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Slash', 'Enter', 'Quote', 'Backquote', 'Semicolon',
+  'Space', 'KeyN', 'BracketLeft', 'BracketRight', 'KeyM', 'KeyP', 'KeyK', 'KeyF', 'Period', 'Comma', 'F6', 'F7', 'KeyU', 'KeyJ', 'KeyV', 'KeyO', 'KeyI', 'Tab', 'Backslash', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Slash', 'Enter', 'Quote', 'Backquote', 'Semicolon', 'Equal',
 ]);
 
 export class KeyboardDevice implements InputDevice {
@@ -45,7 +45,7 @@ export class KeyboardDevice implements InputDevice {
         case 'Enter': this.actions.push('chase'); break;
         case 'Quote': this.actions.push('mercs'); break;
         case 'Backquote': this.actions.push('strategic'); break;
-        case 'Semicolon': this.actions.push('foot'); break;
+        case 'Equal': this.actions.push('foot'); break;
         case 'Period': case 'F7': this.flapSteps++; break; // flaps down a notch
         case 'Comma': case 'F6': this.flapSteps--; break; // flaps up a notch
         case 'KeyZ': this.throttleSet = 1; break;
@@ -72,6 +72,7 @@ export class KeyboardDevice implements InputDevice {
     raw.trimRate += this.axis('KeyT', 'KeyG'); // T = nose-down trim, G = nose-up trim
     if (this.down.has('KeyV')) raw.fire = true; // V: guns / cannon (hold)
     if (this.down.has('KeyO')) raw.fireAlt = true; // O: bombs / missiles (hold)
+    if (this.down.has('Semicolon')) raw.hack = true; // ;: the hacking beam on the lock (hold)
     raw.aimYaw += this.axis('ArrowLeft', 'ArrowRight'); // arrows: turret traverse and elevation
     raw.aimPitch += this.axis('ArrowDown', 'ArrowUp');
     raw.flapSteps += this.flapSteps;

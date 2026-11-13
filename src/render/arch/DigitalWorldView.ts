@@ -52,7 +52,7 @@ export interface WorldStats {
 }
 
 /** Build one district's meshes at a LOD. */
-export function buildDistrict(plan: DistrictPlan, lod: Lod, slotFor: (s: StructureSpec) => number): { group: THREE.Group; tris: number } {
+export function buildDistrict(plan: DistrictPlan, lod: Lod, slotFor: (s: StructureSpec) => number, mats?: ArchMats): { group: THREE.Group; tris: number } {
   const opaque = new GeometryWriter(), light = new GeometryWriter();
   plan.structures.forEach((s) => {
     const sid = slotFor(s);
@@ -69,19 +69,25 @@ export function buildDistrict(plan: DistrictPlan, lod: Lod, slotFor: (s: Structu
   });
   for (const w of [opaque, light]) { w.sid = 0; w.hgtBase = 0; w.hgtScale = 1 / 60; }
   for (const c of plan.infra.components) if (drawAtLod(c, lod)) emitComponent(c.surface === 'translucent' ? light : opaque, c, { ox: 0, oz: 0, rot: 0 }, lod);
-  return finish(opaque, light);
+  return finish(opaque, light, mats);
 }
 
-export function finish(opaque: GeometryWriter, light: GeometryWriter): { group: THREE.Group; tris: number } {
+/** Materials for `finish` (default: the shared ones the main view bends round the planet). */
+export interface ArchMats {
+  opaque: THREE.Material;
+  light: THREE.Material;
+}
+
+export function finish(opaque: GeometryWriter, light: GeometryWriter, mats?: ArchMats): { group: THREE.Group; tris: number } {
   const group = new THREE.Group();
   const go = opaque.build(), gl = light.build();
   if (go) {
-    const m = new THREE.Mesh(go, archMaterial());
+    const m = new THREE.Mesh(go, mats?.opaque ?? archMaterial());
     m.frustumCulled = false;
     group.add(m);
   }
   if (gl) {
-    const m = new THREE.Mesh(gl, archLightMaterial());
+    const m = new THREE.Mesh(gl, mats?.light ?? archLightMaterial());
     m.frustumCulled = false;
     m.renderOrder = 2;
     group.add(m);

@@ -41,6 +41,7 @@ export class TouchDevice implements InputDevice {
   private brake = false;
   private fire = false;
   private fireAlt = false;
+  private hack = false;
   private pendingThrottle: number | null = null;
   private flapCycle = false;
   private actions: Action[] = [];
@@ -79,6 +80,7 @@ export class TouchDevice implements InputDevice {
     };
     const fire = hold('FIRE', 'tfire-1', (v) => (this.fire = v));
     const fireAlt = hold('DROP', 'tfire-2', (v) => (this.fireAlt = v));
+    const hackBtn = hold('HACK', 'tfire-3', (v) => (this.hack = v));
 
     let closeMenu = () => {};
     const button = (label: string, title: string, action: Action | (() => void)) => {
@@ -103,7 +105,7 @@ export class TouchDevice implements InputDevice {
       button('Next craft', 'Next craft', 'nextVehicle'),
       button('Autopilot', 'Autopilot on / off', 'autopilot'),
       button('Flight computer', 'Flight computer: land, go to, orbit', 'apPanel'),
-      button('Weather', 'Debug & weather', 'debug'),
+      button('Debug & credits', 'Debug, weather and credits (give yourself credits here)', 'debug'),
       button('Flaps', 'Flaps: next detent', () => (this.flapCycle = true)),
       button('Weapons', 'Weapons loadout: next', 'loadout'),
       button('Map', 'Planet map: every vehicle', 'map'),
@@ -129,7 +131,7 @@ export class TouchDevice implements InputDevice {
       button('Controls', 'Controls', 'help'), more,
     );
 
-    this.root = el('div', 'touch hidden', leftZone, this.stickZone, brake, fire, fireAlt, bar, menu);
+    this.root = el('div', 'touch hidden', leftZone, this.stickZone, brake, fire, fireAlt, hackBtn, bar, menu);
     document.body.append(this.root);
 
     this.bindLever(leftZone);
@@ -233,6 +235,7 @@ export class TouchDevice implements InputDevice {
     if (this.brake) raw.brake = 1;
     if (this.fire) raw.fire = true;
     if (this.fireAlt) raw.fireAlt = true;
+    if (this.hack) raw.hack = true;
     if (this.flapCycle) {
       raw.flapCycle = true;
       this.flapCycle = false;

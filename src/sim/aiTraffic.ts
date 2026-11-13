@@ -9,6 +9,7 @@ import { craftBounds, WeaponSystem, type WeaponHost, type WeaponImpact } from '.
 import { PLANET, type LandingSite } from './layout.ts';
 import { landingSites } from '../world/landingSites.ts';
 import type { LockTarget } from './lock.ts';
+import type { HackedFlyer } from './hacking.ts';
 
 /**
  * AI air traffic: other programs flying around the player, so the world feels inhabited. Each
@@ -64,7 +65,7 @@ export interface AirTarget {
 }
 
 /** Why a combat aircraft is here: the player's team, an enemy team, a freelancer, a hired gun. */
-export type FlyerRole = 'civil' | 'friend' | 'enemy' | 'free' | 'merc' | 'strike';
+export type FlyerRole = 'civil' | 'friend' | 'enemy' | 'free' | 'merc' | 'strike' | 'hacked';
 
 /** An attack order: go to a point and fight what's there, until `until` or it's been quiet a while. */
 export interface AirOrder {
@@ -167,6 +168,8 @@ export interface AiFlyer {
   order: AirOrder | null;
   /** A bomber on a strike run, or null. */
   run: StrikeRun | null;
+  /** Taken over by the player's hacking beam: what it was, and until when (see sim/hacking.ts). */
+  hacked: HackedFlyer | null;
   hp: number;
   maxHp: number;
   /** Time it was last hit (its lights flicker; a hostile breaks away). */
@@ -505,7 +508,7 @@ export class AiAirTraffic {
       combat: 'patrol', combatUntil: 0, breakHeading: 0, aimError: { h: 0, p: 0 }, missileAt: time + 4,
       vel: new THREE.Vector3(), rot: new THREE.Quaternion(), weapons: null, host: null,
       side, role, mercUntil: role === 'merc' ? time + MERC_CONTRACT : Infinity, leaving: false, target: null, targetAt: -Infinity,
-      handle: null as unknown as LockTarget, foe: null, disabledUntil: -Infinity, order: null, run: null,
+      handle: null as unknown as LockTarget, foe: null, disabledUntil: -Infinity, order: null, run: null, hacked: null,
     };
     const air = this;
     f.handle = {
@@ -558,7 +561,7 @@ export class AiAirTraffic {
         this.flyers.splice(i, 1);
       }
     }
-    const wantedOf: Record<Exclude<FlyerRole, 'merc' | 'strike'>, number> = { civil: this.count, friend: this.friendlies, enemy: this.enemies, free: this.freelancers };
+    const wantedOf: Record<Exclude<FlyerRole, 'merc' | 'strike' | 'hacked'>, number> = { civil: this.count, friend: this.friendlies, enemy: this.enemies, free: this.freelancers };
     for (const role of ['civil', 'friend', 'enemy', 'free'] as const) {
       const wanted = wantedOf[role];
       let alive = this.flyers.filter((f) => f.derezAt === null && f.role === role).length;
@@ -619,7 +622,7 @@ export class AiAirTraffic {
   private choose(f: AiFlyer, time: number, player: THREE.Vector3, target: AirTarget | undefined): Foe | null {
     if (f.side === null || f.leaving || f.run) return null;
     const ordered = f.order;
-    const guard = !ordered && (f.role === 'friend' || f.role === 'merc');
+    const guard = !ordered && (f.role === 'friend' || f.role === 'merc' || f.role === 'hacked');
     const here = ordered ? this._tp2.set(ordered.x, 0, ordered.z) : guard ? player : f.pos;
     if (f.target && time - f.targetAt < 1 && this.valid(f.target, here, ordered ? 3500 : LOSE)) return f.target;
     f.targetAt = time;
@@ -769,7 +772,7 @@ export class AiAirTraffic {
       this.combatFly(f, dt, this.escort(f, time, at));
       return;
     }
-    if (f.role === 'friend' || f.role === 'merc') {
+    if (f.role === 'friend' || f.role === 'merc' || f.role === 'hacked') {
       this.combatFly(f, dt, this.escort(f, time, player, target?.vel));
       return;
     }

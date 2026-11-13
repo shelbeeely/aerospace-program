@@ -62,6 +62,7 @@ export class TrafficView {
   private readonly lpos = new Float32Array(MAX_RUNS * 2 * 3);
   private readonly lcol = new Float32Array(MAX_RUNS * 2 * 3);
   private readonly team = TRAFFIC.colors.map((c) => new THREE.Color(c));
+  private readonly hackColors = new Map<string, THREE.Color>();
   private readonly _c = new THREE.Color();
   private readonly _m = new THREE.Matrix4();
   private readonly _q = new THREE.Quaternion();
@@ -141,7 +142,8 @@ export class TrafficView {
     const H = TRAFFIC.trailHeight, L = TRAFFIC.trailLength;
     for (const r of this.traffic.riders) {
       if (n >= TRAFFIC.maxRiders) break;
-      const base = this.team[r.team];
+      // A hacked rider rides in the player's team colour.
+      const base = r.hackColor ? (this.hackColors.get(r.hackColor) ?? this.hackColors.set(r.hackColor, new THREE.Color(r.hackColor)).get(r.hackColor)!) : this.team[r.team];
       let fade = 1;
       if (r.derezAt !== null) {
         // Derez: flicker and fall away, cycle and wall together.

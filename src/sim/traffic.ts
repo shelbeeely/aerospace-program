@@ -5,6 +5,7 @@ import type { ChipEmitter } from './chips.ts';
 import type { ContactForceInfo } from './damage.ts';
 import { CITY, hash01, PLANET, wrapCoord } from './layout.ts';
 import { DEREZ_TIME, type TrailPoint, type TrailSystem } from './trails.ts';
+import { OWN_WALL_GROUPS } from './collisionGroups.ts';
 import { segmentExists } from './roadRules.ts';
 import { isHighwayLine as gridHighway } from '../arch/grid.ts';
 
@@ -140,6 +141,9 @@ export interface Rider {
   derezAt: number | null;
   /** An EMP stalled it until then (s): it sits where it is, lights dark. */
   stalledUntil?: number;
+  /** Hacked by the player until then (s): it rides in `hackColor` and its wall spares the player. */
+  hackedUntil?: number;
+  hackColor?: string;
   rng: () => number;
   body?: RAPIER.RigidBody;
   walls: RAPIER.Collider[];
@@ -1299,11 +1303,16 @@ export class TrafficSystem {
       const t = { x: (a.x + b.x) / 2, y: TRAFFIC.trailHeight / 2, z: (a.z + b.z) / 2 };
       const q = { x: 0, y: Math.sin(ry / 2), z: 0, w: Math.cos(ry / 2) };
       let c = r.walls[w];
+      const fresh = !c;
       if (!c) {
         c = this.world.createCollider(RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z).setTranslation(t.x, t.y, t.z).setRotation(q).setFriction(0.4).setRestitution(0.1), this.wallBody);
         r.walls.push(c);
         this.byWall.set(c.handle, r);
-      } else {
+      }
+      // A hacked rider's wall spares the player's craft, like the player's own walls.
+      const groups = r.hackColor ? OWN_WALL_GROUPS : 0xffffffff;
+      if (c.collisionGroups() !== groups) c.setCollisionGroups(groups);
+      if (!fresh) {
         c.setHalfExtents(half);
         c.setTranslationWrtParent(t);
         c.setRotationWrtParent(q);

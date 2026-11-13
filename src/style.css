@@ -95,6 +95,7 @@ body.mode-hangar #radar, body.mode-hangar #planet-map { display: none; }
 body.mode-hangar #missile-warn { display: none; }
 #hud #h-lock-row b { color: #7fe8ff; font-size: 14px; min-width: 0; flex: 1; }
 #hud #h-lock-row.locked b { color: #00d4ff; }
+#hud #h-lock-row.hacking b { color: #dff6ff; text-shadow: 0 0 6px rgba(0, 212, 255, 0.8); }
 #hud #h-turret-row b { font-size: 14px; min-width: 0; flex: 1; }
 
 /* A nuke's flash over the whole view, and an EMP's flicker on the HUD. */
@@ -643,6 +644,10 @@ body.armed .tfire { display: block; }
 .tfire-1 { bottom: calc(max(40px, env(safe-area-inset-bottom)) + 56px); min-width: 72px; height: 56px; border-color: rgba(255, 138, 31, 0.7); }
 .tfire-2 { bottom: max(40px, env(safe-area-inset-bottom)); min-width: 72px; }
 .tfire.down { background: rgba(255, 90, 31, 0.7); }
+/* The hacking beam: only with charges held. */
+.tfire-3 { display: none !important; bottom: calc(max(40px, env(safe-area-inset-bottom)) + 120px); min-width: 72px; border-color: rgba(0, 212, 255, 0.6); }
+body.hacking .tfire-3 { display: block !important; }
+.tfire-3.down { background: rgba(0, 160, 220, 0.6); }
 
 /* ---------------------------------------------------------------- hangar craft picker */
 #craft-card .craft-pick { display: flex; align-items: center; gap: 6px; }
@@ -722,3 +727,28 @@ body.armed .tfire { display: block; }
   #strike-globe .globe-side { width: auto; max-height: 42vh; border-left: none; border-top: 1px solid rgba(0, 212, 255, 0.25); }
   #strike-globe .globe-hint { display: none; }
 }
+#strike-globe .globe-head .globe-mode {
+  margin-left: auto; margin-right: 8px; background: #0e1d2e; color: #9fb2c2; border: 1px solid rgba(0, 212, 255, 0.3);
+  border-radius: 10px; padding: 2px 10px; font: inherit; font-size: 11px; cursor: pointer;
+}
+#strike-globe .globe-head .globe-mode.on { color: #dff6ff; border-color: #00d4ff; }
+#strike-globe .globe-card { margin: 0 0 12px; padding: 10px; border: 1px solid rgba(0, 212, 255, 0.35); border-radius: 4px; background: rgba(8, 20, 38, 0.9); }
+#strike-globe .globe-card.hidden { display: none; }
+#strike-globe .card-head { font: 600 15px ui-monospace, Menlo, monospace; letter-spacing: 0.08em; }
+#strike-globe .card-row { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; border-bottom: 1px solid rgba(111, 138, 168, 0.12); }
+#strike-globe .card-row span { color: #6f8aa8; }
+#strike-globe .card-row b { font-weight: 500; color: #dff6ff; text-align: right; }
+#strike-globe .card-row.alert b { color: #ff4a2a; }
+#strike-globe .card-buttons { display: flex; gap: 6px; margin-top: 8px; }
+#strike-globe .card-buttons button { flex: 1; background: #0e1d2e; color: #cfeaff; border: 1px solid rgba(0, 212, 255, 0.35); border-radius: 4px; padding: 4px 6px; font: inherit; cursor: pointer; }
+#strike-globe .card-buttons button:last-child { flex: 0 0 auto; }
+#radar-adsb {
+  position: absolute; left: 0; bottom: 0; padding: 1px 5px; background: rgba(4, 10, 22, 0.8); color: #6f8aa8;
+  border: 1px solid rgba(111, 138, 168, 0.35); border-radius: 3px; font: inherit; font-size: 10px; letter-spacing: 0.08em; cursor: pointer;
+}
+#radar-adsb.on { color: #dff6ff; border-color: rgba(0, 212, 255, 0.55); }
+/* ADS-B tags in the view: faint, small, beside each vehicle. */
+.adsb-tag { position: absolute; left: 0; top: 0; pointer-events: none; font: 10px/1.25 ui-monospace, Menlo, monospace; white-space: pre; opacity: 0.8; will-change: transform; }
+.adsb-tag b { font-weight: 500; }
+.adsb-tag span { color: #b9cfe0; }
+.adsb-tag.foe { opacity: 0.95; }

@@ -2,6 +2,7 @@ import { GRID, mod } from '../arch/grid.ts';
 import { TERRAIN_ARCHETYPES } from '../arch/WorldRegionManager.ts';
 import { globeAngles, globeProject, globeUnproject, mapPoint, radarPoint, type Contact } from '../sim/contacts.ts';
 import { PLANET, type LandingSite } from '../sim/layout.ts';
+import type { AdsbRecord } from '../sim/adsb.ts';
 import { BLOCK_KIND, blockSummary } from '../world/planetCity.ts';
 
 /** Radar ranges (m), cycled by the range button. */
@@ -23,6 +24,8 @@ export interface RadarState {
   territory?: { version: number; ownerOf(ci: number, cj: number): number | null };
   /** The teams' light colours, by team id. */
   teamColors?: readonly string[];
+  /** ADS-B broadcasts: the scope tags the nearest with callsign and relative altitude. */
+  adsb?: readonly AdsbRecord[];
 }
 
 const CYAN = '#00d4ff', PALE = '#dff6ff', DIM = 'rgba(111, 138, 168, 0.55)';
@@ -62,6 +65,11 @@ export class RadarMap {
     this.info = document.getElementById('planet-map-info');
     this.scope?.addEventListener('click', () => this.toggleMap());
     this.rangeButton?.addEventListener('click', () => this.cycleRange());
+    // ADS-B tags (on the scope and in the view), on by default, remembered.
+    this.adsbButton = document.getElementById('radar-adsb');
+    try { this.adsbOn = localStorage.getItem('adsbTags') !== '0'; } catch { /* default on */ }
+    this.adsbButton?.addEventListener('click', () => this.toggleAdsb());
+    this.adsbButton?.classList.toggle('on', this.adsbOn);
     document.getElementById('planet-map-close')?.addEventListener('click', () => this.toggleMap(false));
     // Flat map or globe (remembered); the globe turns with a drag and zooms with the wheel.
     this.modeButton = document.getElementById('planet-map-mode');
@@ -103,6 +111,17 @@ export class RadarMap {
 
   private globe = false;
   private readonly modeButton: HTMLElement | null;
+  private readonly adsbButton: HTMLElement | null;
+  /** ADS-B tags shown (the scope and the main view). */
+  adsbOn = true;
+
+  toggleAdsb(on = !this.adsbOn): boolean {
+    this.adsbOn = on;
+    try { localStorage.setItem('adsbTags', on ? '1' : '0'); } catch { /* not remembered */ }
+    this.adsbButton?.classList.toggle('on', on);
+    this.last = -Infinity;
+    return on;
+  }
   /** Set: the Globe button opens this (the 3D strike globe) instead of the canvas globe. */
   onGlobe: (() => void) | null = null;
   /** Where the globe looks (rad); `free` once dragged (else it follows the craft). */
@@ -162,6 +181,14 @@ export class RadarMap {
 
   /** A vehicle's mark at (x, y), pointing along `angle` (rad, 0 = up, clockwise). */
   private mark(g: CanvasRenderingContext2D, c: Contact, x: number, y: number, angle: number, k: number): void {
+    if (c.hacked) {
+      // Hacked over to you: a small H beside it.
+      g.save();
+      g.fillStyle = '#dff6ff';
+      g.font = `bold ${Math.round(7 * k)}px ui-monospace, Menlo, monospace`;
+      g.fillText('H', x + 4 * k, y + 3 * k);
+      g.restore();
+    }
     g.save();
     g.translate(x, y);
     g.lineWidth = k;
@@ -291,6 +318,20 @@ export class RadarMap {
       if (ct.id === s.lockedId) this.ring(g, o + p.x * R * edge, o - p.y * R * edge, k);
     }
     g.restore();
+    // ADS-B: the nearest few in range get their callsign and altitude relative to the craft
+    // (hundreds of metres, + above).
+    if (this.adsbOn && s.adsb) {
+      const near = s.adsb.filter((r) => r.category !== 'self' && r.category !== 'ground' && r.range <= this.range).sort((a, b) => a.range - b.range).slice(0, 8);
+      g.font = `${Math.round(7.5 * k)}px ui-monospace, Menlo, monospace`;
+      for (const r of near) {
+        const p = radarPoint(s.x, s.z, s.heading, r.x, r.z, this.range);
+        const rel = Math.round((r.alt - s.y) / 100);
+        g.fillStyle = r.color;
+        g.globalAlpha = 0.85;
+        g.fillText(`${r.callsign} ${rel >= 0 ? '+' : ''}${rel}`, o + p.x * R + 5 * k, o - p.y * R - 3 * k);
+      }
+      g.globalAlpha = 1;
+    }
     if (s.drop) {
       // Where a nuke dropped now would burst: the fireball's reach to scale, dashed if it would be a dud.
       const p = radarPoint(s.x, s.z, s.heading, s.drop.x, s.drop.z, this.range);

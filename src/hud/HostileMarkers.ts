@@ -1,4 +1,5 @@
 import type * as THREE from 'three';
+import { bendPoint } from '../render/curvature.ts';
 
 /** A hostile aircraft to mark: where it is, how far, and whether it is attacking. */
 export interface HostileMark {
@@ -17,7 +18,8 @@ const MAX = 12;
 
 /** Where a world point lands on the screen, slid to the edge (`edge` true) when it is out of view. */
 function screenPoint(camera: THREE.Camera, pos: THREE.Vector3, width: number, height: number, margin: number): { x: number; y: number; edge: boolean } {
-  const v = pos.clone().project(camera);
+  // Where it is drawn: the renderer bends the world round the planet (far things sink).
+  const v = bendPoint(pos).project(camera);
   const behind = v.z > 1;
   let x = (behind ? -v.x : v.x) * 0.5 + 0.5, y = (behind ? v.y : -v.y) * 0.5 + 0.5;
   let edge = behind || x < 0 || x > 1 || y < 0 || y > 1;
@@ -109,7 +111,7 @@ export class HostileMarkers {
         m.shown = false;
         continue;
       }
-      const v = h.pos.clone().project(camera);
+      const v = bendPoint(h.pos).project(camera); // where it is drawn, on the curved planet
       const behind = v.z > 1;
       let x = (behind ? -v.x : v.x) * 0.5 + 0.5, y = (behind ? v.y : -v.y) * 0.5 + 0.5;
       let edge = behind || x < 0 || x > 1 || y < 0 || y > 1;

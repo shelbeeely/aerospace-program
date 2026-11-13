@@ -17,7 +17,8 @@ import { districtPlan } from '../src/arch/DistrictGenerator.ts';
 import { JET } from '../src/craft/jet.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
 import { simContacts } from '../src/sim/contacts.ts';
-import { lineOfSight, turretDef, turretSites, TURRET_DEF, TURRET_HEAD_Y, type TurretSite } from '../src/sim/groundTurrets.ts';
+import { AIRFIELD_CLEAR, lineOfSight, runwayDistance, turretDef, turretSites, TURRET_DEF, TURRET_HEAD_Y, type TurretSite } from '../src/sim/groundTurrets.ts';
+import { chunkAt } from '../src/world/planetCity.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 import { terrainHeight } from '../src/sim/terrain.ts';
 import { landingSites } from '../src/world/landingSites.ts';
@@ -218,7 +219,8 @@ console.log('--- lock, radar, determinism');
 console.log('--- railgun turrets');
 {
   const all: TurretSite[] = [];
-  for (let ci = 0; ci < 10; ci++) for (let cj = 0; cj < 10; cj++) all.push(...turretSites(ci, cj, 2));
+  // (Away from the central airfields, where turrets keep out of reach of the runways.)
+  for (let ci = 14; ci < 24; ci++) for (let cj = 14; cj < 24; cj++) all.push(...turretSites(ci, cj, 2));
   const rails = all.filter((s) => s.kind === 'rail');
   const tall = all.filter((s) => s.y >= 120), tallRails = tall.filter((s) => s.kind === 'rail');
   check(rails.length > all.length * 0.15 && rails.length < all.length * 0.5, 'about a quarter of the turrets are railgun turrets', `${rails.length} of ${all.length}`);
@@ -266,6 +268,43 @@ console.log('--- railgun turrets');
   const before = railAt(emp)!.weapons.fired;
   for (let i = 0; i < 120 * 8; i++) { hold(emp, far, rhead); emp.step(idle); }
   check(railAt(emp)!.weapons.fired === before, 'an EMP silences it');
+}
+
+// ---------------------------------------------------------------- 10. airfields are safe
+console.log('--- airfields');
+{
+  // No turret stands where it could reach a runway (districts round every runway).
+  const runways = landingSites().filter((s) => s.kind === 'runway');
+  const seen = new Set<string>();
+  let worst = { d: Infinity, kind: '' };
+  for (const r of runways) for (let dx = -6000; dx <= 6000; dx += 1300) for (let dz = -6000; dz <= 6000; dz += 1300) {
+    const [ci, cj] = chunkAt(r.x + dx, r.z + dz);
+    if (seen.has(`${ci},${cj}`)) continue;
+    seen.add(`${ci},${cj}`);
+    for (const s of turretSites(ci, cj, 2)) {
+      const d = runwayDistance(s.x, s.z) - (s.kind === 'rail' ? AIRFIELD_CLEAR.rail : AIRFIELD_CLEAR.gun);
+      if (d < worst.d) worst = { d, kind: s.kind };
+    }
+  }
+  check(worst.d >= 0, 'no turret can reach a runway (railguns 3.8 km clear, guns 2.1 km)', `closest margin ${Math.round(worst.d)} m (${worst.kind}), ${seen.size} districts`);
+  // An armed craft sitting on the runway, then 20 s of spawn grace: nothing fires at it.
+  for (const team of [0, 1, 2] as const) {
+    const sim = new Simulation(TEST_PLANE);
+    sim.setTeam(team);
+    sim.traffic.enabled = false;
+    sim.airTraffic.pool = [JET];
+    sim.airTraffic.enemies = 4;
+    sim.groundTurrets.density = 2;
+    sim.weapons.arm(TEST_PLANE, 'missiles');
+    // Steps in which anything was attacking the craft: an aircraft on it, a turret firing at it.
+    let shotAt = 0;
+    for (let i = 0; i < 120 * 25; i++) {
+      sim.step(idle);
+      if (sim.airTraffic.flyers.some((f) => f.derezAt === null && f.target?.kind === 'player')
+        || sim.groundTurrets.turrets.some((t) => t.derezAt === null && t.target?.kind === 'player' && (t.state === 'firing' || t.state === 'charging'))) shotAt++;
+    }
+    check(!sim.exploded && sim.hitsTaken === 0 && shotAt === 0, `team ${sim.team}: armed on the runway, nothing attacks the craft`, `${shotAt} steps under attack, hits ${sim.hitsTaken}`);
+  }
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');
