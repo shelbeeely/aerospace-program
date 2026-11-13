@@ -137,9 +137,39 @@ boxes round the ring, left out at the doorways, with a jamb box each side) so th
 exact. The room is furnished as a `chamber`; `InteriorConfig.round` carries its centre and
 inner radius.
 
-620 of 997 sampled structures have a room (circuit 310 of 450, cavern 142 of 173, industrial
-104 of 162, tower 64 of 116, radial 0 of 96). Strongly tapered and curved bases (trumpet
-flares, pyramid spires) and the radial structures are not hollowed.
+**Shell rooms.** `inhabitShell` opens the foot of any other solid mass while keeping its
+outline: a tapered prism (any number of sides), a square tapered box (a pyramid base) or a
+rising lathe (a trumpet's flare, stepped tiers). The band from its base up to 5.5–10 m is
+rebuilt as closed-profile lathe arcs on the mass's own polygon: the outer surface exactly as it
+was, an inner wall straight up, doorways on the axes where the way out is clear, and the rest
+of the mass carried on above (its underside the ceiling). A thick wall makes the doorway a
+short tunnel. Colliders are laid by hand: boxes round the inner wall (exact side walls for a
+square shell), jambs and a lintel at each doorway, two layers where the wall slopes. The inner
+radius must be at least 6 m.
+
+**Entrance halls.** `addHall` stands a low volume against the foot of a radial structure (a
+16-sided drum) or tower (a battered square block) that none of the passes could open, inside
+the lot and on clear ground, and hollows it like any other mass.
+
+**Order.** `generateStructure` tries `inhabit`, `inhabitRound`, `inhabitShell` and (radial and
+tower) `addHall` in turn, and keeps the first that passes all ten checks; otherwise the
+structure stays solid.
+
+**Lathe arcs.** The `lathe` primitive takes `phase`, `arc` and `arcStart`. Its surface follows
+the polygon exactly at any angle, so a partial turn can start and end anywhere; the ends are
+closed with the profile polygon. A closed profile (first point repeated last) revolves into a
+shell: the shell rooms are built from these.
+
+**Kit towers.** `npm run import-towers` cuts a ground-floor room into each tower of the
+imported kit: the largest rectangle of cells solid through a ceiling layer, one cell of wall
+kept round it, and doorways (two at most) in the middle of sides whose way out is clear to the
+tower's edge. Mesh faces inside the room and doorways are clipped away exactly, and the room is
+lined with inward faces, a lit band under the ceiling, a guide line from each door and a lit
+frame round each doorway. The voxels and collider boxes are rebuilt hollow, and the room is
+written into `towerKit.json` for the game.
+
+762 of 996 sampled structures have a room: circuit 310 of 450, cavern 142 of 173, industrial
+105 of 162, tower 114 of 116, radial 91 of 95, and every kit tower.
 
 ## Validation (the ten checks)
 
