@@ -88,6 +88,110 @@ export function connectedGroups<T extends BlockCell>(cells: readonly T[]): T[][]
   return groups;
 }
 
+/**
+ * What each supported block carries (in block weights), after `markSupport`.
+ *
+ * - A **column** cell is on the ground layer or stands on a column cell: its weight goes
+ *   straight down.
+ * - Every other supported block **hangs**: it is held sideways (or from above) by the nearest
+ *   column cells, found by a breadth-first search outward from the columns. Its `reach` is how
+ *   many blocks away they are, and its weight is shared among them.
+ * - A column cell's `load` is its own weight, what hangs on it, and everything on the column
+ *   cells above it.
+ */
+export interface LoadReport<T extends BlockCell> {
+  load: Map<T, number>;
+  reach: Map<T, number>;
+  maxReach: number;
+}
+
+export function analyseLoad<T extends BlockCell>(blocks: ReadonlyMap<string, T>): LoadReport<T> {
+  const live: T[] = [];
+  for (const b of blocks.values()) if (b.alive && b.supported) live.push(b);
+  live.sort((a, b) => a.y - b.y);
+  const column = new Set<T>();
+  for (const b of live) {
+    if (b.y === 0) column.add(b);
+    else {
+      const below = blocks.get(blockKey(b.x, b.y - 1, b.z));
+      if (below && column.has(below)) column.add(b);
+    }
+  }
+  // Hanging blocks: distance to the nearest column cell (multi-source BFS from the columns).
+  const reach = new Map<T, number>();
+  const queue: T[] = [];
+  for (const c of column) { reach.set(c, 0); queue.push(c); }
+  let maxReach = 0;
+  for (let i = 0; i < queue.length; i++) {
+    const b = queue[i];
+    const r = reach.get(b)!;
+    for (const [dx, dy, dz] of NEIGHBOURS) {
+      const n = blocks.get(blockKey(b.x + dx, b.y + dy, b.z + dz));
+      if (!n || !n.alive || !n.supported || reach.has(n)) continue;
+      reach.set(n, r + 1);
+      if (r + 1 > maxReach) maxReach = r + 1;
+      queue.push(n);
+    }
+  }
+  // Weight flows inward: each hanging block hands its own and what it holds to the neighbours
+  // one step nearer a column, in equal shares, so equally placed supports carry equal loads.
+  const held = new Map<T, number>();
+  for (let i = queue.length - 1; i >= 0; i--) {
+    const b = queue[i];
+    const r = reach.get(b)!;
+    if (r === 0) break; // the columns come first in the queue
+    const w = 1 + (held.get(b) ?? 0);
+    const nearer: T[] = [];
+    for (const [dx, dy, dz] of NEIGHBOURS) {
+      const n = blocks.get(blockKey(b.x + dx, b.y + dy, b.z + dz));
+      if (n && reach.get(n) === r - 1) nearer.push(n);
+    }
+    for (const n of nearer) held.set(n, (held.get(n) ?? 0) + w / nearer.length);
+  }
+  const load = new Map<T, number>();
+  for (const c of column) load.set(c, 1 + (held.get(c) ?? 0));
+  for (const c of column) reach.delete(c);
+  // Down the columns, top first.
+  for (let i = live.length - 1; i >= 0; i--) {
+    const b = live[i];
+    if (!column.has(b) || b.y === 0) continue;
+    const below = blocks.get(blockKey(b.x, b.y - 1, b.z))!;
+    load.set(below, load.get(below)! + load.get(b)!);
+  }
+  return { load, reach, maxReach };
+}
+
+/** What a structure can bear, taken from how it stood when whole (see `BlockBuilding`). */
+export interface LoadLimits<T extends BlockCell> {
+  /** The most each column cell can carry (block weights); cells not listed carry `floor`. */
+  capacity: ReadonlyMap<T, number>;
+  floor: number;
+  /** The farthest a block may hang from a column (blocks). */
+  reach: number;
+}
+
+/** Limits from the structure as it stands now (call on the intact structure). */
+export function loadLimits<T extends BlockCell>(blocks: ReadonlyMap<string, T>, safety: number, overhang: number): LoadLimits<T> {
+  markSupport(blocks);
+  const r = analyseLoad(blocks);
+  const capacity = new Map<T, number>();
+  for (const [b, l] of r.load) capacity.set(b, Math.max(l * safety, l + 2));
+  return { capacity, floor: 1 + 2 * safety, reach: Math.max(r.maxReach + 1, overhang) };
+}
+
+/**
+ * The structural check, after `markSupport`: which supported blocks fail under load. `crushed`
+ * are column cells carrying more than they can bear; `snapped` are blocks hanging farther from
+ * a column than the structure allows.
+ */
+export function findOverloaded<T extends BlockCell>(blocks: ReadonlyMap<string, T>, limits: LoadLimits<T>): { crushed: T[]; snapped: T[] } {
+  const r = analyseLoad(blocks);
+  const crushed: T[] = [], snapped: T[] = [];
+  for (const [b, l] of r.load) if (l > (limits.capacity.get(b) ?? limits.floor) + 1e-9) crushed.push(b);
+  for (const [b, d] of r.reach) if (d > limits.reach) snapped.push(b);
+  return { crushed, snapped };
+}
+
 /** A filled W×H×D grid of cells, all alive (for tests and buildings). */
 export function makeGrid(w: number, h: number, d: number): Map<string, BlockCell> {
   const m = new Map<string, BlockCell>();
@@ -147,6 +251,8 @@ export class BlockBuilding {
   readonly body: RAPIER.RigidBody;
   /** Bumped whenever a block dies, breaks away or comes back (renderers watch it). */
   version = 0;
+  /** What the structure can bear: from how it stands when whole, so being whole never fails it. */
+  readonly limits: LoadLimits<Block>;
 
   constructor(
     private readonly world: RAPIER.World,
@@ -171,6 +277,16 @@ export class BlockBuilding {
           this.list.push(b);
           this.addCollider(b);
         }
+    this.limits = loadLimits(this.blocks, TUNING.loadSafety, Math.max(2, Math.round(TUNING.maxOverhang / this.blockSize)));
+  }
+
+  /**
+   * The structural check, after `unsupported()` has run: blocks crushed by what now rests on
+   * them, and blocks hanging too far out. Losing them shifts the load again, so the caller
+   * checks again next step until nothing fails (a collapse takes a few steps to run its course).
+   */
+  overloaded(): { crushed: Block[]; snapped: Block[] } {
+    return findOverloaded(this.blocks, this.limits);
   }
 
   /** Block centre relative to the building origin (m). */

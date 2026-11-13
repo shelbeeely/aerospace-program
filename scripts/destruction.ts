@@ -11,6 +11,8 @@ import { BUILTINS } from '../src/craft/builtins.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
 import type { CraftDef } from '../src/craft/types.ts';
 import type { ControlInputs } from '../src/sim/controls.ts';
+import { TUNING } from '../src/tuning.ts';
+import { structureMask } from '../src/world/structures.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 
 await initPhysics();
@@ -188,6 +190,54 @@ console.log('\n--- hard crash: explosion, new plane, world reset');
 
   sim.resetToRunway();
   check(sim.staticWorld.fractured.size === 0 && sim.explosions.length === 0 && sim.chips.bursts.length === 0, 'world reset: every structure whole again');
+}
+
+// ---------------------------------------------------------------- 6. structural integrity
+console.log('\n--- structural integrity of fractured structures');
+{
+  const sim = new Simulation(TEST_PLANE);
+  sim.traffic.enabled = false;
+  sim.bits.enabled = false;
+  const idle = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 };
+  // Being broken into blocks is not being damaged: every kind of structure stands as it stood.
+  const groups = sim.staticWorld.structures.groups;
+  const kinds = new Map<string, number>();
+  for (const g of groups) {
+    const kind = g.kit ? 'kit' : g.name.split(':')[0] + (g.arch ? ':' + g.arch[0] : '');
+    if (!kinds.has(kind)) kinds.set(kind, g.id);
+  }
+  let lost = 0, blocks = 0;
+  const sample = [...kinds].slice(0, TUNING.maxFracturedStructures - 2);
+  for (const [, id] of sample) {
+    const b = sim.staticWorld.fracture(id, { impulse: 0, x: 0, y: 0, z: 0 }, sim.time, false);
+    blocks += b.list.length;
+  }
+  // Seed the check on every one of them, then let it run.
+  for (const b of sim.staticWorld.fractured.values()) sim.town.blast(b, 0, -1e6, 0, 1, sim.time);
+  for (const b of sim.staticWorld.fractured.values()) { const { crushed, snapped } = b.overloaded(); lost += crushed.length + snapped.length; }
+  for (let i = 0; i < 60; i++) sim.step(idle);
+  check(lost === 0 && sim.town.crushed === 0, 'a structure fractured but undamaged bears its own weight', `${sample.length} kinds (${sample.map(([k]) => k).join(', ')}), ${blocks} blocks, ${lost} overloaded`);
+
+  // Blow out most of the foot of a tall one: what is left cannot carry it, and it comes down.
+  sim.resetToRunway();
+  // The tallest slender structure with a foot big enough to cut most of away.
+  const footOf = (g: (typeof groups)[number]) => { const m = structureMask(g, sim.staticWorld.structures.list); let n = 0; for (let x = 0; x < g.size[0]; x++) for (let z = 0; z < g.size[2]; z++) if (m(x, 0, z)) n++; return n; };
+  const tallOnes = groups.filter((g) => !g.kit && g.arch && !g.arch.startsWith('infra') && g.size[1] >= 8 && g.size[0] <= 10 && g.size[2] <= 10).sort((p, q) => q.size[1] * q.blockSize - p.size[1] * p.blockSize);
+  const tall = tallOnes.find((g) => footOf(g) >= 12) ?? tallOnes[0];
+  const b = sim.staticWorld.fracture(tall.id, { impulse: 0, x: 0, y: 0, z: 0 }, sim.time, false);
+  const whole = b.aliveCount;
+  const s = b.blockSize;
+  const foot = b.list.filter((k) => k.y === 0).sort((p, q) => p.x - q.x || p.z - q.z);
+  for (const k of foot.slice(0, Math.floor(foot.length * 0.75))) b.remove(k);
+  const gone = whole - b.aliveCount;
+  sim.town.blast(b, 0, -1e6, 0, 1, sim.time);
+  // Force a check even though the blast found nothing: knock one more block out.
+  const any = b.list.find((k) => k.alive && k.y === 0);
+  if (any) sim.town.blast(b, b.def.origin[0] + (any.x + 0.5) * s, (any.y + 0.5) * s, b.def.origin[2] + (any.z + 0.5) * s, s * 0.4, sim.time);
+  let worst = 0;
+  for (let i = 0; i < 240; i++) { sim.step(idle); worst = Math.max(worst, sim.lastStepMs); }
+  check(b.aliveCount < (whole - gone) * 0.5, 'with three quarters of its foot gone a tower collapses under its own weight', `${tall.name}: ${foot.length} foot blocks, ${gone} removed, ${b.aliveCount} of ${whole} blocks still standing, ${sim.town.crushed} crushed`);
+  check(worst < 60, 'the collapse stays within the step budget', `worst step ${worst.toFixed(1)} ms`);
 }
 
 if (failed) {

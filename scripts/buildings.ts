@@ -15,8 +15,8 @@ import type { CraftDef } from '../src/craft/types.ts';
 import type { ControlInputs } from '../src/sim/controls.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 import { TUNING } from '../src/tuning.ts';
-import { blockKey, connectedGroups, findUnsupported, makeGrid, markSupport } from '../src/world/BlockBuilding.ts';
-import type { BlockBuilding } from '../src/world/BlockBuilding.ts';
+import { analyseLoad, blockKey, connectedGroups, findOverloaded, findUnsupported, loadLimits, makeGrid, markSupport } from '../src/world/BlockBuilding.ts';
+import type { BlockBuilding, BlockCell, LoadLimits } from '../src/world/BlockBuilding.ts';
 
 await initPhysics();
 
@@ -65,6 +65,80 @@ console.log('--- anchor check (BFS)');
   const loose = findUnsupported(g);
   check(loose.length === 4 && connectedGroups(loose).length === 2, 'two separate loose pieces -> two chunks');
   check([...g.values()].every((b) => b.alive || !b.supported), 'dead blocks are never supported');
+}
+
+// ---------------------------------------------------------------- 1b. load
+console.log('\n--- load (structural integrity)');
+{
+  const kill = (g: Map<string, BlockCell>, f: (b: BlockCell) => boolean) => { for (const b of g.values()) if (f(b)) b.alive = false; };
+  // Run the structural check to rest: connectivity, then load, wave after wave.
+  const settle = (g: Map<string, BlockCell>, limits: LoadLimits<BlockCell>) => {
+    let waves = 0;
+    for (; waves < 200; waves++) {
+      markSupport(g);
+      const loose = findUnsupported(g);
+      const { crushed, snapped } = findOverloaded(g, limits);
+      if (!loose.length && !crushed.length && !snapped.length) break;
+      for (const b of [...loose, ...crushed, ...snapped]) b.alive = false;
+    }
+    return waves;
+  };
+  const alive = (g: Map<string, BlockCell>) => [...g.values()].filter((b) => b.alive).length;
+  const limitsOf = (g: Map<string, BlockCell>) => loadLimits(g, TUNING.loadSafety, 4);
+
+  // A 5×5 slab on four corner legs, three blocks tall.
+  const table = () => {
+    const g = makeGrid(5, 4, 5);
+    kill(g, (b) => b.y < 3 && !((b.x === 0 || b.x === 4) && (b.z === 0 || b.z === 4)));
+    for (const [k, b] of [...g]) if (!b.alive) g.delete(k);
+    return g;
+  };
+  {
+    const g = table();
+    const whole = alive(g);
+    const limits = limitsOf(g);
+    const r = analyseLoad(g);
+    const legLoad = r.load.get(g.get(blockKey(0, 0, 0))!)!;
+    check(settle(g, limits) === 0 && alive(g) === whole, 'a slab on four legs stands', `${whole} blocks, ${legLoad.toFixed(1)} block weights on each leg`);
+    kill(g, (b) => b.x === 0 && b.z === 0 && b.y < 3);
+    settle(g, limits);
+    check(alive(g) === whole - 3, 'it survives losing one leg: the other three take the load', `${alive(g)} of ${whole} blocks left`);
+    kill(g, (b) => b.y < 3 && !(b.x === 4 && b.z === 4));
+    const waves = settle(g, limits);
+    check(alive(g) === 0, 'on one leg it comes down: the leg is crushed and the slab falls', `gone in ${waves} waves`);
+  }
+  // A 5×5×10 tower: how much of its base can go.
+  {
+    const g = makeGrid(5, 10, 5);
+    const limits = limitsOf(g);
+    kill(g, (b) => b.y === 0 && b.x === 0);
+    settle(g, limits);
+    check(alive(g) === 250 - 5, 'a tower stands with a fifth of its base gone', `${alive(g)} of 250 blocks`);
+    kill(g, (b) => b.y === 0 && b.x < 4);
+    const waves = settle(g, limits);
+    check(alive(g) === 0, 'with four fifths of its base gone it collapses', `gone in ${waves} waves`);
+  }
+  // A beam between two piers: fine while both stand, snaps as a cantilever when one goes.
+  {
+    const g = makeGrid(12, 4, 1);
+    kill(g, (b) => b.y < 3 && b.x > 0 && b.x < 11);
+    for (const [k, b] of [...g]) if (!b.alive) g.delete(k);
+    const whole = alive(g);
+    const limits = limitsOf(g);
+    check(settle(g, limits) === 0 && alive(g) === whole, 'a beam between two piers stands', `reach limit ${limits.reach} blocks`);
+    kill(g, (b) => b.x === 11 && b.y < 3);
+    settle(g, limits);
+    const beam = [...g.values()].filter((b) => b.alive && b.y === 3).length;
+    check(beam <= limits.reach + 1 && beam < 12, 'lose a pier and the beam snaps: only a stub stays on the other', `${beam} of 12 beam blocks left`);
+  }
+  // Being whole never fails a structure, however it is shaped.
+  {
+    const g = makeGrid(9, 6, 3);
+    kill(g, (b) => b.y < 5 && b.x > 0); // an inverted L: one pier, an eight-block overhang
+    for (const [k, b] of [...g]) if (!b.alive) g.delete(k);
+    const whole = alive(g);
+    check(settle(g, limitsOf(g)) === 0 && alive(g) === whole, 'a structure built with a long overhang keeps it while whole');
+  }
 }
 
 // ---------------------------------------------------------------- 2. town layout
