@@ -27,6 +27,15 @@ export interface InfraSet {
   colliders: ColliderPiece[];
   ox: number;
   oz: number;
+  /** Things held up by structures: a corridor (its collider's centre) and the two it spans. */
+  links?: InfraLink[];
+}
+
+/** A corridor and what holds it: the structure and the point of attachment at each end (world, m). */
+export interface InfraLink {
+  x: number;
+  z: number;
+  ends: Array<{ arch: string; x: number; y: number; z: number }>;
 }
 
 export interface LotRect { x0: number; x1: number; z0: number; z1: number }
@@ -81,6 +90,13 @@ export function corridor(set: InfraSet, a: StructureSpec, b: StructureSpec, la: 
     set.components.push({ prim: { kind: 'box', w, h: 4, d }, x: cx - set.ox, y, z: cz - set.oz, tier: 2, surface: 'hullDark', edges: 'base', light: 'data', glow: 0.9, role: 'corridor' });
     set.components.push({ prim: { kind: 'box', w: axis === 'x' ? len : 0.5, h: 0.2, d: axis === 'x' ? 0.5 : len }, x: cx - set.ox, y: y - 0.2, z: cz - set.oz, tier: 3, surface: 'glow', edges: 'none', light: 'data', glow: 1, role: 'corridor' });
     set.colliders.push({ shape: 'box', x: cx, y: y + 2, z: cz, sx: w, sy: 4, sz: d });
+    (set.links ??= []).push({
+      x: cx, z: cz,
+      ends: [
+        { arch: a.id, x: axis === 'x' ? from : mid, y: y + 2, z: axis === 'x' ? mid : from },
+        { arch: b.id, x: axis === 'x' ? to : mid, y: y + 2, z: axis === 'x' ? mid : to },
+      ],
+    });
     return true;
   }
   return false;
@@ -104,7 +120,7 @@ export function routeNodes(): RouteNode[] {
   return out;
 }
 
-const PYLON_SPACING = 650;
+export const PYLON_SPACING = 650;
 /** Distance (m) from a coordinate to the nearest street centreline on that axis. */
 const lineDistance = (v: number, origin: number) => {
   const t = mod(v - origin, GRID.pitch);

@@ -12,6 +12,8 @@ import { TEST_PLANE } from '../src/craft/testPlane.ts';
 import type { CraftDef } from '../src/craft/types.ts';
 import type { ControlInputs } from '../src/sim/controls.ts';
 import { TUNING } from '../src/tuning.ts';
+import { sailerNetwork } from '../src/arch/InfrastructureNetwork.ts';
+import { PLANET } from '../src/sim/layout.ts';
 import { structureMask } from '../src/world/structures.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 
@@ -238,6 +240,48 @@ console.log('\n--- structural integrity of fractured structures');
   for (let i = 0; i < 240; i++) { sim.step(idle); worst = Math.max(worst, sim.lastStepMs); }
   check(b.aliveCount < (whole - gone) * 0.5, 'with three quarters of its foot gone a tower collapses under its own weight', `${tall.name}: ${foot.length} foot blocks, ${gone} removed, ${b.aliveCount} of ${whole} blocks still standing, ${sim.town.crushed} crushed`);
   check(worst < 60, 'the collapse stays within the step budget', `worst step ${worst.toFixed(1)} ms`);
+}
+
+// ---------------------------------------------------------------- 7. things that rest on others
+console.log('\n--- things that rest on others');
+{
+  const sim = new Simulation(TEST_PLANE);
+  sim.traffic.enabled = false;
+  sim.bits.enabled = false;
+  const idle = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 };
+  const groups = sim.staticWorld.structures.groups;
+  const bridges = groups.filter((g) => g.heldBy && g.heldBy.every((e) => e.group !== undefined));
+  check(bridges.length > 0, 'corridors know which structures hold them', `${bridges.length} corridors, ${groups.length} groups`);
+  if (bridges.length) {
+    const bridge = bridges[0];
+    // Struck but with both buildings standing, it hangs between them.
+    const b = sim.staticWorld.fracture(bridge.id, { impulse: 0, x: 0, y: 0, z: 0 }, sim.time, false);
+    const whole = b.aliveCount;
+    sim.town.recheck(b);
+    for (let i = 0; i < 120; i++) sim.step(idle);
+    check(whole > 0 && b.aliveCount === whole && sim.staticWorld.held(bridge.id), 'a corridor broken into blocks still hangs between its two buildings', `${whole} blocks, none on the ground layer: ${b.list.every((k) => k.y > 0)}`);
+    // Take the building away from under one end: the corridor comes down.
+    sim.resetToRunway();
+    const end = bridge.heldBy![0];
+    const holder = sim.staticWorld.fracture(end.group!, { impulse: 0, x: 0, y: 0, z: 0 }, sim.time, false);
+    check(!sim.staticWorld.fractured.has(bridge.id), 'the corridor is whole while its building only cracks');
+    sim.town.blast(holder, end.x, end.y, end.z, holder.blockSize * 2.5 + 6, sim.time);
+    for (let i = 0; i < 360; i++) sim.step(idle);
+    const fallen = sim.staticWorld.fractured.get(bridge.id);
+    check(!sim.staticWorld.held(bridge.id) && !!fallen && fallen.aliveCount === 0, 'blow the building out from under one end and the corridor falls', fallen ? `${fallen.aliveCount} of ${fallen.list.length} blocks still up` : 'never fractured');
+  }
+  // A Solar Sailer pylon brought down is reported, so its beam goes dark there.
+  sim.resetToRunway();
+  const { pylons } = sailerNetwork();
+  const C = PLANET.circumference;
+  const wrap = (v: number) => v - Math.round(v / C) * C;
+  const pylonGroup = groups.find((g) => g.arch?.startsWith('infra:') && !g.heldBy && pylons.some((p) => Math.hypot(wrap(p.x - (g.x0 + g.size[0] * g.blockSize / 2)), wrap(p.z - (g.z0 + g.size[2] * g.blockSize / 2))) < 12));
+  if (pylonGroup) {
+    check(sim.staticWorld.downInfra().length === 0, 'no pylon is down in a whole world');
+    sim.staticWorld.fracture(pylonGroup.id, { impulse: 1e6, x: pylonGroup.x0, y: 10, z: pylonGroup.z0 }, sim.time);
+    const down = sim.staticWorld.downInfra();
+    check(down.length === 1 && pylons.some((p) => Math.hypot(wrap(p.x - down[0].x), wrap(p.z - down[0].z)) < 12), 'a pylon brought down is reported where it stood: its beam is cut there');
+  } else console.log('note: no Solar Sailer pylon in the central plan to test');
 }
 
 if (failed) {

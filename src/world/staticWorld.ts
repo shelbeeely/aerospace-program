@@ -73,6 +73,7 @@ export class StaticWorld {
       list.push(i);
     });
 
+    this.linkDependents(0);
     const city = cityPlan();
     for (const b of city.buildings) this.conductors.push({ id: `arch:${b.arch}`, x: b.x, y: b.top, z: b.z });
     for (const s of city.spires) this.conductors.push({ id: `spire:${s.x.toFixed(0)},${s.z.toFixed(0)}`, x: s.x, y: s.y1, z: s.z });
@@ -153,8 +154,11 @@ export class StaticWorld {
           ...g, id, name: `${g.name}@${ox},${oz}`, x0: g.x0 + ox, z0: g.z0 + oz,
           pieces: g.pieces.map((i) => pieceStart + i),
           kit: g.kit ? { ...g.kit, x: g.kit.x + ox, z: g.kit.z + oz } : undefined,
+          room: g.room && { ...g.room, x0: g.room.x0 + ox, x1: g.room.x1 + ox, z0: g.room.z0 + oz, z1: g.room.z1 + oz, doors: g.room.doors.map((d) => ({ ...d, x: d.x + ox, z: d.z + oz })) },
+          heldBy: g.heldBy?.map((e) => ({ ...e, x: e.x + ox, z: e.z + oz })),
         });
       }
+      this.linkDependents(groupStart);
       for (const p of c.structures.list) {
         const i = L.length;
         L.push({ ...p, x: p.x + ox, z: p.z + oz, group: groupStart + p.group });
@@ -253,8 +257,77 @@ export class StaticWorld {
     else this.pending.set(group, { impulse, x: t.x, y: t.y, z: t.z });
   }
 
+  /** Groups held up by other structures (corridors), resolved to the groups that hold them. */
+  private readonly dependents: number[] = [];
+  private readonly dropped = new Set<number>();
+  private dependentsSeen = -1;
+
+  /** Resolve what holds each dependent group registered from `from` on (holders are in the same plan). */
+  private linkDependents(from: number): void {
+    const G = this.structures.groups;
+    const byArch = new Map<string, number>();
+    for (let i = from; i < G.length; i++) if (G[i].arch) byArch.set(G[i].arch!, i);
+    for (let i = from; i < G.length; i++) {
+      const held = G[i].heldBy;
+      if (!held) continue;
+      for (const e of held) e.group = byArch.get(e.arch);
+      this.dependents.push(i);
+    }
+  }
+
+  /** Is the structure at this point of attachment still there to hold something up? */
+  private holds(e: { x: number; y: number; z: number; group?: number }): boolean {
+    if (e.group === undefined) return true;
+    const b = this.fractured.get(e.group);
+    if (!b) return true;
+    const reach = (b.blockSize * 1.3) ** 2;
+    const p = { x: 0, y: 0, z: 0 };
+    for (const k of b.list) {
+      if (!k.alive || !k.supported) continue;
+      b.worldCentre(k, p);
+      if ((p.x - e.x) ** 2 + (p.y - e.y) ** 2 + (p.z - e.z) ** 2 <= reach) return true;
+    }
+    return false;
+  }
+
+  /** Where infrastructure standing on the ground (pylons) has been brought down: canonical (x, z) of each. */
+  downInfra(): Array<{ x: number; z: number }> {
+    const out: Array<{ x: number; z: number }> = [];
+    for (const id of this.fractured.keys()) {
+      const g = this.structures.groups[id];
+      if (!g.arch?.startsWith('infra:') || g.heldBy) continue;
+      const C = PLANET.circumference;
+      const wrap = (v: number) => v - Math.round(v / C) * C;
+      out.push({ x: wrap(g.x0 + (g.size[0] * g.blockSize) / 2), z: wrap(g.z0 + (g.size[2] * g.blockSize) / 2) });
+    }
+    return out;
+  }
+
+  /** Is everything that holds this group up still holding? (True for groups that stand on the ground.) */
+  held(group: number): boolean {
+    const held = this.structures.groups[group].heldBy;
+    return !held || held.every((e) => this.holds(e));
+  }
+
+  /**
+   * Things that rest on others: a corridor whose building has gone from under one end comes
+   * down. It is fractured (whatever the cap: it is small) with nothing to hold it, and falls.
+   */
+  private dropDependents(time: number): void {
+    const stamp = this.version * 100003 + this.town.version;
+    if (stamp === this.dependentsSeen) return;
+    this.dependentsSeen = stamp;
+    for (const id of this.dependents) {
+      if (this.dropped.has(id) || this.held(id)) continue;
+      this.dropped.add(id);
+      const b = this.fractured.get(id) ?? this.fracture(id, { impulse: 0, x: 0, y: 0, z: 0 }, time, false);
+      this.town.recheck(b);
+    }
+  }
+
   /** Apply this step's hits: fracture what was struck hard enough. */
   update(time: number): void {
+    this.dropDependents(time);
     if (!this.pending.size) return;
     for (const [group, hit] of this.pending) {
       if (hit.impulse < TUNING.structureFractureImpulse || this.fractured.has(group)) continue;
@@ -309,6 +382,12 @@ export class StaticWorld {
     const building = this.town.addBuilding({
       id: g.name, origin: [g.x0, 0, g.z0], size: g.size, color: g.color, blockSize: s,
       mask: structureMask(g, this.structures.list),
+      // A corridor: its ends are held by the buildings it spans, while both still hold.
+      ...(g.heldBy ? { anchor: (x: number, y: number, z: number) => {
+        const cx = g.x0 + (x + 0.5) * s, cy = (y + 0.5) * s, cz = g.z0 + (z + 0.5) * s;
+        const near = Math.max(s, 5) ** 2;
+        return g.heldBy!.some((e) => (cx - e.x) ** 2 + (cy - e.y) ** 2 + (cz - e.z) ** 2 <= near) && this.held(g.id);
+      } } : {}),
     });
     this.fractured.set(group, building);
     this.centreCell = ''; // re-stream so the cells around the collapse stay loaded
@@ -366,6 +445,8 @@ export class StaticWorld {
 
   /** Every structure whole again (call before Town.reset). */
   reset(): void {
+    this.dropped.clear();
+    this.dependentsSeen = -1;
     for (const [group, building] of this.fractured) {
       this.town.removeBuilding(building);
       for (const i of this.structures.groups[group].pieces) if (this.isLoaded(i)) this.addCollider(i);

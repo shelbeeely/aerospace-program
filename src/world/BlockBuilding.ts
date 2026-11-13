@@ -33,12 +33,13 @@ const NEIGHBOURS: ReadonlyArray<readonly [number, number, number]> = [
 /**
  * Anchor check: clear `supported` on every block, then breadth-first search from all living
  * ground-layer (y = 0) blocks over the 6 cardinal neighbours, marking each living block reached
- * as supported.
+ * as supported. `anchor`: blocks held by something other than the ground (a bridge's ends in
+ * the buildings it spans); they count as standing on it.
  */
-export function markSupport<T extends BlockCell>(blocks: ReadonlyMap<string, T>): void {
+export function markSupport<T extends BlockCell>(blocks: ReadonlyMap<string, T>, anchor?: (b: T) => boolean): void {
   const queue: T[] = [];
   for (const b of blocks.values()) {
-    b.supported = b.alive && b.y === 0;
+    b.supported = b.alive && (b.y === 0 || (!!anchor && anchor(b)));
     if (b.supported) queue.push(b);
   }
   for (let i = 0; i < queue.length; i++) {
@@ -105,13 +106,13 @@ export interface LoadReport<T extends BlockCell> {
   maxReach: number;
 }
 
-export function analyseLoad<T extends BlockCell>(blocks: ReadonlyMap<string, T>): LoadReport<T> {
+export function analyseLoad<T extends BlockCell>(blocks: ReadonlyMap<string, T>, anchor?: (b: T) => boolean): LoadReport<T> {
   const live: T[] = [];
   for (const b of blocks.values()) if (b.alive && b.supported) live.push(b);
   live.sort((a, b) => a.y - b.y);
   const column = new Set<T>();
   for (const b of live) {
-    if (b.y === 0) column.add(b);
+    if (b.y === 0 || (anchor && anchor(b))) column.add(b);
     else {
       const below = blocks.get(blockKey(b.x, b.y - 1, b.z));
       if (below && column.has(below)) column.add(b);
@@ -155,8 +156,8 @@ export function analyseLoad<T extends BlockCell>(blocks: ReadonlyMap<string, T>)
   for (let i = live.length - 1; i >= 0; i--) {
     const b = live[i];
     if (!column.has(b) || b.y === 0) continue;
-    const below = blocks.get(blockKey(b.x, b.y - 1, b.z))!;
-    load.set(below, load.get(below)! + load.get(b)!);
+    const below = blocks.get(blockKey(b.x, b.y - 1, b.z));
+    if (below && column.has(below)) load.set(below, load.get(below)! + load.get(b)!); // an anchored cell hands its load to what holds it
   }
   return { load, reach, maxReach };
 }
@@ -171,9 +172,9 @@ export interface LoadLimits<T extends BlockCell> {
 }
 
 /** Limits from the structure as it stands now (call on the intact structure). */
-export function loadLimits<T extends BlockCell>(blocks: ReadonlyMap<string, T>, safety: number, overhang: number): LoadLimits<T> {
-  markSupport(blocks);
-  const r = analyseLoad(blocks);
+export function loadLimits<T extends BlockCell>(blocks: ReadonlyMap<string, T>, safety: number, overhang: number, anchor?: (b: T) => boolean): LoadLimits<T> {
+  markSupport(blocks, anchor);
+  const r = analyseLoad(blocks, anchor);
   const capacity = new Map<T, number>();
   for (const [b, l] of r.load) capacity.set(b, Math.max(l * safety, l + 2));
   return { capacity, floor: 1 + 2 * safety, reach: Math.max(r.maxReach + 1, overhang) };
@@ -184,8 +185,8 @@ export function loadLimits<T extends BlockCell>(blocks: ReadonlyMap<string, T>, 
  * are column cells carrying more than they can bear; `snapped` are blocks hanging farther from
  * a column than the structure allows.
  */
-export function findOverloaded<T extends BlockCell>(blocks: ReadonlyMap<string, T>, limits: LoadLimits<T>): { crushed: T[]; snapped: T[] } {
-  const r = analyseLoad(blocks);
+export function findOverloaded<T extends BlockCell>(blocks: ReadonlyMap<string, T>, limits: LoadLimits<T>, anchor?: (b: T) => boolean): { crushed: T[]; snapped: T[] } {
+  const r = analyseLoad(blocks, anchor);
   const crushed: T[] = [], snapped: T[] = [];
   for (const [b, l] of r.load) if (l > (limits.capacity.get(b) ?? limits.floor) + 1e-9) crushed.push(b);
   for (const [b, d] of r.reach) if (d > limits.reach) snapped.push(b);
@@ -215,6 +216,11 @@ export interface BuildingDef {
   blockSize?: number;
   /** Which grid cells exist (stepped towers, octagonal shafts). Default: all of them. */
   mask?: (x: number, y: number, z: number) => boolean;
+  /**
+   * Cells held up by something other than the ground (a bridge's ends, while the buildings it
+   * spans still hold them). Asked again at every structural check, so it can stop being true.
+   */
+  anchor?: (x: number, y: number, z: number) => boolean;
 }
 
 /** One block of a building. */
@@ -253,6 +259,10 @@ export class BlockBuilding {
   version = 0;
   /** What the structure can bear: from how it stands when whole, so being whole never fails it. */
   readonly limits: LoadLimits<Block>;
+  private get anchored(): ((b: Block) => boolean) | undefined {
+    const a = this.def.anchor;
+    return a ? (b) => a(b.x, b.y, b.z) : undefined;
+  }
 
   constructor(
     private readonly world: RAPIER.World,
@@ -277,7 +287,7 @@ export class BlockBuilding {
           this.list.push(b);
           this.addCollider(b);
         }
-    this.limits = loadLimits(this.blocks, TUNING.loadSafety, Math.max(2, Math.round(TUNING.maxOverhang / this.blockSize)));
+    this.limits = loadLimits(this.blocks, TUNING.loadSafety, Math.max(2, Math.round(TUNING.maxOverhang / this.blockSize)), def.anchor ? (b) => def.anchor!(b.x, b.y, b.z) : undefined);
   }
 
   /**
@@ -286,7 +296,7 @@ export class BlockBuilding {
    * checks again next step until nothing fails (a collapse takes a few steps to run its course).
    */
   overloaded(): { crushed: Block[]; snapped: Block[] } {
-    return findOverloaded(this.blocks, this.limits);
+    return findOverloaded(this.blocks, this.limits, this.anchored);
   }
 
   /** Block centre relative to the building origin (m). */
@@ -342,7 +352,7 @@ export class BlockBuilding {
 
   /** Recompute support; returns the living blocks that lost their connection to the ground. */
   unsupported(): Block[] {
-    markSupport(this.blocks);
+    markSupport(this.blocks, this.anchored);
     return findUnsupported(this.blocks);
   }
 

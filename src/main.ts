@@ -1058,6 +1058,7 @@ async function start() {
   const footRot = new THREE.Quaternion();
   const _up = new THREE.Vector3(0, 1, 0);
   let wasOnFoot = false;
+  let routesSeen = -1;
   const renderRot = new THREE.Quaternion();
   const renderOffset = new THREE.Vector3();
   const velocity = new THREE.Vector3();
@@ -1438,6 +1439,7 @@ async function start() {
     archView.update(camera);
     updateKits();
     terrainView.update(camera);
+    if (sim.staticWorld.version !== routesSeen) { routesSeen = sim.staticWorld.version; routeView.setDown(sim.staticWorld.downInfra()); }
     routeView.update(camera.position);
     inspector.update(dt);
     // From orbit the ground draws the sea and the centre's city lights (sub-pixel towers shimmer).

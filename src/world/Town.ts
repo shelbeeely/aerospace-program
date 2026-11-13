@@ -281,6 +281,11 @@ export class Town {
     if (this.breaks.length > 256) this.breaks.splice(0, this.breaks.length - 256);
   }
 
+  /** Have a building's structure checked on the next update (something that held it up has changed). */
+  recheck(b: BlockBuilding): void {
+    this.settling.add(b);
+  }
+
   /** Add a breakable building at runtime (a city tower that just fractured). */
   addBuilding(def: BuildingDef): BlockBuilding {
     const b = new BlockBuilding(this.world, def, this.registry);

@@ -46,6 +46,8 @@ export interface StructureGroup {
   size: [number, number, number];
   /** Procedural structure id (src/arch), for the renderer to hide it while fractured. */
   arch?: string;
+  /** Held up by other structures (a corridor between two): where, and by which. */
+  heldBy?: Array<{ arch: string; x: number; y: number; z: number; group?: number }>;
   /** The structure's room: its block grid is empty there, and open at the doors. */
   room?: CityRoom;
   /** Imported kit tower: its voxel grid is the block grid (merged k×k×k). x, z: its centre. */
@@ -119,6 +121,7 @@ export function planStructures(city: CityPlan, withAirport: boolean, prefix = ''
       });
     }
   });
+  for (const l of city.links) { const g = byName.get(`arch:${l.id}`); if (g) g.heldBy = l.ends; }
   for (const b of city.buildings) if (b.room) { const g = byName.get(`arch:${b.arch}`); if (g) g.room = b.room; }
   for (const g of groups) if (!g.kit) gridFor(g, list);
   return { list, groups };

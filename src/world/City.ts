@@ -104,6 +104,8 @@ export interface CityPlan {
   rings: CityRing[];
   beacons: Array<[number, number, number]>;
   roads: CityRoad[];
+  /** What holds what: infrastructure item id → the structures it rests on and where. */
+  links: Array<{ id: string; ends: Array<{ arch: string; x: number; y: number; z: number }> }>;
   /** Imported kit towers ("Tron Buildings 1") placed on lots. */
   kit: CityKitTower[];
   /** Districts the plan was built from (canonical chunk indices). */
@@ -126,7 +128,7 @@ export function mulberry32(seed: number): () => number {
 }
 
 export function emptyPlan(x0: number, x1: number, z0: number, z1: number): CityPlan {
-  return { pieces: [], buildings: [], spires: [], rings: [], beacons: [], roads: [], kit: [], districts: [], x0, x1, z0, z1, pitch: GRID.pitch };
+  return { pieces: [], buildings: [], spires: [], rings: [], beacons: [], roads: [], kit: [], links: [], districts: [], x0, x1, z0, z1, pitch: GRID.pitch };
 }
 
 /**
@@ -149,6 +151,10 @@ export function appendDistrict(plan: CityPlan, d: DistrictPlan, central: boolean
     if (s.landmark && (s.archetype === 'tower' || s.archetype === 'radial')) plan.spires.push({ x: s.x, z: s.z, y0: s.height * 0.7, y1: s.height, color });
   });
   for (const k of d.kits) if (k.central === central) plan.kit.push({ type: k.type, x: k.x, z: k.z, scale: k.scale, rot: k.rot });
+  for (const l of d.infra.links ?? []) {
+    const [gi, gj] = blockAt(l.x, l.z);
+    if (isCentralBlock(gi, gj) === central) plan.links.push({ id: `infra:${d.key}:${Math.round(l.x)},${Math.round(l.z)}`, ends: l.ends });
+  }
   for (const c of d.infra.colliders) {
     const [gi, gj] = blockAt(c.x, c.z);
     if (isCentralBlock(gi, gj) !== central) continue;
