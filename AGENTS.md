@@ -309,7 +309,11 @@ universe, not a conventional open world decorated with neon.
   `src/arch/InteriorGenerator.ts`), unless that would fail one of the ten checks. The shell
   keeps the mass's surface, tier and role, every door has a clear way out to the lot edge (with
   steps where it is raised) and a clear aisle in. New interior furniture keeps the aisles clear.
-  A round drum is hollowed the same way by `inhabitRound` (a ring wall with real doorways).
+  A round drum is hollowed the same way by `inhabitRound` (a ring wall with real doorways), and
+  the foot of any other mass by `inhabitShell` (a shell that follows its outline). Each pass is
+  tried in turn until one passes the ten checks. A radial structure or tower none of them can
+  open gets an entrance hall (`addHall`). The kit towers have their rooms cut in at import
+  (`npm run import-towers`); do not edit `towerKit.json` or `towerKit.bin` by hand.
 - **The player on foot is a Bit** (`BitWalker`): it steps out of a stopped vehicle, walks, and
   gets back in beside it. The vehicle stays parked.
 - The figures are the imported "BIT" meshes (CC-BY 4.0, credited in the README). Do not

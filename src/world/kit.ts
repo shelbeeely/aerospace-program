@@ -16,6 +16,40 @@ export interface KitTower {
   vertexStart: number;
   vertexCount: number;
   groups: Array<{ role: string; start: number; count: number }>;
+  /** The ground-floor room cut into it at import (local metres, centred like the mesh). */
+  room?: KitRoom;
+}
+
+export interface KitRoom {
+  x0: number;
+  x1: number;
+  z0: number;
+  z1: number;
+  y1: number;
+  /** Each doorway: the middle of its tunnel, the way out, its size and the tunnel's length (m). */
+  doors: Array<{ side: number; x: number; z: number; nx: number; nz: number; width: number; height: number; through: number }>;
+}
+
+/**
+ * A placed kit tower's room in the world: turned by `rot` quarter turns about +Y (as the mesh
+ * is), scaled and moved to (cx, cz). Null if its type has no room.
+ */
+export function kitRoomAt(type: number, rot: number, scale: number, cx: number, cz: number): { x0: number; x1: number; z0: number; z1: number; y1: number; doors: KitRoom['doors'] } | null {
+  const r = KIT[type]?.room;
+  if (!r) return null;
+  const a = (rot * Math.PI) / 2, c = Math.cos(a), s = Math.sin(a);
+  // three.js turns (x, z) about +Y to (x cos + z sin, -x sin + z cos).
+  const T = (x: number, z: number): [number, number] => [x * c + z * s, -x * s + z * c];
+  const k = (v: number) => Math.round(v * 1e6) / 1e6 + 0;
+  const [ax, az] = T(r.x0, r.z0), [bx, bz] = T(r.x1, r.z1);
+  return {
+    x0: cx + Math.min(ax, bx) * scale, x1: cx + Math.max(ax, bx) * scale,
+    z0: cz + Math.min(az, bz) * scale, z1: cz + Math.max(az, bz) * scale, y1: r.y1 * scale,
+    doors: r.doors.map((d) => {
+      const [x, z] = T(d.x, d.z), [nx, nz] = T(d.nx, d.nz);
+      return { ...d, x: cx + x * scale, z: cz + z * scale, nx: k(nx), nz: k(nz), width: d.width * scale, height: d.height * scale, through: d.through * scale };
+    }),
+  };
 }
 
 export const KIT_CREDIT: string = data.credit;
@@ -31,6 +65,7 @@ export const KIT: KitTower[] = data.towers.map((t) => {
   return {
     name: t.name, size: t.size as [number, number, number], cell: t.cell, grid: [W, H, D], solid, boxes: t.boxes, solidCount: n,
     vertexStart: t.vertexStart, vertexCount: t.vertexCount, groups: t.groups,
+    ...((t as { room?: KitRoom }).room ? { room: (t as { room?: KitRoom }).room } : {}),
   };
 });
 

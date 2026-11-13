@@ -3,7 +3,7 @@ import { TUNING } from '../tuning.ts';
 import { airportPlan } from './Airport.ts';
 import { cityPlan, type CityPlan, type CityRoom } from './City.ts';
 import { terrainTop } from '../sim/terrain.ts';
-import { KIT, kitBlockFactor, kitSolid, rotate, rotatedGrid, unrotate } from './kit.ts';
+import { KIT, kitBlockFactor, kitRoomAt, kitSolid, rotate, rotatedGrid, unrotate } from './kit.ts';
 import { planetObstacleTop } from './planetCity.ts';
 
 /**
@@ -61,6 +61,11 @@ export interface Structures {
 
 let cached: Structures | null = null;
 
+/** The id a kit tower's room is known by: where it stands (canonical, to the metre). */
+export function kitRoomId(x: number, z: number): string {
+  return `kit@${Math.round(x)},${Math.round(z)}`;
+}
+
 /** The planned centre: its procedural architecture and the airport. */
 export function worldStructures(): Structures {
   return (cached ??= planStructures(cityPlan(), true));
@@ -110,6 +115,9 @@ export function planStructures(city: CityPlan, withAirport: boolean, prefix = ''
     g.x0 = x0;
     g.z0 = z0;
     g.size = [Math.ceil(Wr / k), Math.ceil(Hr / k), Math.ceil(Dr / k)];
+    // Its ground-floor room (cut into the voxels at import, so the block grid is already hollow there).
+    const kr = kitRoomAt(inst.type, inst.rot, inst.scale, inst.x, inst.z);
+    if (kr) g.room = { id: kitRoomId(inst.x, inst.z), y0: 0, ...kr };
     for (const [bx0, by0, bz0, bx1, by1, bz1] of t.boxes) {
       const [ax, az] = rotate(t, inst.rot, bx0, bz0);
       const [cx2, cz2] = rotate(t, inst.rot, bx1 - 1, bz1 - 1);
@@ -170,7 +178,7 @@ export function insideRoom(r: CityRoom, cx: number, cy: number, cz: number, s: n
   // The doorways: an opening at least one block wide and high, through the wall and out.
   for (const d of r.doors) {
     const along = (cx - d.x) * d.nx + (cz - d.z) * d.nz, across = Math.abs((cx - d.x) * d.nz - (cz - d.z) * d.nx);
-    if (across <= Math.max(d.width / 2, k + 0.01) && along > -(s + 2) && along < s + 2 && cy < r.y0 + Math.max(d.height, s)) return true;
+    if (across <= Math.max(d.width / 2, k + 0.01) && Math.abs(along) < d.through / 2 + s + 1 && cy < r.y0 + Math.max(d.height, s)) return true;
   }
   return false;
 }
@@ -196,7 +204,10 @@ export function structureMask(g: StructureGroup, list: readonly Structure[]): (x
   if (g.kit) {
     const { type, rot, k } = g.kit;
     const t = KIT[type];
+    const room = g.room, s = g.blockSize;
     return (x, y, z) => {
+      // Its blocks merge several cells: keep the room and its doorways open at that coarser size.
+      if (room && insideRoom(room, g.x0 + (x + 0.5) * s, (y + 0.5) * s, g.z0 + (z + 0.5) * s, s)) return false;
       for (let b = 0; b < k; b++) for (let c = 0; c < k; c++) for (let a = 0; a < k; a++) {
         const [ox, oz] = unrotate(t, rot, x * k + a, z * k + c);
         if (kitSolid(t, ox, y * k + b, oz)) return true;

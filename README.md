@@ -310,14 +310,20 @@ by which of four figures they show (`src/people/bit.ts`).
   stand a while, turn back, and go and find a neighbour: two that meet stop, face each other,
   and one answers YES or NO. Idle, each pulses between the two blue figures. The same world
   always has the same people in the same places; they stream in around you like the traffic.
-- **They live indoors too.** About six in ten buildings have a room their people use
+- **They live indoors too.** About three in four buildings have a room their people use
   (`inhabit` and `structureRoom` in `src/arch/InteriorGenerator.ts`): the industrial halls and
   stepped blocks that were already hollow, and now any structure with a large box mass on the
   ground or on a low foundation, which is hollowed into a *commons* with lit doorways, clear
   aisles in from each door, terminal banks along the walls, memory columns, and a meeting ring
   under a halo. A room on a foundation has steps down from its door. The slab a circuit
   structure stands on becomes an undercroft carried on columns, and a round drum (stack
-  towers, control mesas) gets a ring wall with real doorways and a chamber inside. Bits are at home when
+  towers, control mesas) gets a ring wall with real doorways and a chamber inside. The foot of
+  any other mass is opened as a shell that keeps its outline: a spire's pyramid base gets a
+  lit tunnel through its thick wall into a commons, a trumpet's flare and the stepped radial
+  tiers a round chamber. A radial structure or tower that still cannot be opened gets an
+  entrance hall at its foot (a drum for the radial family, a battered block for towers). The
+  imported kit towers have a ground-floor room cut into them at import, with lit doorways.
+  Bits are at home when
   their lot comes into view, walk round the kerb to a door and go in, stand at places down the
   aisle, move about and talk, and come out again. On foot you can walk in through the same
   doors; the walls are real.
@@ -332,9 +338,12 @@ by which of four figures they show (`src/people/bit.ts`).
 - **Destruction reaches them.** When a building is wrecked its people say NO and run out by
   the door, and nobody goes back in. Falling rubble and blasts derez Bits, and you on foot:
   a moment later you are back in your vehicle.
-- Not yet: radial structures, trumpet and spire towers and the kit towers have no rooms (their
-  people stay on the kerb); other players do not see you on foot; and the world still streams
-  around your parked vehicle, so stay within a few hundred metres of it.
+- Rooms in 762 of 996 sampled structures: radial 91 of 95, towers 114 of 116, every kit tower,
+  circuit 310 of 450, cavern 142 of 173, industrial 105 of 162. The rest stay solid (their
+  people stay on the kerb): no mass there can be opened, or opening it costs one of the ten
+  checks.
+- Not yet: other players do not see you on foot; and the world still streams around your
+  parked vehicle, so stay within a few hundred metres of it.
 
 ## Light-cycle traffic
 
@@ -1062,7 +1071,8 @@ Tower kit: This work is based on "Tron Buildings 1"
 (https://sketchfab.com/3d-models/tron-buildings-1-88ca3618bfbe42dea14f5b438250c9e2) by
 SpringSociety (https://sketchfab.com/jcreadingtutor) licensed under CC-BY-4.0
 (http://creativecommons.org/licenses/by/4.0/). Converted with `npm run import-towers`
-(baked, re-oriented, voxelized into block grids); original files in `assets/towerKit/`.
+(baked, re-oriented, voxelized into block grids, and a ground-floor room with doorways cut into
+each tower); original files in `assets/towerKit/`.
 
 Bit figures: "BIT" by Fernando Jerez, licensed under CC-BY 4.0
 (http://creativecommons.org/licenses/by/4.0/), built on polyhedra from Kit Wallace's OpenSCAD

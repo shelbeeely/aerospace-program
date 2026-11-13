@@ -474,8 +474,8 @@ export function inhabitRound(b: Builder, w: number, d: number, rng: Rng): Interi
   for (let i = from; i < b.comps.length; i++) if (c.glow !== undefined) b.comps[i].glow = c.glow;
   // Wall colliders: boxes round the ring, left out where they would reach into a doorway, and
   // a jamb box each side of every door to close the wall up to the opening.
-  const N = 16, step = (Math.PI * 2) / N, rm = (rin + r) / 2;
-  const seg = 2 * rm * Math.tan(Math.PI / N) + 0.2;
+  const rm = (rin + r) / 2, N = Math.min(48, Math.max(16, Math.ceil((2 * Math.PI * rm) / 9))), step = (Math.PI * 2) / N;
+  const seg = 2 * rm * Math.tan(Math.PI / N) * 1.1 + 0.6;
   const rel = (a: number, to: number) => Math.abs((((a - to) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI);
   for (let k = 0; k < N; k++) {
     const a = (k + 0.5) * step;
@@ -491,10 +491,10 @@ export function inhabitRound(b: Builder, w: number, d: number, rng: Rng): Interi
       const da = rel((k + 0.5) * step, a);
       if (da >= g + step / 2 + 0.01) edge = Math.min(edge, da - step / 2);
     }
-    const lat0 = q.width / 2, lat1 = rm * Math.sin(Math.min(edge, Math.PI / 2)) + 0.3;
+    const lat0 = q.width / 2, lat1 = rm * Math.sin(Math.min(edge + step, Math.PI / 2)) + 0.6; // overlapping the first box kept
     const out: [number, number] = q.side === 0 ? [1, 0] : q.side === 1 ? [0, 1] : q.side === 2 ? [-1, 0] : [0, -1];
     if (lat1 - lat0 > 0.3) {
-      const near = rin * Math.cos(Math.min(edge, Math.PI / 2)) - 0.2; // from here out to the face
+      const near = rin * Math.cos(Math.min(edge + step, Math.PI / 2)) - 0.6; // from here out to the face
       const depth = r - near, mid = (near + r) / 2;
       for (const sgn of [-1, 1]) {
         const lat = sgn * (lat0 + lat1) / 2;
@@ -515,6 +515,281 @@ export function inhabitRound(b: Builder, w: number, d: number, rng: Rng): Interi
   return cfg;
 }
 
+/**
+ * The foot of any other solid mass, kept to its own outline: a tapered prism (radial cores,
+ * tower cores), a square tapered box (the pyramid base of a spire) or a lathe (a trumpet's
+ * flare, stepped radial tiers, a stepped tower base). The band from its base up to 5.5–10 m is
+ * rebuilt as a shell that follows the outer surface exactly (closed-profile lathe arcs on the
+ * mass's own polygon) with an inner wall straight up, real doorways on the axes where the way
+ * out is clear, and the rest of the mass carried on above it (its underside the ceiling).
+ * Where the wall is thick (a low pyramid) a doorway is a short tunnel through it.
+ */
+export function inhabitShell(b: Builder, w: number, d: number, rng: Rng, only?: number): InteriorConfig | null {
+  interface Cand {
+    comp: number; cols: number[]; n: number; phase: number; band: number; rin: number;
+    /** Outer surface as (vertex radius, height) points from height y0 to y1 (relative to the base). */
+    outer: (y0: number, y1: number) => Array<[number, number]>;
+    upper: (wallH: number) => void;
+    doors: Array<{ side: number; width: number; steps: Step[] }>;
+  }
+  const T = HOME.wall + 0.5;
+  let best: Cand | null = null;
+  for (let i = 0; i < b.comps.length; i++) {
+    if (only !== undefined && i !== only) continue;
+    const c = b.comps[i];
+    const p = c.prim;
+    if (c.rx || c.rz || c.tier === 3 || c.interior || c.surface === 'glow' || c.surface === 'translucent') continue;
+    if (c.y > HOME.raised || c.y < -0.5) continue;
+    const look = { surface: c.surface, pattern: c.pattern, light: c.light, mass: c.mass, glow: c.glow } as const;
+    // The mass as a radius profile on a polygon.
+    let n: number, phase: number, H: number, pts: Array<[number, number]>;
+    let upper: (wallH: number) => void;
+    if (p.kind === 'prism') {
+      if (p.sides < 4) continue;
+      n = p.sides; phase = p.phase ?? 0; H = p.h; pts = [[p.r0, 0], [p.r1, p.h]];
+      upper = (wh) => { const r = p.r0 + ((p.r1 - p.r0) * wh) / p.h; b.prism(c.tier, c.role, c.x, c.y + wh, c.z, p.sides, r, p.r1, p.h - wh, { ...look, edges: c.edges, phase: p.phase }); };
+    } else if (p.kind === 'box') {
+      if (c.ry || Math.abs(p.w - p.d) > 0.5 || (p.taper ?? 1) >= 0.98) continue; // plain boxes are inhabit's
+      const t = p.taper ?? 1, R = (p.w / 2) * Math.SQRT2;
+      n = 4; phase = Math.PI / 4; H = p.h; pts = [[R, 0], [R * t, p.h]];
+      upper = (wh) => { const k = 1 - ((1 - t) * wh) / p.h; b.box(c.tier, c.role, c.x, c.y + wh, c.z, p.w * k, p.h - wh, p.d * k, { ...look, edges: c.edges, taper: t / k }); };
+    } else if (p.kind === 'lathe') {
+      if (p.arc !== undefined || Math.abs(p.profile[0][1]) > 0.01 || p.profile[0][0] < 1) continue;
+      let ok = true;
+      for (let k = 1; k < p.profile.length; k++) if (p.profile[k][1] < p.profile[k - 1][1] - 1e-6) ok = false; // goes back down
+      if (!ok) continue;
+      n = p.sides; phase = p.phase ?? 0; pts = p.profile.map((q) => [q[0], q[1]]); H = pts[pts.length - 1][1];
+      const prof = pts;
+      upper = (wh) => {
+        const out: Array<[number, number]> = [[0, 0], [radiusAt(prof, wh), 0]];
+        for (const q of prof) if (q[1] > wh + 1e-6) out.push([q[0], q[1] - wh]);
+        b.lathe(c.tier, c.role, c.x, c.y + wh, c.z, out, p.sides, { ...look, edges: c.edges, phase: p.phase });
+      };
+    } else continue;
+    const band = H <= 10 ? H : 8;
+    if (band < HOME.height) continue;
+    const wallH = band - HOME.roof;
+    const outer = (y0: number, y1: number) => clip(pts, y0, y1);
+    // The narrowest the outer surface gets over the band, as an inscribed radius.
+    const k = Math.cos(Math.PI / n);
+    let minR = Infinity, maxR = 0;
+    for (const q of outer(0, wallH)) { minR = Math.min(minR, q[0]); maxR = Math.max(maxR, q[0]); }
+    const rin = minR * k - T;
+    if (rin < 6 || (best && rin <= best.rin)) continue;
+    // Its colliders: round (or, for a box, boxes) centred on it, within its height.
+    const cols: number[] = [];
+    b.cols.forEach((q, j) => {
+      if (Math.abs(q.x - c.x) > 0.01 || Math.abs(q.z - c.z) > 0.01) return;
+      if (q.y - q.sy / 2 < c.y - 0.01 || q.y + q.sy / 2 > c.y + H + 0.01) return;
+      if ((p.kind === 'box') !== (q.shape === 'box')) return;
+      if (q.sx > 2 * maxR + 1 + (p.kind === 'lathe' ? 2 * Math.max(...pts.map((v) => v[0])) : 0)) return;
+      cols.push(j);
+    });
+    if (!cols.length) continue;
+    const skip = new Set(cols);
+    const q = rin * 0.72;
+    if (b.cols.some((k2, j) => !skip.has(j) && overlap(k2, c.x - q, c.x + q, c.y + 0.3, c.y + wallH - 0.3, c.z - q, c.z + q))) continue;
+    // Doors on the axes, where the way out to the lot edge is clear.
+    const dh = Math.min(HOME.doorHeight, wallH - 1);
+    const width = Math.min(HOME.door, Math.max(4, Math.round(rin * 0.35)));
+    const doors: Array<{ side: number; width: number; steps: Step[] }> = [];
+    for (let side = 0; side < 4; side++) {
+      const a = side * (Math.PI / 2);
+      const face = pts[0][0] * polyFactor(a, n, phase);
+      const steps = wayOut(b, skip, side, c.x + Math.cos(a) * face, c.z + Math.sin(a) * face, c.y, dh, width / 2 + 0.6, w, d);
+      if (steps) doors.push({ side, width, steps });
+    }
+    if (doors.length) best = { comp: i, cols, n, phase, band, rin, outer, upper, doors };
+  }
+  if (!best) return null;
+  const c = b.comps[best.comp];
+  const { n, phase, band, rin, outer, doors: found } = best;
+  let doors = found;
+  if (doors.length > 2) {
+    const pairs = [[0, 2], [1, 3]].filter(([a, e]) => doors.some((q) => q.side === a) && doors.some((q) => q.side === e));
+    const pick = pairs.length ? pairs[rng.int(0, pairs.length - 1)] : [doors[0].side, doors[1].side];
+    doors = doors.filter((q) => pick.includes(q.side));
+  }
+  const wallH = band - HOME.roof, dh = Math.min(HOME.doorHeight, wallH - 1);
+  const k = Math.cos(Math.PI / n);
+  const rinV = rin / k; // the inner wall on the same polygon, by its vertex radius
+  const out0 = outer(0, wallH);
+  const thick = out0[0][0] * k - rin; // at the floor
+  const square = n === 4;
+  const cfg: InteriorConfig = {
+    accessible: true,
+    x0: c.x - (square ? rin : rin / Math.SQRT2 - 0.3), x1: c.x + (square ? rin : rin / Math.SQRT2 - 0.3),
+    z0: c.z - (square ? rin : rin / Math.SQRT2 - 0.3), z1: c.z + (square ? rin : rin / Math.SQRT2 - 0.3),
+    y0: c.y, y1: c.y + wallH, wall: thick,
+    entrances: doors.map((q) => ({ side: q.side, offset: 0, width: q.width, height: dh })),
+    program: square ? 'commons' : 'chamber', ...(square ? {} : { round: { cx: c.x, cz: c.z, r: rin } }),
+  };
+  b.comps.splice(best.comp, 1);
+  for (const j of [...best.cols].sort((m, o) => o - m)) b.cols.splice(j, 1);
+  const look = { surface: c.surface, pattern: c.pattern, light: c.light, mass: c.mass ?? 92, glow: c.glow, solid: false } as const;
+  // A closed profile (outer surface up, inner wall down), relative to its own bottom.
+  const shell = (y0: number, y1: number) => { const o = outer(y0, y1); return [...o, [rinV, y1 - y0], [rinV, 0], o[0]] as Array<[number, number]>; };
+  // The wall between the doorways, and a lintel over each.
+  const gap = (wd: number) => Math.asin(Math.min(0.9, (wd / 2 + 0.2) / rin));
+  const angles = doors.map((q) => ({ a: q.side * (Math.PI / 2), g: gap(q.width) })).sort((m, o) => m.a - o.a);
+  const wall = shell(0, wallH);
+  for (let j = 0; j < angles.length; j++) {
+    const cur = angles[j], next = angles[(j + 1) % angles.length];
+    const start = cur.a + cur.g, end = (j + 1 < angles.length ? next.a : next.a + Math.PI * 2) - next.g;
+    b.lathe(c.tier, c.role, c.x, c.y, c.z, wall, n, { ...look, edges: 'none', phase, arc: end - start, arcStart: start });
+  }
+  for (const q of angles) if (wallH - dh > 0.5) b.lathe(c.tier, c.role, c.x, c.y + dh, c.z, shell(dh, wallH), n, { ...look, edges: 'none', phase, arc: 2 * q.g, arcStart: q.a - q.g });
+  best.upper(wallH);
+  // Colliders: boxes round the wall (left out at the doorways), the doorway's two sides and its lintel.
+  const N = Math.min(48, Math.max(16, Math.ceil((2 * Math.PI * (rin + 1)) / 9))), step = (Math.PI * 2) / N;
+  const rOut = (y: number) => radiusAt(out0, y) * k; // inscribed outer radius at a height
+  const rel = (a: number, to: number) => Math.abs((((a - to) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI);
+  const layer = (y0: number, y1: number) => {
+    const ro = rOut((y0 + y1) / 2), rm = (rin + ro) / 2, t = ro - rin + 0.8; // a little proud of both faces, so the corners close
+    const seg = 2 * rm * Math.tan(Math.PI / N) * 1.1 + 0.6;
+    for (let j = 0; j < N; j++) {
+      const a = (j + 0.5) * step;
+      if (angles.some((q) => rel(a, q.a) < q.g + step / 2 + 0.01)) continue;
+      const c2 = Math.abs(Math.cos(a)), s2 = Math.abs(Math.sin(a));
+      b.cols.push({ shape: 'box', x: c.x + Math.cos(a) * rm, y: c.y + (y0 + y1) / 2, z: c.z + Math.sin(a) * rm, sx: c2 * t + s2 * seg, sy: y1 - y0, sz: s2 * t + c2 * seg });
+    }
+  };
+  // A square shell: its four walls as boxes, exactly, cut at the doorways.
+  const sides = (y0: number, y1: number) => {
+    const ro = rOut((y0 + y1) / 2);
+    for (let sd = 0; sd < 4; sd++) {
+      const door = doors.find((q) => q.side === sd);
+      const ux = sd === 0 ? 1 : sd === 2 ? -1 : 0, uz = sd === 1 ? 1 : sd === 3 ? -1 : 0;
+      const mid = (rin + ro) / 2, t = ro - rin;
+      const runs: Array<[number, number]> = door ? [[-ro, -door.width / 2], [door.width / 2, ro]] : [[-ro, ro]];
+      for (const [l0, l1] of runs) {
+        const lat = (l0 + l1) / 2, len = l1 - l0;
+        b.cols.push({ shape: 'box', x: c.x + ux * mid - uz * lat, y: c.y + (y0 + y1) / 2, z: c.z + uz * mid + ux * lat, sx: ux ? t : len, sy: y1 - y0, sz: ux ? len : t });
+      }
+    }
+  };
+  const lay = square ? sides : layer;
+  // A sloped wall in two layers, so the collider follows it.
+  if (rOut(0) - rOut(wallH) > 2) { lay(0, wallH / 2); lay(wallH / 2, wallH); } else lay(0, wallH);
+  for (const q of doors) {
+    const a = q.side * (Math.PI / 2), g = gap(q.width);
+    const out: [number, number] = q.side === 0 ? [1, 0] : q.side === 1 ? [0, 1] : q.side === 2 ? [-1, 0] : [0, -1];
+    let edge = Math.PI;
+    for (let j = 0; j < N; j++) {
+      const da = rel((j + 0.5) * step, a);
+      if (da >= g + step / 2 + 0.01) edge = Math.min(edge, da - step / 2);
+    }
+    const ro = rOut(0) + 0.3;
+    const lat0 = q.width / 2, lat1 = ro * Math.sin(Math.min(edge + step, Math.PI / 2)) + 0.6; // overlapping the first box kept
+    if (!square && lat1 - lat0 > 0.3) {
+      const near = rin * Math.cos(Math.min(edge + step, Math.PI / 2)) - 0.6;
+      const depth = ro - near, mid = (near + ro) / 2;
+      for (const sgn of [-1, 1]) {
+        const lat = (sgn * (lat0 + lat1)) / 2;
+        b.cols.push({ shape: 'box', x: c.x + out[0] * mid - out[1] * lat, y: c.y + wallH / 2, z: c.z + out[1] * mid + out[0] * lat, sx: out[0] ? depth : lat1 - lat0, sy: wallH, sz: out[0] ? lat1 - lat0 : depth });
+      }
+    }
+    if (wallH - dh > 0.5) {
+      const mid = (rin + rOut(dh)) / 2, t = rOut(dh) - rin;
+      b.cols.push({ shape: 'box', x: c.x + out[0] * mid, y: c.y + dh + (wallH - dh) / 2, z: c.z + out[1] * mid, sx: out[0] ? t : q.width, sy: wallH - dh, sz: out[0] ? q.width : t });
+    }
+    // The lit frame at the mouth of the doorway, and steps down from it if it is raised.
+    const mouth = rOut(dh) + 0.15, face = rOut(0);
+    const fx = c.x + out[0] * mouth, fz = c.z + out[1] * mouth;
+    b.box(3, 'portal', fx, c.y + dh, fz, out[0] ? 0.3 : q.width, 0.6, out[0] ? q.width : 0.3, { surface: 'glow', light: 'entrance', glow: 1.2, solid: false });
+    for (const sgn of [-1, 1]) b.box(3, 'portal', fx - out[1] * sgn * (q.width / 2), c.y, fz + out[0] * sgn * (q.width / 2), 0.5, dh, 0.5, { surface: 'glow', light: 'entrance', glow: 0.9, solid: false });
+    buildSteps(b, q.steps, q.side, c.x + out[0] * face, c.z + out[1] * face, q.width);
+  }
+  return cfg;
+}
+
+/**
+ * An entrance hall, for a structure none of the other passes could open: a low secondary
+ * volume set against its foot in its family's language (a round drum for the radial family, a
+ * battered square block for towers), placed on whichever side has room in the lot, then
+ * hollowed like any other mass. Returns null, changing nothing, when no side has room.
+ */
+export function addHall(b: Builder, w: number, d: number, round: boolean, rng: Rng): InteriorConfig | null {
+  const h = 7.5;
+  // Clear ground for a hall of half-size m at (x, z), inside the lot.
+  const clear = (x: number, z: number, m: number) => Math.abs(x) + m <= w / 2 - 1 && Math.abs(z) + m <= d / 2 - 1 && !b.cols.some((c) => overlap(c, x - m, x + m, 0.3, h, z - m, z + m));
+  // How close the structure comes to (x, z) at its foot: the hall must stand against it.
+  const gapTo = (x: number, z: number) => {
+    let g = Infinity;
+    for (const c of b.cols) {
+      if (c.y - c.sy / 2 > 3) continue;
+      const dx = Math.max(Math.abs(x - c.x) - c.sx / 2, 0), dz = Math.max(Math.abs(z - c.z) - c.sz / 2, 0);
+      g = Math.min(g, Math.hypot(dx, dz));
+    }
+    return g;
+  };
+  const tryAt = (x: number, z: number, r: number): InteriorConfig | null => {
+    const comps = b.comps.length, cols = b.cols.length;
+    const look = { surface: 'hullDark' as const, pattern: 'panels' as const, edges: 'top' as const, light: b.accent, glow: 0.7 };
+    if (round) b.prism(2, 'hall', x, 0, z, 16, r, r * 0.97, h, look);
+    else b.box(2, 'hall', x, 0, z, 2 * r, h, 2 * r, { ...look, taper: 0.9 });
+    const cfg = inhabitShell(b, w, d, rng, comps); // the hall, and nothing else
+    if (cfg) return cfg;
+    // The hall could not be opened here: take it away again.
+    b.comps.length = comps;
+    b.cols.length = cols;
+    return null;
+  };
+  // First against the foot of the structure along the axes and diagonals...
+  const reach = (ux: number, uz: number) => {
+    let m = 0;
+    for (const c of b.cols) if (c.y - c.sy / 2 <= 3) m = Math.max(m, (c.x + (Math.sign(ux) * c.sx) / 2) * ux + (c.z + (Math.sign(uz) * c.sz) / 2) * uz);
+    return m;
+  };
+  const dirs: Array<[number, number]> = [[1, 0], [0, 1], [-1, 0], [0, -1], [Math.SQRT1_2, Math.SQRT1_2], [-Math.SQRT1_2, Math.SQRT1_2], [-Math.SQRT1_2, -Math.SQRT1_2], [Math.SQRT1_2, -Math.SQRT1_2]];
+  const first = rng.int(0, 3);
+  for (const r of [10, 8]) for (let k = 0; k < dirs.length; k++) {
+    const [ux, uz] = dirs[(k + first) % dirs.length];
+    const dist = reach(ux, uz) + r - 1;
+    const x = ux * dist, z = uz * dist;
+    if (!clear(x, z, r - 1.2)) continue;
+    const cfg = tryAt(x, z, r);
+    if (cfg) return cfg;
+  }
+  // ...then anywhere clear in the lot that stands against it (between its parts).
+  const r = 8;
+  const spots: Array<[number, number, number]> = [];
+  for (let x = -w / 2 + r + 1; x <= w / 2 - r - 1; x += 3) for (let z = -d / 2 + r + 1; z <= d / 2 - r - 1; z += 3) {
+    if (!clear(x, z, r - 0.2) || gapTo(x, z) > r + 0.5) continue;
+    spots.push([x, z, Math.hypot(x, z)]);
+  }
+  spots.sort((p, q) => p[2] - q[2]);
+  for (const [x, z] of spots.slice(0, 8)) {
+    const cfg = tryAt(x, z, r);
+    if (cfg) return cfg;
+  }
+  return null;
+}
+
+/** Radius factor of a polygon of n sides (vertices at phase + k·2π/n) at angle a: 1 at a vertex. */
+function polyFactor(a: number, n: number, phase: number): number {
+  const step = (Math.PI * 2) / n;
+  const t = ((((a - phase) % step) + step) % step) - step / 2;
+  return Math.cos(step / 2) / Math.cos(t);
+}
+
+/** Radius of a (radius, height) profile at a height (the last point at or below it, interpolated). */
+function radiusAt(prof: ReadonlyArray<readonly [number, number]>, y: number): number {
+  for (let k = prof.length - 1; k > 0; k--) {
+    const [ra, ya] = prof[k - 1], [rb, yb] = prof[k];
+    if (y >= ya - 1e-9 && y <= yb + 1e-9) return yb - ya < 1e-9 ? rb : ra + ((rb - ra) * (y - ya)) / (yb - ya);
+  }
+  return y <= prof[0][1] ? prof[0][0] : prof[prof.length - 1][0];
+}
+
+/** The part of a rising profile between two heights, shifted so y0 is 0. */
+function clip(prof: ReadonlyArray<readonly [number, number]>, y0: number, y1: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [[radiusAt(prof, y0), y0]];
+  for (const q of prof) if (q[1] > y0 + 1e-6 && q[1] < y1 - 1e-6) out.push([q[0], q[1]]);
+  out.push([radiusAt(prof, y1), y1]);
+  return out.map(([r, y]) => [r, y - y0]);
+}
+
 /** A door of a room, in world space. */
 export interface RoomDoor {
   /** Centre of the opening on the wall line, and the way out (unit, axis-aligned). */
@@ -527,6 +802,8 @@ export interface RoomDoor {
   height: number;
   /** How far in from the door the aisle runs clear (m). */
   depth: number;
+  /** From the door to the room's inner face (m): half the wall, the length of a doorway's tunnel inside. */
+  inset: number;
   /** Height of the threshold over the ground outside (m): there are steps down when it is not 0. */
   rise: number;
   /**
@@ -584,7 +861,7 @@ export function structureRoom(s: StructureSpec): Room | null {
       if (s.colliders.some((c) => overlap(c, x0, x1, room.y + 0.4, room.y + 2.4, z0, z1))) break;
       depth = t;
     }
-    if (depth < 3) continue;
+    if (depth < I.wall / 2 + 3) continue;
     // The way out: what is underfoot, from the wall to the ground.
     const floor: number[] = [];
     if (I.y0 > 0.3) {
@@ -600,7 +877,7 @@ export function structureRoom(s: StructureSpec): Room | null {
         if (f < 0.05 && floor.length > 6 && floor.slice(-6).every((v) => v < 0.05)) break;
       }
     }
-    room.doors.push({ x, z, nx: nx + 0, nz: nz + 0, width: e.width, height: e.height, depth, rise: Math.max(0, I.y0), floor });
+    room.doors.push({ x, z, nx: nx + 0, nz: nz + 0, width: e.width, height: e.height, depth, inset: I.wall / 2, rise: Math.max(0, I.y0), floor });
   }
   return room.doors.length ? room : null;
 }

@@ -1,10 +1,11 @@
 import { ARCHETYPES } from './BuildingArchetypeRegistry.ts';
 import { resolveParams } from './generators/common.ts';
 import { rotQ } from './grammar.ts';
-import { furnishInterior, inhabit, inhabitRound } from './InteriorGenerator.ts';
+import { addHall, furnishInterior, inhabit, inhabitRound, inhabitShell } from './InteriorGenerator.ts';
 import type { ActivityState } from './palette.ts';
 import { hash32, Rng } from './rng.ts';
-import type { GenRequest, StructureSpec } from './types.ts';
+import type { GenRequest, InteriorConfig, StructureSpec } from './types.ts';
+import type { Builder } from './grammar.ts';
 import { signature, validateStructure, type ValidationContext } from './validation.ts';
 
 /** Regeneration attempts before a structure is rejected. */
@@ -37,14 +38,27 @@ export function generateStructure(req: GenRequest, ctx: ValidationContext = {}):
       [w, d] = [d, w];
       rotation = ((rotation + 1) % 4) as 0 | 1 | 2 | 3;
     } else if (!gen.elongated && req.rotation === undefined) rotation = pick.int(0, 3) as 0 | 1 | 2 | 3;
-    // People live in the buildings: a structure generated solid gets a commons hollowed out of
-    // its largest grounded mass. If that costs it a validation check, it stays solid.
+    // People live in the buildings. A structure generated solid is given a room by the first of
+    // these that can make one and still passes all ten checks: a commons in its largest box mass,
+    // a round room in a drum, a shell in the foot of any other mass, and (radial structures and
+    // towers) an entrance hall at its foot. If none can, it stays solid.
+    const hall = req.archetype === 'radial' || req.archetype === 'tower';
+    const passes: Array<((b: Builder) => InteriorConfig | null) | null> = [
+      (b) => inhabit(b, w, d, rng.fork(5)),
+      (b) => inhabitRound(b, w, d, rng.fork(6)),
+      (b) => inhabitShell(b, w, d, rng.fork(7)),
+      ...(hall ? [(b: Builder) => addHall(b, w, d, req.archetype === 'radial', rng.fork(8))] : []),
+      null, // the plain build
+    ];
     let spec: StructureSpec | null = null;
-    for (const lived of [true, false]) {
+    for (const pass of passes) {
       const out = gen.build({ ...req, w, d }, rng.fork(3), params, func, variant);
-      const made = lived && !out.interior;
-      if (made) out.interior = inhabit(out.b, w, d, rng.fork(5)) ?? inhabitRound(out.b, w, d, rng.fork(6));
-      if (lived && !out.interior) continue; // nothing to hollow: the plain build below
+      const made = !!pass && !out.interior;
+      if (pass && out.interior && pass !== passes[0]) continue; // already hollow: built once is enough
+      if (made) {
+        out.interior = pass!(out.b);
+        if (!out.interior) continue;
+      }
       if (out.interior) furnishInterior(out.b, out.interior, out.accent);
       spec = assemble(req, seed, func, variant, params, w, d, rotation, out, rng.fork(4));
       const report = validateStructure(spec, req, out.required, ctx);
