@@ -287,6 +287,10 @@ universe, not a conventional open world decorated with neon.
   into another rider or its jetwall. Civil aircraft (`src/sim/aiTraffic.ts`) fly flights between
   fields and pads, one to a runway, and go around rather than land on an occupied one. Checks:
   `npm run traffic`, `npm run air`.
+- **A broken road is a closed road.** A crater that closes a road segment (`src/sim/roadDamage.ts`)
+  is a wall across the road to riders and to the flight computer, is left out of new routes, and
+  is marked on the ground with a red bar at each rim. Anything else that blocks a road must do
+  the same three things.
 - **A vehicle never runs into its own light wall** (Rapier collision groups,
   `src/sim/collisionGroups.ts`); its walls stay deadly to everyone else. Ground vehicles reverse.
 
@@ -305,11 +309,30 @@ universe, not a conventional open world decorated with neon.
   `src/arch/InteriorGenerator.ts`), unless that would fail one of the ten checks. The shell
   keeps the mass's surface, tier and role, every door has a clear way out to the lot edge (with
   steps where it is raised) and a clear aisle in. New interior furniture keeps the aisles clear.
+  A round drum is hollowed the same way by `inhabitRound` (a ring wall with real doorways).
 - **The player on foot is a Bit** (`BitWalker`): it steps out of a stopped vehicle, walks, and
   gets back in beside it. The vehicle stays parked.
 - The figures are the imported "BIT" meshes (CC-BY 4.0, credited in the README). Do not
   replace them with humanoids.
 - Check: `npm run bit`.
+
+## 18. Destruction (project)
+
+- **One engine, and it bears load.** Everything that breaks (structures, kit towers,
+  infrastructure, town buildings, Outlands landforms) becomes a `BlockBuilding`
+  (`src/world/BlockBuilding.ts`). Blocks must stay connected to the ground **and** within what
+  the structure could bear when whole (`analyseLoad`, `loadLimits`): overloaded columns crush,
+  over-long overhangs snap. Do not add a second destruction path.
+- **Being whole never fails a structure.** Limits are taken from the intact block grid; a new
+  kind of structure needs no tuning to stand.
+- **Hollow stays hollow.** A structure with a room carries it into its block grid
+  (`StructureGroup.room`); pieces too small to be a block are left out.
+- **What rests on something says so.** A structure held up by others declares `heldBy`
+  (corridors do); it falls when a holder no longer holds. A raised landform falls when fewer
+  than half of the landforms under it are left.
+- **People are part of it.** A wrecked building's Bits leave; rubble and blasts derez Bits and
+  the player on foot.
+- Checks: `npm run buildings`, `npm run destruction`.
 
 ## 16. Vehicles (project)
 

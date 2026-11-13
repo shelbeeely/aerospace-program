@@ -119,14 +119,27 @@ draw at LOD 0 only and always collide, so vehicles and walkers can go in.
 
 **Rooms for the people.** A structure generated solid is given a `commons` by `inhabit`: the
 largest box mass standing on the ground, or on a foundation up to 6.5 m high, with nothing
-else inside it and at least 14 × 14 × 7 m, is replaced by a shell of the same surface, tier and
+else inside it and at least 14 × 14 × 5.5 m, is replaced by a shell of the same surface, tier and
 role, with up to two doors (an opposite pair when possible). A side gets a door only if the
 strip from the wall to the lot edge is clear above the threshold; ledges below it get a flight
 of steps (0.5 m risers). The commons has terminal banks along the walls, memory columns in the
 quarters, a meeting ring under a halo, and aisles kept clear from each door. If the hollowed
 structure fails validation it is rebuilt solid. `structureRoom` gives the people (`src/sim/bits.ts`)
 each door in world space with the depth of its clear aisle and the floor profile outside it.
-About half of all structures have a room; round towers and radial structures do not yet.
+A low slab that qualifies (the foundation of a circuit structure) becomes an undercroft: when
+the room is wider than 44 m a grid of plain columns carries the slab, clear of the aisles.
+
+**Round rooms.** `inhabitRound` does the same for a solid prism of near-constant radius (at
+least 9 m, sides ≥ 6): its foot (all of a drum up to 10 m, the first 8 m of a taller one) is
+rebuilt as arcs of `ring` wall between the doorways, a lintel over each, a roof disc, and the
+rest of the prism above. Doors face the four axes. The wall's colliders are laid by hand (16
+boxes round the ring, left out at the doorways, with a jamb box each side) so the openings are
+exact. The room is furnished as a `chamber`; `InteriorConfig.round` carries its centre and
+inner radius.
+
+620 of 997 sampled structures have a room (circuit 310 of 450, cavern 142 of 173, industrial
+104 of 162, tower 64 of 116, radial 0 of 96). Strongly tapered and curved bases (trumpet
+flares, pyramid spires) and the radial structures are not hollowed.
 
 ## Validation (the ten checks)
 
