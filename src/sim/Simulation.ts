@@ -12,6 +12,7 @@ import { Ocean } from './ocean.ts';
 import { CITY, COAST, isSea, LAYOUT, PLANET } from './layout.ts';
 import { terrainHeight } from './terrain.ts';
 import { BIT, BIT_LOOK } from '../people/bit.ts';
+import { RoadDamage } from './roadDamage.ts';
 import { BitPopulation, BitWalker, ON_FOOT, type BitThreat, type WalkInput } from './bits.ts';
 import { TrailSystem } from './trails.ts';
 import { TrailEmitter } from '../modules/TrailEmitter.ts';
@@ -108,12 +109,23 @@ export class Simulation {
    * world reset; the renderer draws them as terraced scars in the ground, newest last).
    */
   readonly craters: Array<{ x: number; y: number; z: number; radius: number; time: number; color: string }> = [];
+  /** Roads broken by craters: slab fields, barriers and closed segments (src/sim/roadDamage.ts). */
+  readonly roadDamage = new RoadDamage();
+  private roadRubble: RAPIER.RigidBody | null = null;
   /** Scar the ground at (x, z) if the blast at height y is close enough to it. */
-  private crater(x: number, y: number, z: number, blast: number, color: string): void {
+  crater(x: number, y: number, z: number, blast: number, color: string): void {
     const gy = isSea(x) ? null : terrainHeight(x, z);
     if (gy === null || y - gy > blast * 0.6) return; // over the sea, or an airburst
     const radius = blast * (0.5 + 0.3 * (1 - Math.max(0, y - gy) / (blast * 0.6)));
     this.craters.push({ x, y: gy, z, radius, time: this.time, color });
+    // A crater big enough breaks the road it is on: slabs across it, and the stretch closes.
+    const closure = this.roadDamage.add(x, gy, z, radius);
+    if (closure) {
+      this.roadRubble ??= this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+      for (const s of closure.slabs) {
+        this.world.createCollider(RAPIER.ColliderDesc.cuboid(s.sx / 2, s.sy / 2, s.sz / 2).setTranslation(s.x, s.y, s.z).setFriction(0.9).setRestitution(0.05), this.roadRubble);
+      }
+    }
     if (this.craters.length > 256) this.craters.splice(0, this.craters.length - 256);
   }
 
@@ -650,6 +662,7 @@ export class Simulation {
     this.trails = new TrailSystem(this.world);
     this.trails.chips = this.chips;
     this.traffic = new TrafficSystem(this.world, CITY.seed, this.chips);
+    this.traffic.barriers = this.roadDamage.barriers;
     this.airTraffic = new AiAirTraffic(this.world, CITY.seed);
     this.groundTurrets = new GroundTurretSystem(this.world, CITY.seed);
     this.strikeSystem = new StrikeSystem({
@@ -906,6 +919,8 @@ export class Simulation {
     this.chips.reset();
     this.explosions.length = 0;
     this.craters.length = 0;
+    this.roadDamage.reset();
+    if (this.roadRubble) { this.world.removeRigidBody(this.roadRubble); this.roadRubble = null; }
     this.booms.length = 0;
     this.boomDamage = 0;
     this.lightning.reset(this.atmosphere.settings.seed);

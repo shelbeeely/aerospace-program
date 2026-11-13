@@ -264,6 +264,7 @@ async function start() {
   const autopilot = new FlightAutopilot(player);
   // Autonomous ground driving steers clear of every light wall: ours, traffic's, other players'.
   autopilot.driver.walls = (x, z, r) => wallSegmentsNear(sim, x, z, r, net.remoteWalls());
+  autopilot.driver.closed = sim.roadDamage.closed;
   autopilot.onDisengage = (thr) => { player.throttle = thr; };
   autopilot.fractured = sim.staticWorld.fractured;
   // Flight computer: approach speeds come from the design's estimated stall speed.
@@ -1264,6 +1265,7 @@ async function start() {
       }
     }
     craterView.update(sim.time, sim.craters);
+    craterView.updateRoads(sim.roadDamage);
     {
       // Sonic booms: the Mach cone and vapour, ground shock rings, and the double crack when the
       // craft goes supersonic or a boom breaks something.

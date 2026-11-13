@@ -23,5 +23,7 @@ export function wallSegmentsNear(sim: Simulation, x: number, z: number, radius: 
     const pts = t.points;
     for (let i = 1; i < pts.length; i++) if (near(pts[i])) out.push([pts[i - 1].x, pts[i - 1].z, pts[i].x, pts[i].z]);
   }
+  // The rims of broken road are walls across it too.
+  for (const b of sim.roadDamage.barriers) if (near({ x: b[0], z: b[1] }) || near({ x: b[2], z: b[3] })) out.push([b[0], b[1], b[2], b[3]]);
   return out;
 }

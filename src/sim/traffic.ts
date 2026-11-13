@@ -309,6 +309,11 @@ export class TrafficSystem {
   control = true;
   /** Other things on the road riders brake for (the player's vehicle), set by the host each step. */
   obstacles: RoadObstacle[] = [];
+  /**
+   * Walls across the road that are not jetwalls (the rims of a field of broken road), each
+   * [x0, z0, x1, z1]: riders treat them as they treat the player's jetwall. Set by the host.
+   */
+  barriers: ReadonlyArray<readonly [number, number, number, number]> = [];
   private readonly lanes = new Map<number, LaneEntry[]>();
   private readonly laneLists: LaneEntry[][] = [];
   private readonly entryPool: LaneEntry[] = [];
@@ -448,7 +453,7 @@ export class TrafficSystem {
     }
     if (this.spawning && this.steps % 30 === 1) this.manage();
     if (trails) this.bucketWalls(trails);
-    const walls = this.buckets.size > 0;
+    const walls = this.buckets.size > 0 || this.barriers.length > 0;
     // Driving decisions run at a quarter of the physics rate; riding is integrated every step.
     const tick = this.steps % 4 === 0;
     if (tick) {
@@ -850,6 +855,15 @@ export class TrafficSystem {
         const u = (wx * dz - wz * dx) / den;
         if (t >= 0 && t <= 1 && u >= -0.02 && u <= 1.02 && t < best) best = t;
       }
+    }
+    for (const [px, pz, qx, qz] of this.barriers) {
+      const ex = qx - px, ez = qz - pz;
+      const den = dx * ez - dz * ex;
+      if (Math.abs(den) < 1e-9) continue;
+      const wx = px - ax, wz = pz - az;
+      const t = (wx * ez - wz * ex) / den;
+      const u = (wx * dz - wz * dx) / den;
+      if (t >= 0 && t <= 1 && u >= -0.02 && u <= 1.02 && t < best) best = t;
     }
     return best;
   }
