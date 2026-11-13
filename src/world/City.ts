@@ -1,3 +1,4 @@
+import { structureRoom } from '../arch/InteriorGenerator.ts';
 import { districtPlan, type DistrictPlan } from '../arch/DistrictGenerator.ts';
 import { blockAt, GRID, isCentralBlock } from '../arch/grid.ts';
 import { BLOCK_COLORS } from '../arch/palette.ts';
@@ -44,6 +45,21 @@ export interface CityBuilding {
   /** Roof height (m). */
   top: number;
   color: number;
+  /** Its room, if it has one: hollow space that stays hollow when the structure fractures. */
+  room?: CityRoom;
+}
+
+/** A structure's interior as the destruction engine needs it: the inner volume and the door openings (world, m). */
+export interface CityRoom {
+  x0: number;
+  x1: number;
+  z0: number;
+  z1: number;
+  y0: number;
+  y1: number;
+  /** A round room: centre and inner radius (the rectangle above is the square round it). */
+  round?: { x: number; z: number; r: number };
+  doors: Array<{ x: number; z: number; nx: number; nz: number; width: number; height: number }>;
 }
 
 export interface CitySpire {
@@ -90,6 +106,8 @@ export interface CityPlan {
   rings: CityRing[];
   beacons: Array<[number, number, number]>;
   roads: CityRoad[];
+  /** What holds what: infrastructure item id → the structures it rests on and where. */
+  links: Array<{ id: string; ends: Array<{ arch: string; x: number; y: number; z: number }> }>;
   /** Imported kit towers ("Tron Buildings 1") placed on lots. */
   kit: CityKitTower[];
   /** Districts the plan was built from (canonical chunk indices). */
@@ -112,7 +130,7 @@ export function mulberry32(seed: number): () => number {
 }
 
 export function emptyPlan(x0: number, x1: number, z0: number, z1: number): CityPlan {
-  return { pieces: [], buildings: [], spires: [], rings: [], beacons: [], roads: [], kit: [], districts: [], x0, x1, z0, z1, pitch: GRID.pitch };
+  return { pieces: [], buildings: [], spires: [], rings: [], beacons: [], roads: [], kit: [], links: [], districts: [], x0, x1, z0, z1, pitch: GRID.pitch };
 }
 
 /**
@@ -125,11 +143,20 @@ export function appendDistrict(plan: CityPlan, d: DistrictPlan, central: boolean
     if (d.lots[i].central !== central) return;
     const color = BLOCK_COLORS.indexOf(paletteOf(s)) >= 0 ? BLOCK_COLORS.indexOf(paletteOf(s)) : 0;
     const building = plan.buildings.length;
-    plan.buildings.push({ id: building, arch: s.id, x: s.x, z: s.z, top: s.height, color });
+    const room = structureRoom(s);
+    const I = s.interior;
+    plan.buildings.push({
+      id: building, arch: s.id, x: s.x, z: s.z, top: s.height, color,
+      ...(room && I ? { room: { x0: room.x0, x1: room.x1, z0: room.z0, z1: room.z1, y0: room.y, y1: s.y + I.y1, ...(room.round ? { round: room.round } : {}), doors: room.doors.map((d) => ({ x: d.x, z: d.z, nx: d.nx, nz: d.nz, width: d.width, height: d.height })) } } : {}),
+    });
     for (const c of s.colliders) plan.pieces.push({ shape: c.shape, x: c.x, y: c.y, z: c.z, sx: c.sx, sy: c.sy, sz: c.sz, taper: c.taper, color, building, windows: false, arch: s.id });
     if (s.landmark && (s.archetype === 'tower' || s.archetype === 'radial')) plan.spires.push({ x: s.x, z: s.z, y0: s.height * 0.7, y1: s.height, color });
   });
   for (const k of d.kits) if (k.central === central) plan.kit.push({ type: k.type, x: k.x, z: k.z, scale: k.scale, rot: k.rot });
+  for (const l of d.infra.links ?? []) {
+    const [gi, gj] = blockAt(l.x, l.z);
+    if (isCentralBlock(gi, gj) === central) plan.links.push({ id: `infra:${d.key}:${Math.round(l.x)},${Math.round(l.z)}`, ends: l.ends });
+  }
   for (const c of d.infra.colliders) {
     const [gi, gj] = blockAt(c.x, c.z);
     if (isCentralBlock(gi, gj) !== central) continue;

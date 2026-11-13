@@ -1,7 +1,7 @@
 import { CITY } from '../sim/layout.ts';
 import { TUNING } from '../tuning.ts';
 import { airportPlan } from './Airport.ts';
-import { cityPlan, type CityPlan } from './City.ts';
+import { cityPlan, type CityPlan, type CityRoom } from './City.ts';
 import { terrainTop } from '../sim/terrain.ts';
 import { KIT, kitBlockFactor, kitSolid, rotate, rotatedGrid, unrotate } from './kit.ts';
 import { planetObstacleTop } from './planetCity.ts';
@@ -46,6 +46,10 @@ export interface StructureGroup {
   size: [number, number, number];
   /** Procedural structure id (src/arch), for the renderer to hide it while fractured. */
   arch?: string;
+  /** Held up by other structures (a corridor between two): where, and by which. */
+  heldBy?: Array<{ arch: string; x: number; y: number; z: number; group?: number }>;
+  /** The structure's room: its block grid is empty there, and open at the doors. */
+  room?: CityRoom;
   /** Imported kit tower: its voxel grid is the block grid (merged k×k×k). x, z: its centre. */
   kit?: { index: number; type: number; rot: number; scale: number; k: number; x: number; z: number };
 }
@@ -117,11 +121,17 @@ export function planStructures(city: CityPlan, withAirport: boolean, prefix = ''
       });
     }
   });
+  for (const l of city.links) { const g = byName.get(`arch:${l.id}`); if (g) g.heldBy = l.ends; }
+  for (const b of city.buildings) if (b.room) { const g = byName.get(`arch:${b.arch}`); if (g) g.room = b.room; }
   for (const g of groups) if (!g.kit) gridFor(g, list);
   return { list, groups };
 }
 
-/** Choose each structure's block grid: as fine as the block budget allows. */
+/**
+ * Choose each structure's block grid: as fine as the block budget allows. The first estimate is
+ * from the solid volume. A hollow structure's thin walls each still take a whole layer of
+ * blocks, so for those the grid is counted and coarsened until it fits the budget.
+ */
 function gridFor(g: StructureGroup, list: readonly Structure[]): void {
   let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, y1 = 0, volume = 0;
   for (const i of g.pieces) {
@@ -131,15 +141,46 @@ function gridFor(g: StructureGroup, list: readonly Structure[]): void {
     y1 = Math.max(y1, p.y + p.sy / 2);
     volume += p.sx * p.sy * p.sz * (p.shape === 'box' ? 1 : 0.8);
   }
-  const s = Math.min(14, Math.max(TUNING.blockSize, Math.cbrt(volume / TUNING.maxFractureBlocks)));
-  g.blockSize = s;
   g.x0 = x0;
   g.z0 = z0;
-  g.size = [Math.max(1, Math.ceil((x1 - x0) / s)), Math.max(1, Math.ceil(y1 / s)), Math.max(1, Math.ceil((z1 - z0) / s))];
+  const size = (s: number) => {
+    g.blockSize = s;
+    g.size = [Math.max(1, Math.ceil((x1 - x0) / s)), Math.max(1, Math.ceil(y1 / s)), Math.max(1, Math.ceil((z1 - z0) / s))];
+  };
+  let s = Math.min(14, Math.max(TUNING.blockSize, Math.cbrt(volume / TUNING.maxFractureBlocks)));
+  size(s);
+  if (!g.room) return;
+  for (let k = 0; k < 12 && s < 14; k++) {
+    const mask = structureMask(g, list);
+    let n = 0;
+    for (let x = 0; x < g.size[0]; x++) for (let y = 0; y < g.size[1]; y++) for (let z = 0; z < g.size[2]; z++) if (mask(x, y, z)) n++;
+    if (n <= TUNING.maxFractureBlocks * 1.3) break;
+    s = Math.min(14, s * Math.max(1.1, Math.cbrt(n / TUNING.maxFractureBlocks) ** 0.75));
+    size(s);
+  }
+}
+
+/** Is the point inside the structure's room, as a grid of blocks of edge `s` must see it? */
+export function insideRoom(r: CityRoom, cx: number, cy: number, cz: number, s: number): boolean {
+  if (cy < r.y0) return false;
+  // The room itself, drawn in by half a block all round so the walls and roof always keep a
+  // whole layer of blocks.
+  const k = s / 2;
+  if (r.round ? Math.hypot(cx - r.round.x, cz - r.round.z) < r.round.r - k && cy < r.y1 - k : cx > r.x0 + k && cx < r.x1 - k && cz > r.z0 + k && cz < r.z1 - k && cy < r.y1 - k) return true;
+  // The doorways: an opening at least one block wide and high, through the wall and out.
+  for (const d of r.doors) {
+    const along = (cx - d.x) * d.nx + (cz - d.z) * d.nz, across = Math.abs((cx - d.x) * d.nz - (cz - d.z) * d.nx);
+    if (across <= Math.max(d.width / 2, k + 0.01) && along > -(s + 2) && along < s + 2 && cy < r.y0 + Math.max(d.height, s)) return true;
+  }
+  return false;
 }
 
 /** Is the block centre (cx, cy, cz) of edge `s` inside piece p? Thin pieces still get one layer. */
 export function insidePiece(p: Structure, cx: number, cy: number, cz: number, s: number): boolean {
+  // Too small to be a block: furniture, treads, kerbs and thin low bars are not part of the
+  // grid (they go to chips when the structure fractures). Walls, slabs and columns are.
+  const small = 0.6 * s;
+  if (p.sy < small && Math.min(p.sx, p.sz) < small) return false;
   const hy = Math.max(p.sy / 2, s / 2);
   const dy = cy - p.y;
   if (Math.abs(dy) > hy) return false;
@@ -165,8 +206,10 @@ export function structureMask(g: StructureGroup, list: readonly Structure[]): (x
   }
   const s = g.blockSize;
   const pieces = g.pieces.map((i) => list[i]);
+  const room = g.room;
   return (x, y, z) => {
     const cx = g.x0 + (x + 0.5) * s, cy = (y + 0.5) * s, cz = g.z0 + (z + 0.5) * s;
+    if (room && insideRoom(room, cx, cy, cz, s)) return false;
     return pieces.some((p) => insidePiece(p, cx, cy, cz, s));
   };
 }

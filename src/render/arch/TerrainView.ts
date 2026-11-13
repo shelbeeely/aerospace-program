@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { chunkHasTerrain, landformsInRect, type Landform } from '../../arch/DigitalTerrainGenerator.ts';
+import { brokenVersion, chunkHasTerrain, isBroken, landformsInRect, type Landform } from '../../arch/DigitalTerrainGenerator.ts';
 import { GRID, mod } from '../../arch/grid.ts';
 import type { LightRole, Pattern, Surface } from '../../arch/palette.ts';
 import type { Component, EdgeMode } from '../../arch/types.ts';
@@ -89,6 +89,7 @@ export class TerrainView {
   private readonly loaded = new Map<string, Loaded>();
   private queue: Array<{ key: string; ci: number; cj: number; ox: number; oz: number; lod: Lod; d: number }> = [];
   private lastCell = '';
+  private brokenSeen = brokenVersion();
   private readonly frustum = new THREE.Frustum();
   private readonly _m = new THREE.Matrix4();
   private readonly _s = new THREE.Sphere();
@@ -103,6 +104,11 @@ export class TerrainView {
   update(camera: THREE.PerspectiveCamera): void {
     if (!this.enabled) { this.root.visible = false; return; }
     this.root.visible = true;
+    // A landform broke (or they were all mended): redraw the terrain without (or with) it.
+    if (brokenVersion() !== this.brokenSeen) {
+      this.brokenSeen = brokenVersion();
+      this.clear();
+    }
     const cam = camera.position;
     const cs = GRID.chunkSize;
     const ci = Math.floor(mod(cam.x - GRID.x0, C) / cs), cj = Math.floor(mod(cam.z - GRID.z0, C) / cs);
@@ -152,7 +158,7 @@ export class TerrainView {
     w.sid = 0; w.hgtBase = 0; w.hgtScale = 1 / 280;
     let top = 50;
     for (const f of forms) {
-      if (lod === 2 && f.tier === 3) continue;
+      if ((lod === 2 && f.tier === 3) || isBroken(f)) continue;
       top = Math.max(top, f.y0 + f.h);
       if (f.shape === 'slab') { emitSlab(w, f, x0, z0); continue; }
       for (const c of landformComponents(f, x0, z0)) emitComponent(w, c, { ox: 0, oz: 0, rot: 0 }, lod);

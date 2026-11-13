@@ -21,6 +21,7 @@ const KEYBOARD: Array<[string, string]> = [
   ['← → ↑ ↓', 'turret: traverse and elevate (tank); left alone, it aims at the lock'],
   ['/', 'turret back to the nose'],
   ['Enter', 'chase the locked vehicle (flight computer; again or the stick ends it)'],
+  ['=', 'on foot: step out of a stopped vehicle as a Bit, or get back in beside it (W/S walk, A/D turn, Q/E sidestep, V says YES, O says NO)'],
   ["'", 'mercenaries and armory: hire wingmen, buy a nuke or an EMP with credits'],
   ['`', 'launch the nuke or EMP carried (homes on the lock)'],
   ['\\', 'radar range: 2 / 5 / 12 km'],

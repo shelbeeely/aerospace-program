@@ -11,6 +11,9 @@ import { neutralControls, sanitizeControls, type ControlInputs } from './control
 import { Ocean } from './ocean.ts';
 import { CITY, COAST, isSea, LAYOUT, PLANET } from './layout.ts';
 import { terrainHeight } from './terrain.ts';
+import { BIT, BIT_LOOK } from '../people/bit.ts';
+import { RoadDamage } from './roadDamage.ts';
+import { BitPopulation, BitWalker, ON_FOOT, type BitThreat, type WalkInput } from './bits.ts';
 import { TrailSystem } from './trails.ts';
 import { TrailEmitter } from '../modules/TrailEmitter.ts';
 import { HX, HZ, TrafficSystem, type Rider, type RoadObstacle } from './traffic.ts';
@@ -109,12 +112,23 @@ export class Simulation {
    * world reset; the renderer draws them as terraced scars in the ground, newest last).
    */
   readonly craters: Array<{ x: number; y: number; z: number; radius: number; time: number; color: string }> = [];
+  /** Roads broken by craters: slab fields, barriers and closed segments (src/sim/roadDamage.ts). */
+  readonly roadDamage = new RoadDamage();
+  private roadRubble: RAPIER.RigidBody | null = null;
   /** Scar the ground at (x, z) if the blast at height y is close enough to it. */
-  private crater(x: number, y: number, z: number, blast: number, color: string): void {
+  crater(x: number, y: number, z: number, blast: number, color: string): void {
     const gy = isSea(x) ? null : terrainHeight(x, z);
     if (gy === null || y - gy > blast * 0.6) return; // over the sea, or an airburst
     const radius = blast * (0.5 + 0.3 * (1 - Math.max(0, y - gy) / (blast * 0.6)));
     this.craters.push({ x, y: gy, z, radius, time: this.time, color });
+    // A crater big enough breaks the road it is on: slabs across it, and the stretch closes.
+    const closure = this.roadDamage.add(x, gy, z, radius);
+    if (closure) {
+      this.roadRubble ??= this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+      for (const s of closure.slabs) {
+        this.world.createCollider(RAPIER.ColliderDesc.cuboid(s.sx / 2, s.sy / 2, s.sz / 2).setTranslation(s.x, s.y, s.z).setFriction(0.9).setRestitution(0.05), this.roadRubble);
+      }
+    }
     if (this.craters.length > 256) this.craters.splice(0, this.craters.length - 256);
   }
 
@@ -537,6 +551,57 @@ export class Simulation {
   /** AI aircraft flying around the player (built-ins and, in single player, the player's designs). */
   readonly airTraffic: AiAirTraffic;
   private readonly roadObstacle: RoadObstacle = { x: 0, y: 0, z: 0, vx: 0, vz: 0, radius: 2 };
+  /** The people of the Grid: Bits walking the kerbs around their blocks. */
+  readonly bits = new BitPopulation();
+  /** The player as a Bit on foot (active once it steps out of its vehicle). */
+  readonly walker = new BitWalker();
+  /** Where the player on foot wants to go; set by the host each step. */
+  walkInput: WalkInput = { forward: 0, turn: 0, strafe: 0 };
+  private readonly bitThreat: BitThreat = { x: 0, y: 0, z: 0, vx: 0, vz: 0 };
+  private lastScare = -Infinity;
+  private fracturesSeen = -1;
+  private bitTick = 3;
+  private readonly ruins = new Set<string>();
+  private breaksSeen = -Infinity;
+  private blastsSeen = -Infinity;
+
+  /** The player, wherever it is: on foot, or its vehicle. */
+  get playerPoint(): { x: number; y: number; z: number } {
+    return this.walker.active ? this.walker : this.position;
+  }
+
+  /**
+   * Step out of the vehicle and go on foot. Returns why not, or null when out. The vehicle has
+   * to be down and nearly stopped; it stays parked, brakes on, where it was left.
+   */
+  exitVehicle(): string | null {
+    if (this.walker.active) return 'Already on foot';
+    if (this.exploded) return 'Nothing to step out of';
+    const ground = isSea(this.position.x) ? null : terrainHeight(this.position.x, this.position.z);
+    if (ground === null) return 'Not over water';
+    if (this.linvel.length() > ON_FOOT.exitSpeed) return 'Stop first';
+    if (this.position.y - ground - this.craft.restingHeight() > 2) return 'Land first';
+    // Out of the left side, clear of the hull, facing the way the vehicle faces.
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.rotation);
+    const yaw = Math.atan2(-fwd.x, -fwd.z);
+    const b = craftBounds(this.craft.def);
+    const side = (b.max.x - b.min.x) / 2 + 1.6;
+    const x = this.position.x - Math.cos(yaw) * side, z = this.position.z + Math.sin(yaw) * side;
+    this.walker.exit(x, terrainHeight(x, z), z, yaw);
+    return null;
+  }
+
+  /** Get back in. Returns why not, or null when aboard. */
+  boardVehicle(): string | null {
+    if (!this.walker.active) return 'Already aboard';
+    if (!this.exploded) {
+      const b = craftBounds(this.craft.def);
+      const reach = ON_FOOT.reach + Math.max(b.max.x - b.min.x, b.max.z - b.min.z) / 2;
+      if (Math.hypot(this.walker.x - this.position.x, this.walker.z - this.position.z) > reach) return 'Too far from your vehicle';
+    }
+    this.walker.board();
+    return null;
+  }
   /** Hostile turrets on tower roofs around the player (density 0 = off). */
   readonly groundTurrets: GroundTurretSystem;
   /** Called-in strikes (the strike globe): missile barrages, EMP strikes, nuke bombers. */
@@ -600,6 +665,7 @@ export class Simulation {
     this.trails = new TrailSystem(this.world);
     this.trails.chips = this.chips;
     this.traffic = new TrafficSystem(this.world, CITY.seed, this.chips);
+    this.traffic.barriers = this.roadDamage.barriers;
     this.airTraffic = new AiAirTraffic(this.world, CITY.seed);
     this.groundTurrets = new GroundTurretSystem(this.world, CITY.seed);
     this.strikeSystem = new StrikeSystem({
@@ -842,6 +908,13 @@ export class Simulation {
   resetToRunway(): void {
     this.trails.clear();
     this.traffic.clear();
+    this.bits.reset();
+    this.walker.board();
+    this.lastScare = -Infinity;
+    this.ruins.clear();
+    this.fracturesSeen = -1;
+    this.breaksSeen = -Infinity;
+    this.blastsSeen = -Infinity;
     this.airTraffic.clear();
     this.groundTurrets.clear();
     this.adsb.clear();
@@ -850,6 +923,8 @@ export class Simulation {
     this.chips.reset();
     this.explosions.length = 0;
     this.craters.length = 0;
+    this.roadDamage.reset();
+    if (this.roadRubble) { this.world.removeRigidBody(this.roadRubble); this.roadRubble = null; }
     this.booms.length = 0;
     this.boomDamage = 0;
     this.lightning.reset(this.atmosphere.settings.seed);
@@ -885,6 +960,7 @@ export class Simulation {
     this.debris = [];
     this.debrisSpawn.clear();
     if (this.craft.detached.size || this.exploded) this.rebuildCraft(this.craft.def);
+    this.walker.board(); // a new vehicle starts with its driver in it
     this.exploded = false;
     this.derezCause = null;
     this.lastHitAt = -Infinity;
@@ -940,7 +1016,8 @@ export class Simulation {
   step(controls: ControlInputs): void {
     const t0 = performance.now();
     // A wreck flies no more: engines out, surfaces slack (brakes stay on so it settles).
-    this.controls = this.exploded ? { ...neutralControls(), brake: 1 } : this.tailStrikeGuard(sanitizeControls(controls));
+    // On foot the vehicle is parked: nobody at the controls, brakes on.
+    this.controls = this.exploded || this.walker.active ? { ...neutralControls(), brake: 1 } : this.tailStrikeGuard(sanitizeControls(controls));
     // An EMP: the engines are out until it passes (the surfaces still answer the stick).
     if (this.time < this.empUntil) this.controls = { ...this.controls, throttle: 0 };
     (this.ctx as { controls: ControlInputs }).controls = this.controls;
@@ -981,6 +1058,46 @@ export class Simulation {
     ob.y = this.position.y - terrainHeight(this.position.x, this.position.z);
     this.traffic.obstacles = this.exploded ? [] : [ob];
     this.traffic.step(this.dt, this.time, this.position, this.trails);
+    // The people: they watch for the player's vehicle and flinch from anything that goes off.
+    this.walker.step(this.dt, this.walkInput, this.world, (x, z) => (isSea(x) ? -COAST.depth : terrainHeight(x, z)), this.craft.body);
+    const th = this.bitThreat;
+    th.x = this.position.x; th.y = this.position.y; th.z = this.position.z; th.vx = this.linvel.x; th.vz = this.linvel.z;
+    const latest = this.explosions[this.explosions.length - 1];
+    if (latest && latest.time > this.lastScare) {
+      for (const e of this.explosions) if (e.time > this.lastScare) this.bits.scare(e.x, e.z, 40 + e.radius * 3, this.time);
+      this.lastScare = latest.time;
+    }
+    // Wrecked buildings empty out; rubble and blasts derez whoever they reach, the player on foot included.
+    if (this.staticWorld.version !== this.fracturesSeen) {
+      this.fracturesSeen = this.staticWorld.version;
+      for (const id of this.staticWorld.fractured.keys()) {
+        const arch = this.staticWorld.structures.groups[id].arch;
+        if (arch && !this.ruins.has(arch)) { this.ruins.add(arch); this.bits.collapse(arch, this.time); }
+      }
+      if (this.staticWorld.fractured.size === 0) this.ruins.clear();
+    }
+    const w = this.walker;
+    const strike = (x: number, y: number, z: number, r: number) => {
+      this.bits.strike(x, y, z, r, this.time);
+      if (w.active && w.downAt === null && (w.x - x) ** 2 + (w.y + BIT.hover - y) ** 2 + (w.z - z) ** 2 < r * r) {
+        w.downAt = this.time;
+        this.chips.emit({ x: w.x, y: w.y + BIT.hover, z: w.z, radius: 0.6, vx: 0, vy: 2, vz: 0, speed: 6, count: 26, size: 0.14, color: BIT_LOOK.idle1.color });
+      }
+    };
+    const breaks = this.town.breaks;
+    for (let i = breaks.length - 1; i >= 0 && breaks[i].time > this.breaksSeen; i--) strike(breaks[i].x, breaks[i].y, breaks[i].z, 2.6);
+    if (breaks.length) this.breaksSeen = Math.max(this.breaksSeen, breaks[breaks.length - 1].time);
+    for (const e of this.explosions) if (e.time > this.blastsSeen) strike(e.x, e.y, e.z, e.radius * 0.6);
+    if (latest) this.blastsSeen = Math.max(this.blastsSeen, latest.time);
+    // Down on foot: a moment later the player is back in their vehicle.
+    if (w.active && w.downAt !== null && this.time - w.downAt > TUNING.respawnDelay) w.board();
+    // The people think at a quarter of the physics rate: plenty for walkers, and cheap.
+    if (++this.bitTick % 4 === 0) this.bits.step(this.dt * 4, this.time, this.playerPoint, this.exploded ? [] : [th]);
+    // A Bit run over derezzes into chips of its own light.
+    for (const d of this.bits.derezEvents) {
+      this.chips.emit({ x: d.x, y: d.y, z: d.z, radius: 0.6, vx: th.vx * 0.5, vy: 2, vz: th.vz * 0.5, speed: 6, count: 26, size: 0.14, color: BIT_LOOK.idle1.color });
+    }
+    this.bits.derezEvents.length = 0;
     // Hostile aircraft hunt the craft only while it lives and carries weapons.
     this.airTarget.vel.copy(this.linvel);
     this.airTarget.alive = !this.exploded;

@@ -4,6 +4,7 @@
  * road (never an airstrip), and the flight computer driving ground vehicles to destinations.
  * Run with `npm run drive`.
  */
+import * as THREE from 'three';
 import { LIGHT_CAR } from '../src/craft/lightCar.ts';
 import { LIGHT_CYCLE } from '../src/craft/lightCycle.ts';
 import { LIGHT_RUNNER } from '../src/craft/outlands.ts';
@@ -128,6 +129,78 @@ for (const [def, dest] of [[LIGHT_CAR, 'pad-apron'], [LIGHT_CAR, 'spire'], [LIGH
   }
   check(!sim.exploded && sim.failures.length === 0 && minD > 3, 'the driver never runs into a light wall across its road', `closest ${minD.toFixed(1)} m, intact ${!sim.exploded}`);
   check(rerouted, 'blocked by the wall, it re-routes around it', `route ${(first / 1000).toFixed(2)} km → ${(ap.driver.length / 1000).toFixed(2)} km`);
+}
+
+// --- Broken road: a crater closes the stretch it is on; routes avoid it and the driver goes round.
+{
+  const sim = new Simulation(LIGHT_CAR);
+  sim.traffic.enabled = false;
+  sim.bits.enabled = false;
+  for (let i = 0; i < 120; i++) sim.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
+  const ap = new FlightAutopilot(new Idle());
+  ap.driver.walls = (x, z, r) => wallSegmentsNear(sim, x, z, r);
+  ap.driver.closed = sim.roadDamage.closed;
+  let t = sim.telemetry();
+  ap.engage(t, 'ground', undefined, { mode: 'goto', destination: 'spire', speed: 22 });
+  // The middle of a straight stretch of the route ~300 m ahead.
+  const path = ap.driver.path;
+  let acc = 0, k = 1;
+  for (; k < path.length && (acc < 300 || Math.hypot(path[k][0] - path[k - 1][0], path[k][1] - path[k - 1][1]) < 60); k++) acc += Math.hypot(path[k][0] - path[k - 1][0], path[k][1] - path[k - 1][1]);
+  const mx = (path[k - 1][0] + path[k][0]) / 2, mz = (path[k - 1][1] + path[k][1]) / 2;
+  check(sim.roadDamage.closures.length === 0, 'a whole world has no closed roads');
+  sim.crater(mx, 0, mz, 4, '#fff'); // a small one only scars the surface
+  check(sim.roadDamage.closures.length === 0 && sim.craters.length === 1, 'a small crater scars the road without closing it');
+  sim.crater(mx, 0, mz, 24, '#fff');
+  const c = sim.roadDamage.closures[0];
+  check(!!c && sim.roadDamage.closed(c.alongX, c.i, c.j) && c.barriers.length === 2 && c.slabs.length >= 8, 'a big crater on a road closes that stretch', c ? `${c.slabs.length} slabs, radius ${c.radius.toFixed(1)} m` : 'no closure');
+  const first = ap.driver.length;
+  const fresh = findRoute(sim.position.x, sim.position.z, destinations().find((d) => d.id === 'spire')!.x, destinations().find((d) => d.id === 'spire')!.z, 400000, sim.roadDamage.closed);
+  const uses = (r: NonNullable<typeof fresh>) => r.points.some((p, n) => n > 0 && Math.abs((p.x + r.points[n - 1].x) / 2 - mx) < 40 && Math.abs((p.z + r.points[n - 1].z) / 2 - mz) < 40 && Math.hypot(p.x - r.points[n - 1].x, p.z - r.points[n - 1].z) < 200);
+  check(!!fresh && !uses(fresh), 'a route planned now goes another way', fresh ? `${(fresh.length / 1000).toFixed(2)} km (was ${(first / 1000).toFixed(2)} km)` : 'no route');
+  let minD = Infinity, rerouted = false;
+  for (let i = 0; i < 120 * 150 && ap.state.phase !== 'arrived'; i++) {
+    sim.step(ap.sample(sim.dt, t));
+    t = sim.telemetry();
+    minD = Math.min(minD, Math.hypot(t.position[0] - mx, t.position[2] - mz));
+    if (Math.abs(ap.driver.length - first) > 1) rerouted = true;
+    if (rerouted && i > 120 * 90) break;
+  }
+  check(!sim.exploded && sim.failures.length === 0 && minD > c.radius, 'the flight computer never drives into the broken road', `closest ${minD.toFixed(1)} m from its centre`);
+  check(rerouted, 'it goes round by another road', `route ${(first / 1000).toFixed(2)} km → ${(ap.driver.length / 1000).toFixed(2)} km`);
+  // Driven straight at it by hand, the slabs are solid.
+  const car = new Simulation(LIGHT_CAR);
+  car.traffic.enabled = false;
+  car.bits.enabled = false;
+  for (let i = 0; i < 120; i++) car.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
+  // Straight down the road it stands on: snap its facing to the road's axis.
+  const f = new THREE.Vector3(0, 0, -1).applyQuaternion(car.rotation);
+  const fwd = Math.abs(f.x) > Math.abs(f.z) ? { x: Math.sign(f.x), z: 0 } : { x: 0, z: Math.sign(f.z) };
+  let ahead = { x: 0, z: 0 };
+  for (const dist of [70, -70, 55, -55]) {
+    ahead = { x: car.position.x + fwd.x * dist, z: car.position.z + fwd.z * dist };
+    car.crater(ahead.x, 0, ahead.z, 24, '#fff');
+    if (!car.roadDamage.closures.length) continue;
+    if (dist < 0) {
+      // The road only runs the other way from here: turn the car round to face it.
+      fwd.x = -fwd.x; fwd.z = -fwd.z;
+      const yaw = Math.atan2(-fwd.x, -fwd.z);
+      car.craft.body.setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }, true);
+      for (let i = 0; i < 60; i++) car.step({ pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 });
+    }
+    break;
+  }
+  const field = car.roadDamage.closures[0];
+  if (!field) throw new Error(`no road to break ahead of the car at ${car.position.x.toFixed(0)}, ${car.position.z.toFixed(0)} facing ${fwd.x},${fwd.z}`);
+  const start = { x: car.position.x, z: car.position.z };
+  const need = Math.hypot(ahead.x - start.x, ahead.z - start.z);
+  let far = 0;
+  for (let i = 0; i < 120 * 14; i++) {
+    car.step({ pitch: 0, roll: 0, yaw: 0, throttle: 1, brake: 0 });
+    far = Math.max(far, (car.position.x - ahead.x) * fwd.x + (car.position.z - ahead.z) * fwd.z);
+  }
+  check(far < field.radius, 'a vehicle driven straight at the slabs does not come out the other side', `got ${(far + need).toFixed(0)} m of the ${(need + field.radius).toFixed(0)} m needed`);
+  car.resetToRunway();
+  check(car.roadDamage.closures.length === 0 && !car.roadDamage.closed(field.alongX, field.i, field.j) && car.traffic.barriers.length === 0, 'a world reset reopens every road');
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll road checks passed');

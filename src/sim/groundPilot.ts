@@ -47,6 +47,8 @@ export class GroundDriver {
   walls: ((x: number, z: number, radius: number) => WallSegment[]) | null = null;
   /** Road segments found blocked by light walls (avoided when re-routing), key → time seen. */
   private readonly blocked = new Map<string, number>();
+  /** Road segments closed for good (broken road), set by the host: routes never use them. */
+  closed: ((alongX: boolean, i: number, j: number) => boolean) | null = null;
   private blockedFor = 0;
   /** Distance to a light wall across the path ahead (m), or Infinity. */
   wallAhead = Infinity;
@@ -56,7 +58,8 @@ export class GroundDriver {
     this.goal = [gx, gz];
     const now = this.clock;
     for (const [k, t] of this.blocked) if (now - t > 120) this.blocked.delete(k);
-    const r = findRoute(x, z, gx, gz, 400000, this.blocked.size ? (ax, i, j) => this.blocked.has(`${ax ? 1 : 0},${i},${j}`) : undefined);
+    const closed = this.closed;
+    const r = findRoute(x, z, gx, gz, 400000, this.blocked.size || closed ? (ax, i, j) => this.blocked.has(`${ax ? 1 : 0},${i},${j}`) || (!!closed && closed(ax, i, j)) : undefined);
     if (!r) { this.route = null; this.path = []; return false; }
     // The legs between the road and the start/destination are driven only if nothing stands on
     // them (a destination inside a building ends at the nearest road point instead).

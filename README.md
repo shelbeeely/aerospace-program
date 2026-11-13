@@ -293,6 +293,49 @@ two dozen cost almost nothing; each carries a kinematic collider, so you can fly
 park beside one or shoot it down (it derezzes in its circuit colour and another takes its
 place). Check: `npm run air`.
 
+## Bits: the people of the Grid
+
+Bits are people, not vehicles: hovering polyhedra with no legs to animate, who say everything
+by which of four figures they show (`src/people/bit.ts`).
+
+| State | Figure | Colour |
+| --- | --- | --- |
+| Idle 1 | compound of icosahedron and dodecahedron | blue |
+| Idle 2 | small triambic icosahedron | blue |
+| YES | octahedron | yellow |
+| NO | stellated icosahedron | red |
+
+- **They live on the lots** (`src/sim/bits.ts`). Each block of a lot adds up to six, more
+  toward the downtown hubs. Outdoors they walk the kerb around their lot at their own pace,
+  stand a while, turn back, and go and find a neighbour: two that meet stop, face each other,
+  and one answers YES or NO. Idle, each pulses between the two blue figures. The same world
+  always has the same people in the same places; they stream in around you like the traffic.
+- **They live indoors too.** About six in ten buildings have a room their people use
+  (`inhabit` and `structureRoom` in `src/arch/InteriorGenerator.ts`): the industrial halls and
+  stepped blocks that were already hollow, and now any structure with a large box mass on the
+  ground or on a low foundation, which is hollowed into a *commons* with lit doorways, clear
+  aisles in from each door, terminal banks along the walls, memory columns, and a meeting ring
+  under a halo. A room on a foundation has steps down from its door. The slab a circuit
+  structure stands on becomes an undercroft carried on columns, and a round drum (stack
+  towers, control mesas) gets a ring wall with real doorways and a chamber inside. Bits are at home when
+  their lot comes into view, walk round the kerb to a door and go in, stand at places down the
+  aisle, move about and talk, and come out again. On foot you can walk in through the same
+  doors; the walls are real.
+- **They react.** A vehicle bearing down on them fast, or an explosion nearby, and they say NO
+  and step back from the road. One that is run over derezzes into chips.
+- **You can be one.** `=` (touch: More → *On foot*) steps out of a stopped vehicle as a Bit.
+  W/S walk, A/D turn, Q/E sidestep; V says YES and O says NO, and the Bits in earshot turn and
+  answer. Walls stop you, kerbs and low steps don't. The vehicle stays parked where you left
+  it; `=` beside it gets back in. A new vehicle (R) starts with you aboard.
+- Drawn by `src/render/BitsView.ts` (one instanced mesh per figure, so a crowd costs four draw
+  calls) and `src/render/BitFigure.ts` (your own). Check: `npm run bit`.
+- **Destruction reaches them.** When a building is wrecked its people say NO and run out by
+  the door, and nobody goes back in. Falling rubble and blasts derez Bits, and you on foot:
+  a moment later you are back in your vehicle.
+- Not yet: radial structures, trumpet and spire towers and the kit towers have no rooms (their
+  people stay on the kerb); other players do not see you on foot; and the world still streams
+  around your parked vehicle, so stay within a few hundred metres of it.
+
 ## Light-cycle traffic
 
 Programs ride the street grid (`src/sim/traffic.ts`), two lanes each way, laying short jetwalls:
@@ -578,6 +621,39 @@ holds station a couple of hundred metres behind it, never below the terrain and 
 ahead. A rotorcraft holds 250 m behind and 30 m above it, nose on. It never fires: that stays
 on V and O, with the locked missiles doing the aiming. The chase ends (back to Hold) when the
 target derezzes or stays out of reach for 5 s, or when you move the stick.
+
+## Structural integrity
+
+Everything that breaks is broken into blocks by one engine (`src/world/BlockBuilding.ts`), and
+the blocks bear load.
+
+- **Load.** A block standing on the ground, or on a block that does, is part of a column and
+  passes its weight straight down. Every other block hangs from the nearest columns and shares
+  its weight among them. A column cell is **crushed** when it carries more than 2.5 times what
+  it carried while the structure was whole (`TUNING.loadSafety`); a block **snaps off** when it
+  hangs farther from a column than the structure's own longest overhang, or 24 m if that is
+  more (`TUNING.maxOverhang`). The limits come from the intact structure, so nothing fails just
+  for being built with a cantilever. A collapse runs over several steps: lose a fifth of a
+  tower's foot and it stands, lose most of it and it comes down floor by floor.
+- **Rooms.** A hollow building breaks as a hollow shell: the room stays empty in the block
+  grid and its doorway stays open, and furniture and steps go to chips instead of turning into
+  whole blocks.
+- **Things that rest on others.** A skybridge hangs from the two buildings it spans; when one
+  goes from under its end, the bridge falls. A Solar Sailer beam goes dark where its pylon has
+  fallen. Rooftop pads and tower turrets already went with their tower.
+- **Roads.** A crater of 5 m radius or more on a road throws up a field of solid slabs and
+  closes that stretch (`src/sim/roadDamage.ts`). Red bars mark each rim. Riders turn away or
+  swing round, the flight computer re-routes, and new routes avoid it. Up to 24 closures at
+  once; a world reset reopens them.
+- **Outlands landforms.** A mesa, pillar, dome or orb struck hard or caught in a blast is
+  fractured like a building: the terrain forgets it and blocks fill its exact shape, so an
+  undercut mesa collapses. A landform standing on others falls once fewer than half of them
+  are left.
+- Checks: `npm run buildings` (the load model), `npm run destruction` (real structures,
+  bridges, pylons, landforms), `npm run drive` and `npm run traffic` (broken roads),
+  `npm run bit` (people).
+- Not yet: earthquakes do not break landforms; a landform broken by a direct collision (not a
+  blast) is not sent to other players; broken roads are not repaired except by a world reset.
 
 ## Weapons and derez
 
@@ -987,3 +1063,10 @@ Tower kit: This work is based on "Tron Buildings 1"
 SpringSociety (https://sketchfab.com/jcreadingtutor) licensed under CC-BY-4.0
 (http://creativecommons.org/licenses/by/4.0/). Converted with `npm run import-towers`
 (baked, re-oriented, voxelized into block grids); original files in `assets/towerKit/`.
+
+Bit figures: "BIT" by Fernando Jerez, licensed under CC-BY 4.0
+(http://creativecommons.org/licenses/by/4.0/), built on polyhedra from Kit Wallace's OpenSCAD
+generator (http://kitwallace.co.uk/3d/solid-index.xq), George Hart's stellations of the
+icosahedron (https://www.georgehart.com/virtual-polyhedra/stellations-icosahedron-index.html)
+and David McCooey's coordinates. Converted with `npm run import-bit` (welded, centred, Y-up,
+unit radius); the four figure files are in `assets/bit/`. The printing stands are not used.

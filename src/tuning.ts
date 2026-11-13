@@ -217,6 +217,13 @@ export const TUNING = {
   /** Impulse (N·s) that fractures an intact city/airport structure into breakable blocks (a
    *  light plane hitting at ~30 m/s; rubble from a collapsing neighbour does it too). */
   structureFractureImpulse: 12000,
+  /**
+   * Structural integrity. A column cell fails when it carries more than this many times what it
+   * carried while the structure was whole; a block fails when it hangs farther from a column
+   * than the structure's own longest overhang, or this many metres if that is more.
+   */
+  loadSafety: 2.5,
+  maxOverhang: 24,
   /** Block budget when a structure fractures (block size grows with the structure). */
   maxFractureBlocks: 1400,
   /** Most structures fractured at once (each adds up to ~2,000 block colliders). */

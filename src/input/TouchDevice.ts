@@ -110,6 +110,7 @@ export class TouchDevice implements InputDevice {
       button('Weapons', 'Weapons loadout: next', 'loadout'),
       button('Map', 'Planet map: every vehicle', 'map'),
       button('Globe', 'Strike globe: send aircraft, call in strikes', 'globe'),
+      button('On foot', 'Step out of the vehicle as a Bit, or get back in', 'foot'),
       button('Mercenaries', 'Hire mercenaries, buy a nuke or an EMP', 'mercs'),
       button('Strategic', 'Launch the nuke or EMP carried', 'strategic'),
       button('Sound', 'Sound on/off', 'mute'),

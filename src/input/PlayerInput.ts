@@ -65,6 +65,11 @@ export class PlayerInput implements ControlSource {
     return { primary: this.raw.fire, secondary: this.raw.fireAlt, hack: this.raw.hack };
   }
 
+  /** On foot (from the last sample): forward on W/stick-forward, turn on A/D, sidestep on Q/E. */
+  walk(): { forward: number; turn: number; strafe: number } {
+    return { forward: -this.smoothed.pitch, turn: this.smoothed.roll, strafe: this.smoothed.yaw };
+  }
+
   /** Turret aim inputs (from the last poll), each -1..1. */
   aim(): { yaw: number; pitch: number } {
     const c = (v: number) => Math.max(-1, Math.min(1, v));

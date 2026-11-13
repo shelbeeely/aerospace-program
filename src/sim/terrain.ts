@@ -7,6 +7,7 @@
  * - solidHulls: one convex hull per landform, whose union is exactly the drawn terrain.
  */
 export {
-  chunkHasTerrain, highwayDistance, landformsInRect, nearWasteland, OUTLANDS, solidHulls, TERRAIN, terrainHeight, terrainTop,
+  breakForm, brokenVersion, chunkHasTerrain, formKey, highwayDistance, isBroken, landformHull, landformSpan, landformsInRect, mendForms, nearWasteland, OUTLANDS, solidHulls, TERRAIN, terrainHeight, terrainTop,
   wastelandAt, wastelandByte, wastelandMask,
 } from '../arch/DigitalTerrainGenerator.ts';
+export type { Landform } from '../arch/DigitalTerrainGenerator.ts';

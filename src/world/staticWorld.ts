@@ -5,7 +5,7 @@ import { airportPlan } from './Airport.ts';
 import type { BlockBuilding } from './BlockBuilding.ts';
 import { cityPlan } from './City.ts';
 import { PLANET } from '../sim/layout.ts';
-import { chunkHasTerrain, solidHulls } from '../sim/terrain.ts';
+import { breakForm, chunkHasTerrain, formKey, isBroken, landformHull, landformSpan, landformsInRect, mendForms, type Landform } from '../sim/terrain.ts';
 import { chunkAt, GRID, imageOffset, planetChunk } from './planetCity.ts';
 import { structureMask, worldStructures, type Structures } from './structures.ts';
 import type { Town } from './Town.ts';
@@ -40,7 +40,12 @@ export class StaticWorld {
   contentVersion = 0;
   private lastChunkKey = '';
   /** Outlands terrain near the craft: one convex hull per geometric solid (key: chunk@image). */
-  private readonly terrain = new Map<string, RAPIER.Collider[]>();
+  private readonly terrain = new Map<string, { forms: Landform[]; cols: Array<RAPIER.Collider | null> }>();
+  /** Which landform a terrain hull collider is. */
+  private readonly formOwner = new Map<number, { k: string; i: number }>();
+  /** Landforms broken into blocks (key: chunk#index), like `fractured` for structures. */
+  readonly fracturedForms = new Map<string, { building: BlockBuilding; k: string; i: number }>();
+  private readonly pendingForms = new Map<string, { k: string; i: number; impulse: number; x: number; y: number; z: number }>();
   private chunksPending = false;
   /** Streaming: pieces bucketed by 250 m cells; only cells near the craft (and near fractured
    *  structures) carry colliders. Rapier walks every collider each step, so 23,000 static ones
@@ -73,6 +78,8 @@ export class StaticWorld {
       list.push(i);
     });
 
+    mendForms(); // the terrain's memory of what is broken belongs to one world at a time
+    this.linkDependents(0);
     const city = cityPlan();
     for (const b of city.buildings) this.conductors.push({ id: `arch:${b.arch}`, x: b.x, y: b.top, z: b.z });
     for (const s of city.spires) this.conductors.push({ id: `spire:${s.x.toFixed(0)},${s.z.toFixed(0)}`, x: s.x, y: s.y1, z: s.z });
@@ -153,8 +160,11 @@ export class StaticWorld {
           ...g, id, name: `${g.name}@${ox},${oz}`, x0: g.x0 + ox, z0: g.z0 + oz,
           pieces: g.pieces.map((i) => pieceStart + i),
           kit: g.kit ? { ...g.kit, x: g.kit.x + ox, z: g.kit.z + oz } : undefined,
+          room: g.room && { ...g.room, x0: g.room.x0 + ox, x1: g.room.x1 + ox, z0: g.room.z0 + oz, z1: g.room.z1 + oz, doors: g.room.doors.map((d) => ({ ...d, x: d.x + ox, z: d.z + oz })), ...(g.room.round ? { round: { ...g.room.round, x: g.room.round.x + ox, z: g.room.round.z + oz } } : {}) },
+          heldBy: g.heldBy?.map((e) => ({ ...e, x: e.x + ox, z: e.z + oz })),
         });
       }
+      this.linkDependents(groupStart);
       for (const p of c.structures.list) {
         const i = L.length;
         L.push({ ...p, x: p.x + ox, z: p.z + oz, group: groupStart + p.group });
@@ -187,19 +197,144 @@ export class StaticWorld {
       const k = `${a},${b}@${ox},${oz}`;
       keep.add(k);
       if (this.terrain.has(k)) continue;
-      // Exact: the union of the solids' hulls is the terrain surface.
-      const list: RAPIER.Collider[] = [];
-      for (const pts of solidHulls(cx0, cz0, cx0 + S, cz0 + S)) {
-        for (let i = 0; i < pts.length; i += 3) { pts[i] += ox; pts[i + 2] += oz; }
-        const desc = RAPIER.ColliderDesc.convexHull(pts);
-        if (desc) list.push(this.world.createCollider(desc.setFriction(0.9).setRestitution(0.05), this.body));
-      }
-      this.terrain.set(k, list);
+      // Exact: the union of the solids' hulls is the terrain surface. A landform that has been
+      // broken up is no longer terrain: no hull for it.
+      const forms = landformsInRect(cx0, cz0, cx0 + S, cz0 + S, true).map((f) => (ox || oz ? { ...f, cx: f.cx + ox, cz: f.cz + oz } : f));
+      const entry = { forms, cols: forms.map(() => null as RAPIER.Collider | null) };
+      this.terrain.set(k, entry);
+      for (let i = 0; i < forms.length; i++) if (!isBroken(forms[i])) this.addHull(k, entry, i);
     }
-    for (const [k, list] of this.terrain) if (!keep.has(k)) {
-      for (const c of list) this.world.removeCollider(c, false);
+    for (const [k, entry] of this.terrain) if (!keep.has(k)) {
+      for (const c of entry.cols) if (c) { this.formOwner.delete(c.handle); this.world.removeCollider(c, false); }
       this.terrain.delete(k);
+      // What was broken there goes with the chunk (the landforms stay broken).
+      for (const [key, f] of this.fracturedForms) if (f.k === k) { this.town.removeBuilding(f.building); this.fracturedForms.delete(key); }
     }
+  }
+
+  private addHull(k: string, entry: { forms: Landform[]; cols: Array<RAPIER.Collider | null> }, i: number): void {
+    const desc = RAPIER.ColliderDesc.convexHull(landformHull(entry.forms[i]));
+    if (!desc) return;
+    const c = this.world.createCollider(
+      desc.setFriction(0.9).setRestitution(0.05).setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS).setContactForceEventThreshold(LANDFORM_FRACTURE * TUNING.structureFractureImpulse * TUNING.physicsHz * 0.5),
+      this.body,
+    );
+    entry.cols[i] = c;
+    this.formOwner.set(c.handle, { k, i });
+  }
+
+  /** Landforms with a hull near (x, z): for tests and tools. */
+  landformsNear(x: number, z: number, radius: number): Array<{ k: string; i: number; form: Landform }> {
+    const out: Array<{ k: string; i: number; form: Landform }> = [];
+    for (const [k, e] of this.terrain) e.forms.forEach((form, i) => {
+      if (e.cols[i] && Math.hypot(form.cx - x, form.cz - z) < radius + formRadius(form)) out.push({ k, i, form });
+    });
+    return out;
+  }
+
+  /**
+   * The landforms a raised one stands on (broken or not): those that reach up to its base under
+   * it, whether it sits on their top (a block on a mesa) or they stand under its span (pillars
+   * under a cap).
+   */
+  carriers(g: Landform): Array<{ k: string; i: number; form: Landform }> {
+    const out: Array<{ k: string; i: number; form: Landform }> = [];
+    if (g.y0 < 0.5) return out;
+    for (const [k, e] of this.terrain) e.forms.forEach((h, i) => {
+      if (h === g || h.y0 >= g.y0 - 0.5) return;
+      const top = landformSpan(g, h.cx, h.cz) ? landformSpan(h, h.cx, h.cz) : landformSpan(h, g.cx, g.cz);
+      if (top && top[1] >= g.y0 - 4) out.push({ k, i, form: h });
+    });
+    return out;
+  }
+
+  /** Does this landform still have its exact hull collider? */
+  hasHull(k: string, i: number): boolean {
+    return !!this.terrain.get(k)?.cols[i];
+  }
+
+  /**
+   * Break a landform into blocks, as `fracture` does a structure: its hull goes, the terrain
+   * forgets it, and a grid of breakable blocks fills its exact shape. A floating one (an orb,
+   * a roof slab) has no block on the ground and falls whole; an undercut one comes down under
+   * its own weight.
+   */
+  fractureLandform(k: string, i: number, hit: { impulse: number; x: number; y: number; z: number }, time: number, crater = true): BlockBuilding | null {
+    const key = `${k}#${i}`;
+    const had = this.fracturedForms.get(key);
+    if (had) return had.building;
+    const entry = this.terrain.get(k);
+    const f = entry?.forms[i];
+    if (!entry || !f || !entry.cols[i]) return null;
+    const pts = landformHull(f);
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, y1 = 0;
+    for (let n = 0; n < pts.length; n += 3) {
+      x0 = Math.min(x0, pts[n]); x1 = Math.max(x1, pts[n]);
+      z0 = Math.min(z0, pts[n + 2]); z1 = Math.max(z1, pts[n + 2]);
+      y1 = Math.max(y1, pts[n + 1]);
+    }
+    const s = Math.min(30, Math.max(4, Math.cbrt(((x1 - x0) * (z1 - z0) * y1 * 0.85) / TUNING.maxFractureBlocks)));
+    const c = entry.cols[i]!;
+    this.formOwner.delete(c.handle);
+    this.world.removeCollider(c, false);
+    entry.cols[i] = null;
+    breakForm(f);
+    const building = this.town.addBuilding({
+      id: `terrain:${formKey(f)}`, origin: [x0, 0, z0], blockSize: s, color: f.arch === 'sea' ? '#6f8aa8' : '#2a4466',
+      size: [Math.max(1, Math.ceil((x1 - x0) / s)), Math.max(1, Math.ceil(y1 / s)), Math.max(1, Math.ceil((z1 - z0) / s))],
+      // A block is there if the landform fills a good part of it.
+      mask: (bx, by, bz) => {
+        const span = landformSpan(f, x0 + (bx + 0.5) * s, z0 + (bz + 0.5) * s);
+        return !!span && Math.min(span[1], (by + 1) * s) - Math.max(span[0], by * s) >= 0.4 * s;
+      },
+    });
+    this.fracturedForms.set(key, { building, k, i });
+    if (crater) {
+      const ix = Math.min(x1, Math.max(x0, hit.x)), iy = Math.min(y1, Math.max(0, hit.y)), iz = Math.min(z1, Math.max(z0, hit.z));
+      this.town.blast(building, ix, iy, iz, s * (0.9 + 0.7 * Math.log2(1 + hit.impulse / TUNING.structureFractureImpulse)), time);
+    }
+    this.version++;
+    // What stood on it: a raised landform (a cap on pillars, a block on a mesa) comes down once
+    // fewer than half of the landforms that carried it are left.
+    const reachF = formRadius(f);
+    for (const [k2, e2] of this.terrain) for (let j = 0; j < e2.forms.length; j++) {
+      const g = e2.forms[j];
+      if (!e2.cols[j] || g.overhead || g.y0 < 0.5) continue;
+      if (Math.hypot(g.cx - f.cx, g.cz - f.cz) > reachF + formRadius(g)) continue;
+      const under = this.carriers(g);
+      const carried = under.length, standing = under.filter((h) => this.hasHull(h.k, h.i)).length;
+      if (!carried || standing * 2 >= carried) continue;
+      const fallen = this.fractureLandform(k2, j, { impulse: 0, x: g.cx, y: g.y0, z: g.cz }, time, false);
+      if (fallen) this.town.recheck(fallen);
+    }
+    return building;
+  }
+
+  /** Room left under the cap on things fractured at once (structures and landforms share it). */
+  private get room(): boolean {
+    return this.fractured.size + this.fracturedForms.size < TUNING.maxFracturedStructures;
+  }
+
+  /** A blast reaches the landforms too: those within `radius` break and lose what the blast covers. */
+  private blastForms(x: number, y: number, z: number, radius: number, impulse: number, time: number): number {
+    let n = 0;
+    for (const [k, e] of this.terrain) for (let i = 0; i < e.forms.length; i++) {
+      const f = e.forms[i];
+      const key = `${k}#${i}`;
+      const had = this.fracturedForms.get(key);
+      if (!had && !e.cols[i]) continue;
+      const reach = radius + formRadius(f);
+      if ((f.cx - x) ** 2 + (f.cz - z) ** 2 > reach * reach || y - (f.y0 + formHeight(f)) > radius) continue;
+      // Near enough to matter: is the blast really within `radius` of the solid?
+      if (!had) {
+        const span = landformSpan(f, x, z);
+        const near = span ? Math.max(0, span[0] - y, y - span[1]) : Math.hypot(f.cx - x, f.cz - z) - formRadius(f) * 0.7;
+        if (near > radius) continue;
+      }
+      const b = had?.building ?? (this.room ? this.fractureLandform(k, i, { impulse, x, y, z }, time) : null);
+      if (b) n += this.town.blast(b, x, y, z, radius + b.blockSize * 0.5, time);
+    }
+    return n;
   }
 
   private removeCollider(i: number): void {
@@ -238,8 +373,18 @@ export class StaticWorld {
   onContact(e: ContactForceInfo): void {
     const a = this.owner.get(e.collider1);
     const b = this.owner.get(e.collider2);
-    if (a === undefined && b === undefined) return;
     const impulse = e.totalForceMagnitude * e.dt;
+    // Terrain: a landform struck hard enough breaks like a structure.
+    for (const [mine, other] of [[e.collider1, e.collider2], [e.collider2, e.collider1]] as const) {
+      const o = this.formOwner.get(mine);
+      if (!o) continue;
+      const key = `${o.k}#${o.i}`;
+      const t = this.world.getCollider(other)?.parent()?.translation() ?? { x: 0, y: 0, z: 0 };
+      const prev = this.pendingForms.get(key);
+      if (prev) prev.impulse += impulse;
+      else this.pendingForms.set(key, { ...o, impulse, x: t.x, y: t.y, z: t.z });
+    }
+    if (a === undefined && b === undefined) return;
     if (a !== undefined) this.note(a, e.collider2, impulse);
     if (b !== undefined) this.note(b, e.collider1, impulse);
   }
@@ -253,8 +398,83 @@ export class StaticWorld {
     else this.pending.set(group, { impulse, x: t.x, y: t.y, z: t.z });
   }
 
+  /** Groups held up by other structures (corridors), resolved to the groups that hold them. */
+  private readonly dependents: number[] = [];
+  private readonly dropped = new Set<number>();
+  private dependentsSeen = -1;
+
+  /** Resolve what holds each dependent group registered from `from` on (holders are in the same plan). */
+  private linkDependents(from: number): void {
+    const G = this.structures.groups;
+    const byArch = new Map<string, number>();
+    for (let i = from; i < G.length; i++) if (G[i].arch) byArch.set(G[i].arch!, i);
+    for (let i = from; i < G.length; i++) {
+      const held = G[i].heldBy;
+      if (!held) continue;
+      for (const e of held) e.group = byArch.get(e.arch);
+      this.dependents.push(i);
+    }
+  }
+
+  /** Is the structure at this point of attachment still there to hold something up? */
+  private holds(e: { x: number; y: number; z: number; group?: number }): boolean {
+    if (e.group === undefined) return true;
+    const b = this.fractured.get(e.group);
+    if (!b) return true;
+    const reach = (b.blockSize * 1.3) ** 2;
+    const p = { x: 0, y: 0, z: 0 };
+    for (const k of b.list) {
+      if (!k.alive || !k.supported) continue;
+      b.worldCentre(k, p);
+      if ((p.x - e.x) ** 2 + (p.y - e.y) ** 2 + (p.z - e.z) ** 2 <= reach) return true;
+    }
+    return false;
+  }
+
+  /** Where infrastructure standing on the ground (pylons) has been brought down: canonical (x, z) of each. */
+  downInfra(): Array<{ x: number; z: number }> {
+    const out: Array<{ x: number; z: number }> = [];
+    for (const id of this.fractured.keys()) {
+      const g = this.structures.groups[id];
+      if (!g.arch?.startsWith('infra:') || g.heldBy) continue;
+      const C = PLANET.circumference;
+      const wrap = (v: number) => v - Math.round(v / C) * C;
+      out.push({ x: wrap(g.x0 + (g.size[0] * g.blockSize) / 2), z: wrap(g.z0 + (g.size[2] * g.blockSize) / 2) });
+    }
+    return out;
+  }
+
+  /** Is everything that holds this group up still holding? (True for groups that stand on the ground.) */
+  held(group: number): boolean {
+    const held = this.structures.groups[group].heldBy;
+    return !held || held.every((e) => this.holds(e));
+  }
+
+  /**
+   * Things that rest on others: a corridor whose building has gone from under one end comes
+   * down. It is fractured (whatever the cap: it is small) with nothing to hold it, and falls.
+   */
+  private dropDependents(time: number): void {
+    const stamp = this.version * 100003 + this.town.version;
+    if (stamp === this.dependentsSeen) return;
+    this.dependentsSeen = stamp;
+    for (const id of this.dependents) {
+      if (this.dropped.has(id) || this.held(id)) continue;
+      this.dropped.add(id);
+      const b = this.fractured.get(id) ?? this.fracture(id, { impulse: 0, x: 0, y: 0, z: 0 }, time, false);
+      this.town.recheck(b);
+    }
+  }
+
   /** Apply this step's hits: fracture what was struck hard enough. */
   update(time: number): void {
+    this.dropDependents(time);
+    if (this.pendingForms.size) {
+      for (const p of this.pendingForms.values()) {
+        if (p.impulse >= LANDFORM_FRACTURE * TUNING.structureFractureImpulse && this.room) this.fractureLandform(p.k, p.i, p, time);
+      }
+      this.pendingForms.clear();
+    }
     if (!this.pending.size) return;
     for (const [group, hit] of this.pending) {
       if (hit.impulse < TUNING.structureFractureImpulse || this.fractured.has(group)) continue;
@@ -309,6 +529,12 @@ export class StaticWorld {
     const building = this.town.addBuilding({
       id: g.name, origin: [g.x0, 0, g.z0], size: g.size, color: g.color, blockSize: s,
       mask: structureMask(g, this.structures.list),
+      // A corridor: its ends are held by the buildings it spans, while both still hold.
+      ...(g.heldBy ? { anchor: (x: number, y: number, z: number) => {
+        const cx = g.x0 + (x + 0.5) * s, cy = (y + 0.5) * s, cz = g.z0 + (z + 0.5) * s;
+        const near = Math.max(s, 5) ** 2;
+        return g.heldBy!.some((e) => (cx - e.x) ** 2 + (cy - e.y) ** 2 + (cz - e.z) ** 2 <= near) && this.held(g.id);
+      } } : {}),
     });
     this.fractured.set(group, building);
     this.centreCell = ''; // re-stream so the cells around the collapse stay loaded
@@ -338,7 +564,7 @@ export class StaticWorld {
       // Blocks the sphere overlaps (centre within radius + half a block), so a small blast still bites big blocks.
       if (b) n += this.town.blast(b, x, y, z, radius + g.blockSize * 0.5, time);
     }
-    return n;
+    return n + this.blastForms(x, y, z, radius, TUNING.structureFractureImpulse * 4, time);
   }
 
   /**
@@ -361,16 +587,25 @@ export class StaticWorld {
       const b = this.fractured.get(id) ?? (this.fractured.size < TUNING.maxFracturedStructures ? this.fracture(id, { impulse: TUNING.structureFractureImpulse * 8, x, y, z }, time) : null);
       if (b) n += this.town.blast(b, x, y, z, radius + g.blockSize * 0.5, time);
     }
-    return n;
+    return n + this.blastForms(x, y, z, radius, TUNING.structureFractureImpulse * 8, time);
   }
 
   /** Every structure whole again (call before Town.reset). */
   reset(): void {
+    this.dropped.clear();
+    this.dependentsSeen = -1;
     for (const [group, building] of this.fractured) {
       this.town.removeBuilding(building);
       for (const i of this.structures.groups[group].pieces) if (this.isLoaded(i)) this.addCollider(i);
     }
-    const changed = this.fractured.size > 0;
+    // Landforms: the blocks go, the terrain remembers them again, and their hulls come back.
+    for (const f of this.fracturedForms.values()) this.town.removeBuilding(f.building);
+    const formsChanged = this.fracturedForms.size > 0;
+    this.fracturedForms.clear();
+    this.pendingForms.clear();
+    mendForms();
+    for (const [k, e] of this.terrain) for (let i = 0; i < e.forms.length; i++) if (!e.cols[i]) this.addHull(k, e, i);
+    const changed = this.fractured.size > 0 || formsChanged;
     this.fractured.clear();
     this.centreCell = '';
     this.pending.clear();
@@ -378,6 +613,12 @@ export class StaticWorld {
   }
 }
 
+
+/** A landform takes this many times the impulse that fractures a structure: it is the ground. */
+const LANDFORM_FRACTURE = 4;
+/** Horizontal reach of a landform from its base centre, and its height (m). */
+const formRadius = (f: Landform) => Math.max(f.w, f.d, 2 * f.half, 2 * f.r0, 2 * f.r1) * 0.75;
+const formHeight = (f: Landform) => (f.shape === 'sphere' ? 2 * f.r0 : f.shape === 'octa' ? 2 * f.h : f.h);
 
 /** Streaming cell size and radius (m). */
 const CELL = 250;

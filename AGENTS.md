@@ -17,7 +17,7 @@ Rules for every agent and contributor working on this repo. Claude Code reads th
 - **Separation:** the simulation (`src/sim`, `src/world`, `src/arch`) stays free of three.js
   scene objects and the DOM; rendering lives in `src/render`.
 - **Checks:** `npm run typecheck`, `npm run arch`, `npm run drive`, `npm run city`,
-  `npm run ground` before pushing world or vehicle changes.
+  `npm run ground` before pushing world or vehicle changes; `npm run bit` for the people.
 
 ## Design rules
 
@@ -287,8 +287,52 @@ universe, not a conventional open world decorated with neon.
   into another rider or its jetwall. Civil aircraft (`src/sim/aiTraffic.ts`) fly flights between
   fields and pads, one to a runway, and go around rather than land on an occupied one. Checks:
   `npm run traffic`, `npm run air`.
+- **A broken road is a closed road.** A crater that closes a road segment (`src/sim/roadDamage.ts`)
+  is a wall across the road to riders and to the flight computer, is left out of new routes, and
+  is marked on the ground with a red bar at each rim. Anything else that blocks a road must do
+  the same three things.
 - **A vehicle never runs into its own light wall** (Rapier collision groups,
   `src/sim/collisionGroups.ts`); its walls stay deadly to everyone else. Ground vehicles reverse.
+
+## 17. People (project)
+
+- **Bits are people, not vehicles.** They are never a craft, never in the vehicle picker and
+  never on wheels. A Bit is a rigid polyhedron that hovers; it has no legs and no animation
+  rig. It speaks only by which of its four figures it shows (`src/people/bit.ts`): blue idle 1
+  and idle 2 (it pulses between them), yellow YES, red NO.
+- **They behave like people** (`src/sim/bits.ts`): they live on a lot, indoors in its building's
+  room and on the kerb round it; they go in and out by the doors, stand, meet and talk, step
+  back from fast vehicles and explosions, and derez when run over. Seeded and deterministic per
+  lot; streamed around the player. A Bit is never inside a wall or the machinery.
+- **Buildings have rooms for their people** (§8). A structure generated solid gets a commons
+  hollowed out of its largest box mass on the ground or a low foundation (`inhabit` in
+  `src/arch/InteriorGenerator.ts`), unless that would fail one of the ten checks. The shell
+  keeps the mass's surface, tier and role, every door has a clear way out to the lot edge (with
+  steps where it is raised) and a clear aisle in. New interior furniture keeps the aisles clear.
+  A round drum is hollowed the same way by `inhabitRound` (a ring wall with real doorways).
+- **The player on foot is a Bit** (`BitWalker`): it steps out of a stopped vehicle, walks, and
+  gets back in beside it. The vehicle stays parked.
+- The figures are the imported "BIT" meshes (CC-BY 4.0, credited in the README). Do not
+  replace them with humanoids.
+- Check: `npm run bit`.
+
+## 18. Destruction (project)
+
+- **One engine, and it bears load.** Everything that breaks (structures, kit towers,
+  infrastructure, town buildings, Outlands landforms) becomes a `BlockBuilding`
+  (`src/world/BlockBuilding.ts`). Blocks must stay connected to the ground **and** within what
+  the structure could bear when whole (`analyseLoad`, `loadLimits`): overloaded columns crush,
+  over-long overhangs snap. Do not add a second destruction path.
+- **Being whole never fails a structure.** Limits are taken from the intact block grid; a new
+  kind of structure needs no tuning to stand.
+- **Hollow stays hollow.** A structure with a room carries it into its block grid
+  (`StructureGroup.room`); pieces too small to be a block are left out.
+- **What rests on something says so.** A structure held up by others declares `heldBy`
+  (corridors do); it falls when a holder no longer holds. A raised landform falls when fewer
+  than half of the landforms under it are left.
+- **People are part of it.** A wrecked building's Bits leave; rubble and blasts derez Bits and
+  the player on foot.
+- Checks: `npm run buildings`, `npm run destruction`.
 
 ## 16. Vehicles (project)
 

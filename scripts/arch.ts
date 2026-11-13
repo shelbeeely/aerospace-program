@@ -5,6 +5,7 @@
  * terrain (archetypes present, surface continuous across chunk boundaries, hulls matching the
  * surface). Run with `npm run arch`.
  */
+import { structureRoom } from '../src/arch/InteriorGenerator.ts';
 import { generateStructure } from '../src/arch/ArchitectureGenerator.ts';
 import { ARCHETYPE_IDS, ARCHETYPES } from '../src/arch/BuildingArchetypeRegistry.ts';
 import { districtLayout, districtPlan } from '../src/arch/DistrictGenerator.ts';
@@ -121,6 +122,69 @@ for (const a of ARCHETYPE_IDS) {
     }
   }
   check(checked > 20 && bad === 0, 'interiors sit inside their shells and doorways are open', `${checked} halls, ${bad} problems`);
+}
+
+// --- Rooms for the people: solid structures get a commons hollowed out of a grounded mass.
+{
+  let made = 0, total = 0, bad = 0, raised = 0, steps = 0, blockedDoor = 0, noRoom = 0;
+  for (const archetype of ['circuit', 'cavern', 'industrial'] as const) for (let seed = 0; seed < 40; seed++) {
+    const s = generateStructure({ archetype, seed, x: 0, z: 0, w: 110, d: 110, minHeight: 20, maxHeight: 120, intensity: 0.5, region: 'machine-city' });
+    total++;
+    const I = s.interior;
+    if (!I || I.program !== 'commons') continue;
+    made++;
+    if (!s.validation?.pass) bad++;
+    if (I.y0 > 0.3) { raised++; steps += s.components.filter((c) => c.role === 'stair').length; }
+    for (const c of s.components) {
+      if (!c.interior) continue;
+      if (c.x < I.x0 - 0.5 || c.x > I.x1 + 0.5 || c.z < I.z0 - 0.5 || c.z > I.z1 + 0.5 || c.y < I.y0 - 0.5 || c.y > I.y1) bad++;
+    }
+    const room = structureRoom(s);
+    if (!room) { noRoom++; continue; }
+    for (const d of room.doors) {
+      // The doorway is open at walking height, and so is the aisle behind it.
+      for (const t of [0, -2, -d.depth + 0.5]) {
+        const x = d.x + d.nx * t, z = d.z + d.nz * t;
+        if (s.colliders.some((c) => Math.abs(c.x - x) < c.sx / 2 && Math.abs(c.z - z) < c.sz / 2 && c.y - c.sy / 2 < room.y + 1.5 && c.y + c.sy / 2 > room.y + 0.5)) blockedDoor++;
+      }
+      // A raised door has a floor all the way down, in steps no walker would balk at.
+      for (let i = 1; i < d.floor.length; i++) if (d.floor[i - 1] - d.floor[i] > 0.55) bad++;
+      if (d.rise > 0.3 && Math.abs(d.floor[0] - d.rise) > 0.55) bad++;
+    }
+  }
+  check(made > total * 0.4, 'solid structures get rooms for their people', `${made} of ${total} circuit, cavern and industrial structures`);
+  check(bad === 0 && blockedDoor === 0 && noRoom === 0, 'the rooms validate, hold their furniture, and their doors and aisles are open', `${bad} problems, ${blockedDoor} blocked, ${noRoom} without a usable door`);
+  check(raised > 0 && steps > 0, 'a room on a foundation has steps down from its door', `${raised} raised rooms, ${steps} treads`);
+}
+
+// --- Round rooms: a drum's foot becomes a ring wall with real doorways.
+{
+  let made = 0, total = 0, bad = 0, blocked = 0, thin = 0;
+  for (const [archetype, variant] of [['tower', 'stack'], ['tower', 'control'], ['radial', 'distributor']] as const) for (let seed = 0; seed < 30; seed++) {
+    const s = generateStructure({ archetype, variant, seed, x: 0, z: 0, w: 110, d: 110, minHeight: 30, maxHeight: 200, intensity: 0.6, region: 'control' });
+    total++;
+    const I = s.interior;
+    if (!I?.round) continue;
+    made++;
+    if (!s.validation?.pass) bad++;
+    const room = structureRoom(s);
+    if (!room?.round) { bad++; continue; }
+    const R = room.round;
+    // Furniture inside the ring; the wall closed all the way round except at the doors.
+    for (const c of s.components) if (c.interior && Math.hypot(c.x - I.round.cx, c.z - I.round.cz) > I.round.r + 0.5) bad++;
+    const wallAt = (a: number) => { const x = R.x + Math.cos(a) * (R.r + I.wall / 2), z = R.z + Math.sin(a) * (R.r + I.wall / 2); return s.colliders.some((c) => c.shape === 'box' && Math.abs(c.x - x) < c.sx / 2 + 0.05 && Math.abs(c.z - z) < c.sz / 2 + 0.05 && c.y - c.sy / 2 < room.y + 1.5 && c.y + c.sy / 2 > room.y + 0.5); };
+    for (let k = 0; k < 180; k++) {
+      const a = (k / 180) * Math.PI * 2;
+      const x = R.x + Math.cos(a) * (R.r + I.wall / 2), z = R.z + Math.sin(a) * (R.r + I.wall / 2);
+      const inDoor = room.doors.some((d) => Math.abs((x - d.x) * d.nz - (z - d.z) * d.nx) < d.width / 2 - 0.3 && (x - d.x) * d.nx + (z - d.z) * d.nz > -3);
+      const nearDoor = room.doors.some((d) => Math.abs((x - d.x) * d.nz - (z - d.z) * d.nx) < d.width / 2 + 0.6 && (x - d.x) * d.nx + (z - d.z) * d.nz > -3);
+      if (inDoor && wallAt(a)) blocked++;
+      if (!nearDoor && !wallAt(a)) thin++;
+    }
+    for (const d of room.doors) if (d.depth < 3) bad++;
+  }
+  check(made > 10, 'round masses get round rooms', `${made} of ${total} stack towers, control mesas and distributors`);
+  check(bad === 0 && blocked === 0 && thin === 0, 'a round room validates, its wall is closed and its doorways are open', `${bad} problems, ${blocked} blocked doorway samples, ${thin} gaps in the wall`);
 }
 
 // --- Outlands terrain.

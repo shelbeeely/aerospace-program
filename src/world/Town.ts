@@ -63,6 +63,10 @@ export class Town {
   readonly pool: DebrisPool;
   /** Recently destroyed blocks, newest last (capped; for render effects). */
   readonly breaks: BlockBreak[] = [];
+  /** Structures whose load is still shifting: checked again next step. */
+  private readonly settling = new Set<BlockBuilding>();
+  /** Blocks crushed by load so far (not struck: failed under what rested on them). */
+  crushed = 0;
   /** Blocks destroyed since the last reset. */
   destroyed = 0;
   /** Bumped on every change to any building or the rubble (renderers watch it). */
@@ -174,9 +178,12 @@ export class Town {
   /** Apply this step's hits: destroy blocks, drop what lost support, shatter hard landings. */
   update(time: number): void {
     this.lastTime = time;
-    if (!this.blockImpulse.size && !this.chunkImpulse.size && !this.pool.chunks.length) return;
+    if (!this.blockImpulse.size && !this.chunkImpulse.size && !this.pool.chunks.length && !this.settling.size) return;
     const touched = this.touched;
     touched.clear();
+    // Structures still shedding load from the last step are checked again.
+    for (const b of this.settling) if (this.buildings.includes(b)) touched.add(b);
+    this.settling.clear();
     const s = TUNING.blockSize;
     if (this.blockImpulse.size) {
       for (const [b, j] of this.blockImpulse) {
@@ -220,6 +227,17 @@ export class Town {
     }
     for (const building of touched) {
       const loose = building.unsupported();
+      // Load: what still stands may be carrying more than it can bear. Crushed cells are
+      // destroyed where they are; blocks hanging too far out break away with the loose ones.
+      const { crushed, snapped } = building.overloaded();
+      for (const b of crushed) {
+        building.remove(b);
+        const p = this.recordBreak(building, b, time);
+        this.crushed++;
+        if (this.chips) this.chips.emit({ x: p.x, y: p.y, z: p.z, radius: building.blockSize / 2, vx: 0, vy: -1, vz: 0, speed: 5, count: Math.min(16, Math.round(6 * (building.blockSize / s))), size: Math.min(1.2, Math.max(0.4, building.blockSize / 5)), color: building.def.color });
+      }
+      for (const b of snapped) loose.push(b);
+      if (crushed.length || snapped.length) this.settling.add(building);
       if (!loose.length) continue;
       for (const group of connectedGroups(loose)) {
         for (const b of group) building.remove(b);
@@ -263,6 +281,11 @@ export class Town {
     if (this.breaks.length > 256) this.breaks.splice(0, this.breaks.length - 256);
   }
 
+  /** Have a building's structure checked on the next update (something that held it up has changed). */
+  recheck(b: BlockBuilding): void {
+    this.settling.add(b);
+  }
+
   /** Add a breakable building at runtime (a city tower that just fractured). */
   addBuilding(def: BuildingDef): BlockBuilding {
     const b = new BlockBuilding(this.world, def, this.registry);
@@ -300,6 +323,8 @@ export class Town {
 
   /** Every building whole again, all rubble gone. */
   reset(): void {
+    this.settling.clear();
+    this.crushed = 0;
     this.pool.clear();
     for (const b of this.buildings) b.restore();
     this.blockImpulse.clear();

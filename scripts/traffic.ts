@@ -243,6 +243,31 @@ function openNode(x: number, z: number): [number, number] {
   check(alive === 3, 'riders turn away or swing round before the player\'s jetwall', `${alive} of 3 still riding, ${sim.traffic.derezzed} derezzed in all`);
 }
 
+// --- Broken road: riders treat the rims of a crater's slab field as a wall across the road.
+{
+  const sim = new Simulation(LIGHT_CYCLE);
+  sim.traffic.spawning = false;
+  sim.traffic.clear();
+  sim.traffic.control = false;
+  const [i, j] = openNode(-2100, 900);
+  // A crater on x-line i, 120 m north of the intersection.
+  const cz = lineZ(j) + 120;
+  sim.crater(lineX(i), 0, cz, 24, '#fff');
+  const c = sim.roadDamage.closures[0];
+  check(!!c && sim.traffic.barriers.length === 2, 'test setup: a crater closes a street', c ? `radius ${c.radius.toFixed(1)} m` : 'no closure');
+  const idle = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 };
+  const north = sim.traffic.spawnRider({ heading: 3, line: i, along: cz + 110, speed: 30, seed: 3 });
+  const south = sim.traffic.spawnRider({ heading: 1, line: i, along: lineZ(j) - 70, speed: 30, seed: 4 });
+  const south2 = sim.traffic.spawnRider({ heading: 1, line: i, along: lineZ(j) - 110, speed: 40, laneIndex: 1, seed: 5 });
+  let inside = 0;
+  for (let s = 0; s < 120 * 12; s++) {
+    sim.step(idle);
+    for (const r of [north, south, south2]) if (r.derezAt === null && Math.abs(r.x - lineX(i)) < 13 && Math.abs(r.z - cz) < c.radius) inside++;
+  }
+  const alive = [north, south, south2].filter((r) => r.derezAt === null).length;
+  check(alive === 3 && inside === 0, 'riders turn away or swing round before broken road', `${alive} of 3 still riding, ${inside} samples inside the field`);
+}
+
 // --- Hit by the player: a rider struck by the player's cycle derezzes.
 {
   const sim = new Simulation(LIGHT_CYCLE);

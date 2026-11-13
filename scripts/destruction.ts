@@ -11,6 +11,13 @@ import { BUILTINS } from '../src/craft/builtins.ts';
 import { TEST_PLANE } from '../src/craft/testPlane.ts';
 import type { CraftDef } from '../src/craft/types.ts';
 import type { ControlInputs } from '../src/sim/controls.ts';
+import { TUNING } from '../src/tuning.ts';
+import { sailerNetwork } from '../src/arch/InfrastructureNetwork.ts';
+import { PLANET, wrapCoord } from '../src/sim/layout.ts';
+import { bigCellForms } from '../src/arch/DigitalTerrainGenerator.ts';
+import { landformHull, landformSpan, TERRAIN, terrainHeight, terrainTop, type Landform } from '../src/sim/terrain.ts';
+import { landformsInRect, landformTop } from '../src/arch/DigitalTerrainGenerator.ts';
+import { structureMask } from '../src/world/structures.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 
 await initPhysics();
@@ -188,6 +195,201 @@ console.log('\n--- hard crash: explosion, new plane, world reset');
 
   sim.resetToRunway();
   check(sim.staticWorld.fractured.size === 0 && sim.explosions.length === 0 && sim.chips.bursts.length === 0, 'world reset: every structure whole again');
+}
+
+// ---------------------------------------------------------------- 6. structural integrity
+console.log('\n--- structural integrity of fractured structures');
+{
+  const sim = new Simulation(TEST_PLANE);
+  sim.traffic.enabled = false;
+  sim.bits.enabled = false;
+  const idle = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 };
+  // Being broken into blocks is not being damaged: every kind of structure stands as it stood.
+  const groups = sim.staticWorld.structures.groups;
+  const kinds = new Map<string, number>();
+  for (const g of groups) {
+    const kind = g.kit ? 'kit' : g.name.split(':')[0] + (g.arch ? ':' + g.arch[0] : '');
+    if (!kinds.has(kind)) kinds.set(kind, g.id);
+  }
+  let lost = 0, blocks = 0;
+  const sample = [...kinds].slice(0, TUNING.maxFracturedStructures - 2);
+  for (const [, id] of sample) {
+    const b = sim.staticWorld.fracture(id, { impulse: 0, x: 0, y: 0, z: 0 }, sim.time, false);
+    blocks += b.list.length;
+  }
+  // Seed the check on every one of them, then let it run.
+  for (const b of sim.staticWorld.fractured.values()) sim.town.blast(b, 0, -1e6, 0, 1, sim.time);
+  for (const b of sim.staticWorld.fractured.values()) { const { crushed, snapped } = b.overloaded(); lost += crushed.length + snapped.length; }
+  for (let i = 0; i < 60; i++) sim.step(idle);
+  check(lost === 0 && sim.town.crushed === 0, 'a structure fractured but undamaged bears its own weight', `${sample.length} kinds (${sample.map(([k]) => k).join(', ')}), ${blocks} blocks, ${lost} overloaded`);
+
+  // Blow out most of the foot of a tall one: what is left cannot carry it, and it comes down.
+  sim.resetToRunway();
+  // The tallest slender structure with a foot big enough to cut most of away.
+  const footOf = (g: (typeof groups)[number]) => { const m = structureMask(g, sim.staticWorld.structures.list); let n = 0; for (let x = 0; x < g.size[0]; x++) for (let z = 0; z < g.size[2]; z++) if (m(x, 0, z)) n++; return n; };
+  const tallOnes = groups.filter((g) => !g.kit && g.arch && !g.arch.startsWith('infra') && g.size[1] >= 8 && g.size[0] <= 10 && g.size[2] <= 10).sort((p, q) => q.size[1] * q.blockSize - p.size[1] * p.blockSize);
+  const tall = tallOnes.find((g) => footOf(g) >= 12) ?? tallOnes[0];
+  const b = sim.staticWorld.fracture(tall.id, { impulse: 0, x: 0, y: 0, z: 0 }, sim.time, false);
+  const whole = b.aliveCount;
+  const s = b.blockSize;
+  const foot = b.list.filter((k) => k.y === 0).sort((p, q) => p.x - q.x || p.z - q.z);
+  for (const k of foot.slice(0, Math.floor(foot.length * 0.75))) b.remove(k);
+  const gone = whole - b.aliveCount;
+  sim.town.blast(b, 0, -1e6, 0, 1, sim.time);
+  // Force a check even though the blast found nothing: knock one more block out.
+  const any = b.list.find((k) => k.alive && k.y === 0);
+  if (any) sim.town.blast(b, b.def.origin[0] + (any.x + 0.5) * s, (any.y + 0.5) * s, b.def.origin[2] + (any.z + 0.5) * s, s * 0.4, sim.time);
+  let worst = 0;
+  for (let i = 0; i < 240; i++) { sim.step(idle); worst = Math.max(worst, sim.lastStepMs); }
+  check(b.aliveCount < (whole - gone) * 0.5, 'with three quarters of its foot gone a tower collapses under its own weight', `${tall.name}: ${foot.length} foot blocks, ${gone} removed, ${b.aliveCount} of ${whole} blocks still standing, ${sim.town.crushed} crushed`);
+  check(worst < 60, 'the collapse stays within the step budget', `worst step ${worst.toFixed(1)} ms`);
+}
+
+// ---------------------------------------------------------------- 7. things that rest on others
+console.log('\n--- things that rest on others');
+{
+  const sim = new Simulation(TEST_PLANE);
+  sim.traffic.enabled = false;
+  sim.bits.enabled = false;
+  const idle = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 };
+  const groups = sim.staticWorld.structures.groups;
+  const bridges = groups.filter((g) => g.heldBy && g.heldBy.every((e) => e.group !== undefined));
+  check(bridges.length > 0, 'corridors know which structures hold them', `${bridges.length} corridors, ${groups.length} groups`);
+  if (bridges.length) {
+    const bridge = bridges[0];
+    // Struck but with both buildings standing, it hangs between them.
+    const b = sim.staticWorld.fracture(bridge.id, { impulse: 0, x: 0, y: 0, z: 0 }, sim.time, false);
+    const whole = b.aliveCount;
+    sim.town.recheck(b);
+    for (let i = 0; i < 120; i++) sim.step(idle);
+    check(whole > 0 && b.aliveCount === whole && sim.staticWorld.held(bridge.id), 'a corridor broken into blocks still hangs between its two buildings', `${whole} blocks, none on the ground layer: ${b.list.every((k) => k.y > 0)}`);
+    // Take the building away from under one end: the corridor comes down.
+    sim.resetToRunway();
+    const end = bridge.heldBy![0];
+    const holder = sim.staticWorld.fracture(end.group!, { impulse: 0, x: 0, y: 0, z: 0 }, sim.time, false);
+    check(!sim.staticWorld.fractured.has(bridge.id), 'the corridor is whole while its building only cracks');
+    sim.town.blast(holder, end.x, end.y, end.z, holder.blockSize * 2.5 + 6, sim.time);
+    for (let i = 0; i < 360; i++) sim.step(idle);
+    const fallen = sim.staticWorld.fractured.get(bridge.id);
+    check(!sim.staticWorld.held(bridge.id) && !!fallen && fallen.aliveCount === 0, 'blow the building out from under one end and the corridor falls', fallen ? `${fallen.aliveCount} of ${fallen.list.length} blocks still up` : 'never fractured');
+  }
+  // A Solar Sailer pylon brought down is reported, so its beam goes dark there.
+  sim.resetToRunway();
+  const { pylons } = sailerNetwork();
+  const C = PLANET.circumference;
+  const wrap = (v: number) => v - Math.round(v / C) * C;
+  const pylonGroup = groups.find((g) => g.arch?.startsWith('infra:') && !g.heldBy && pylons.some((p) => Math.hypot(wrap(p.x - (g.x0 + g.size[0] * g.blockSize / 2)), wrap(p.z - (g.z0 + g.size[2] * g.blockSize / 2))) < 12));
+  if (pylonGroup) {
+    check(sim.staticWorld.downInfra().length === 0, 'no pylon is down in a whole world');
+    sim.staticWorld.fracture(pylonGroup.id, { impulse: 1e6, x: pylonGroup.x0, y: 10, z: pylonGroup.z0 }, sim.time);
+    const down = sim.staticWorld.downInfra();
+    check(down.length === 1 && pylons.some((p) => Math.hypot(wrap(p.x - down[0].x), wrap(p.z - down[0].z)) < 12), 'a pylon brought down is reported where it stood: its beam is cut there');
+  } else console.log('note: no Solar Sailer pylon in the central plan to test');
+}
+
+// ---------------------------------------------------------------- 8. Outlands landforms
+console.log('\n--- Outlands landforms');
+{
+  // The span of every shape agrees with its top and with its hull.
+  const n = TERRAIN.bigCells;
+  const seen = new Map<string, Landform>();
+  let tall: Landform | null = null, orb: Landform | null = null, cap: Landform | null = null;
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) for (const f of bigCellForms(i, j)) {
+    if (!seen.has(f.shape)) seen.set(f.shape, f);
+    if (!f.overhead && f.y0 === 0 && f.h >= 60 && f.h <= 200 && Math.max(f.w, f.d, 2 * f.half, 2 * f.r0) < 260 && Math.abs(wrapCoord(f.cx)) < PLANET.circumference / 2 - 3000 && Math.abs(wrapCoord(f.cz)) < PLANET.circumference / 2 - 3000 && Math.abs(terrainTop(f.cx, f.cz) - landformTop(f, f.cx, f.cz)) < 1e-6 && (!tall || f.h > tall.h)) tall = f;
+    if (f.overhead && !orb) orb = f;
+    if (!cap && !f.overhead && f.y0 > 20 && f.tier === 1 && Math.abs(wrapCoord(f.cx)) < PLANET.circumference / 2 - 3000 && Math.abs(wrapCoord(f.cz)) < PLANET.circumference / 2 - 3000) cap = f;
+  }
+  // Raised landforms come from the smaller lattice too: look cell by cell until one turns up.
+  const bigCell = PLANET.circumference / n;
+  for (let i = 0; i < n && !cap; i++) for (let j = 0; j < n && !cap; j++) {
+    for (const f of landformsInRect(i * bigCell, j * bigCell, (i + 1) * bigCell, (j + 1) * bigCell, false)) {
+      if (!f.overhead && f.y0 > 20 && Math.abs(wrapCoord(f.cx)) < PLANET.circumference / 2 - 3000 && Math.abs(wrapCoord(f.cz)) < PLANET.circumference / 2 - 3000) { cap = f; break; }
+    }
+  }
+  let bad = 0;
+  for (const f of seen.values()) {
+    const hull = landformHull(f);
+    let y0 = Infinity, y1 = -Infinity;
+    for (let k = 1; k < hull.length; k += 3) { y0 = Math.min(y0, hull[k]); y1 = Math.max(y1, hull[k]); }
+    const span = landformSpan(f, f.cx, f.cz);
+    if (!span || Math.abs(span[1] - landformTop(f, f.cx, f.cz)) > 1e-9 || span[0] < y0 - 0.01 || span[1] > y1 + 0.01 || span[1] <= span[0]) bad++;
+    if (landformSpan(f, f.cx + 1e5, f.cz) !== null) bad++;
+  }
+  check(seen.size >= 4 && bad === 0, 'every landform shape has a bottom and a top that agree with its hull', `${[...seen.keys()].join(', ')}`);
+
+  if (tall) {
+    const idle = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 };
+    const sim = new Simulation(TEST_PLANE);
+    sim.traffic.enabled = false;
+    sim.bits.enabled = false;
+    const fx = wrapCoord(tall.cx), fz = wrapCoord(tall.cz);
+    // Park the aircraft clear of it, so the terrain around it streams in.
+    const off = Math.max(tall.w, tall.d, 2 * tall.half, 2 * tall.r0) / 2 + 140;
+    let px = fx + off, pz = fz;
+    for (const [ax, az] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1]]) if (terrainTop(fx + ax * off, fz + az * off) === 0) { px = fx + ax * off; pz = fz + az * off; break; }
+    sim.craft.body.setTranslation({ x: px, y: 2, z: pz }, true);
+    for (let i = 0; i < 30; i++) sim.step(idle);
+    const near = sim.staticWorld.landformsNear(fx, fz, 5).filter((q) => Math.hypot(q.form.cx - fx, q.form.cz - fz) < 1 && q.form.shape === tall!.shape);
+    // A point where this landform is the top of the terrain (landforms overlap each other).
+    let tx = fx, tz = fz;
+    const reachT = Math.max(tall.w, tall.d, 2 * tall.half, 2 * tall.r0) / 2;
+    search: for (let a = 0; a < 5; a++) for (let b = 0; b < 5; b++) {
+      const x = fx + ((a - 2) / 2.5) * reachT, z = fz + ((b - 2) / 2.5) * reachT;
+      const mine = landformTop({ ...tall, cx: fx, cz: fz }, x, z);
+      if (mine > 20 && Math.abs(mine - terrainTop(x, z)) < 1e-6) { tx = x; tz = z; break search; }
+    }
+    const before = terrainTop(tx, tz);
+    check(near.length === 1 && before > 20, 'test setup: a tall landform with its hull, near the aircraft', `${tall.shape} ${tall.h.toFixed(0)} m tall at (${fx.toFixed(0)}, ${fz.toFixed(0)}), terrain top ${before.toFixed(0)} m`);
+    if (near.length === 1) {
+      const { k, i } = near[0];
+      const others = sim.staticWorld.landformsNear(fx, fz, 900).filter((q) => q.k !== k || q.i !== i);
+      // A blast at its foot: it fractures and the blocks the blast covers go.
+      sim.staticWorld.blastAt(fx, 6, fz, 20, sim.time);
+      const hit = sim.staticWorld.fracturedForms.get(`${k}#${i}`);
+      check(!!hit && !sim.staticWorld.hasHull(k, i), 'a blast at its foot breaks the landform into blocks', hit ? `${hit.building.list.length} blocks of ${hit.building.blockSize.toFixed(1)} m` : 'not fractured');
+      check(terrainTop(tx, tz) < before && terrainHeight(tx, tz) < before, 'the terrain no longer counts it', `top ${before.toFixed(0)} m → ${terrainTop(tx, tz).toFixed(0)} m`);
+      check(others.length === 0 || others.every((q) => sim.staticWorld.hasHull(q.k, q.i) || Math.hypot(q.form.cx - fx, q.form.cz - fz) < 120), 'landforms beyond the blast keep their exact hulls', `${others.length} others within 900 m`);
+      if (hit) {
+        const b = hit.building;
+        const whole = b.aliveCount;
+        // Cut most of its foot away: what is left cannot carry it.
+        const foot = b.list.filter((q) => q.alive && q.y === 0).sort((p, q) => p.x - q.x || p.z - q.z);
+        for (const q of foot.slice(0, Math.floor(foot.length * 0.8))) b.remove(q);
+        sim.town.recheck(b);
+        let worst = 0;
+        for (let s2 = 0; s2 < 360; s2++) { sim.step(idle); worst = Math.max(worst, sim.lastStepMs); }
+        check(b.aliveCount < whole * 0.4, 'undercut, it comes down under its own weight', `${b.aliveCount} of ${whole} blocks still standing, worst step ${worst.toFixed(1)} ms`);
+      }
+      sim.resetToRunway();
+      sim.craft.body.setTranslation({ x: px, y: 2, z: pz }, true);
+      for (let s2 = 0; s2 < 30; s2++) sim.step(idle);
+      const again = sim.staticWorld.landformsNear(fx, fz, 5).filter((q) => Math.hypot(q.form.cx - fx, q.form.cz - fz) < 1 && q.form.shape === tall!.shape);
+      check(sim.staticWorld.fracturedForms.size === 0 && again.length === 1 && Math.abs(terrainTop(tx, tz) - before) < 1e-6, 'a world reset puts the landform back: hull, height and all');
+    }
+  } else check(false, 'found a tall landform to break');
+
+  // A landform standing on others (a cap on pillars) comes down when they are broken.
+  if (cap) {
+    const idle = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 };
+    const sim = new Simulation(TEST_PLANE);
+    sim.traffic.enabled = false;
+    sim.bits.enabled = false;
+    const cx = wrapCoord(cap.cx), cz = wrapCoord(cap.cz);
+    sim.craft.body.setTranslation({ x: cx, y: cap.y0 + cap.h + 300, z: cz }, true);
+    sim.craft.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    sim.step(idle);
+    const all = sim.staticWorld.landformsNear(cx, cz, 600);
+    const me = all.find((g) => Math.hypot(g.form.cx - cx, g.form.cz - cz) < 1 && Math.abs(g.form.y0 - cap!.y0) < 0.01);
+    if (me) {
+      const under = sim.staticWorld.carriers(me.form);
+      for (const h of under.slice(0, Math.floor(under.length / 2))) sim.staticWorld.fractureLandform(h.k, h.i, { impulse: 0, x: 0, y: 0, z: 0 }, sim.time, false);
+      const stillUp = sim.staticWorld.hasHull(me.k, me.i);
+      for (const h of under) sim.staticWorld.fractureLandform(h.k, h.i, { impulse: 0, x: 0, y: 0, z: 0 }, sim.time, false);
+      check(under.length > 0 && (under.length < 2 || stillUp) && !sim.staticWorld.hasHull(me.k, me.i), 'a landform standing on others stays while half of them stand and falls when they go', `${under.length} carry a ${me.form.shape} at ${me.form.y0.toFixed(0)} m`);
+    } else check(false, 'the raised landform streams in with its hull');
+  } else console.log('note: no landform standing on others was found');
+  void orb;
 }
 
 if (failed) {

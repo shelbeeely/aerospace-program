@@ -121,8 +121,13 @@ export interface InteriorConfig {
   x0: number; x1: number; z0: number; z1: number; y0: number; y1: number;
   wall: number;
   entrances: Entrance[];
-  /** Interior programme: 'hall' (bays, nave, walkways), 'chamber' (machinery), 'shaft' (vertical). */
-  program: 'hall' | 'chamber' | 'shaft';
+  /** A round room (a drum): its centre and inner radius. The box above is the square inscribed in it. */
+  round?: { cx: number; cz: number; r: number };
+  /**
+   * Interior programme: 'hall' (bays, nave, walkways), 'chamber' (machinery), 'shaft' (vertical),
+   * 'commons' (a room at the scale of the people: terminal banks, memory columns, a meeting ring).
+   */
+  program: 'hall' | 'chamber' | 'shaft' | 'commons';
 }
 
 export interface Illumination {

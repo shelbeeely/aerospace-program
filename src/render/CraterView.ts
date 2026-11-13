@@ -3,6 +3,8 @@ import { atan, float, floor, fract, length, max, mix, sin, smoothstep, uv, vec3 
 import type { TslNode } from './neon.ts';
 
 const MAX = 256;
+const MAX_SLABS = 600;
+const MAX_BARS = 48;
 /** Seconds for a crater's exposed circuitry to cool from hot to its resting glow. */
 const COOL = 25;
 
@@ -25,7 +27,24 @@ export class CraterView {
   private readonly _g = new THREE.Color();
   private readonly zero = new THREE.Matrix4().makeScale(0, 0, 0);
 
+  /** Broken road: the slabs thrown up across it, and a red bar of light across each rim (the road is closed). */
+  private readonly slabs: THREE.InstancedMesh;
+  private readonly bars: THREE.InstancedMesh;
+  private roadVersion = -1;
+
   constructor(scene: THREE.Scene) {
+    this.slabs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicNodeMaterial({ color: new THREE.Color('#0b1a33') }), MAX_SLABS);
+    this.slabs.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_SLABS * 3), 3);
+    this.slabs.count = 0;
+    this.slabs.frustumCulled = false;
+    this.slabs.name = 'road-slabs';
+    scene.add(this.slabs);
+    this.bars = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicNodeMaterial({ color: new THREE.Color('#ff2a12').multiplyScalar(2.2), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 }), MAX_BARS);
+    this.bars.renderOrder = 2; // a decal: drawn after the ground it lies on
+    this.bars.count = 0;
+    this.bars.frustumCulled = false;
+    this.bars.name = 'road-closed';
+    scene.add(this.bars);
     // Unit disc in XY (laid flat by the instance rotation); radius 1.
     const geo = new THREE.CircleGeometry(1, 48, 0, Math.PI * 2);
     const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
@@ -86,5 +105,32 @@ export class CraterView {
     }
     if (n === 0 && this.shown === 0) this.mesh.count = 0;
     this.shown = n;
+  }
+
+  /** Draw the broken roads (call when `damage.version` may have changed). */
+  updateRoads(damage: { version: number; closures: ReadonlyArray<{ alongX: boolean; barriers: ReadonlyArray<readonly [number, number, number, number]>; slabs: ReadonlyArray<{ x: number; y: number; z: number; sx: number; sy: number; sz: number }> }> }): void {
+    if (damage.version === this.roadVersion) return;
+    this.roadVersion = damage.version;
+    const flat = new THREE.Quaternion();
+    let n = 0, m = 0;
+    for (const c of damage.closures) {
+      for (const s of c.slabs) {
+        if (n >= MAX_SLABS) break;
+        this.slabs.setMatrixAt(n, this._m.compose(this._p.set(s.x, s.y, s.z), flat, this._s.set(s.sx, s.sy, s.sz)));
+        // Large unlit surfaces: three dark tones of the ground, by the slab's height.
+        this.slabs.setColorAt(n, this._c.set(s.sy > 1.3 ? '#10284f' : s.sy > 0.9 ? '#0b1a33' : '#070b14'));
+        n++;
+      }
+      for (const b of c.barriers) {
+        if (m >= MAX_BARS) break;
+        const len = Math.hypot(b[2] - b[0], b[3] - b[1]);
+        this.bars.setMatrixAt(m++, this._m.compose(this._p.set((b[0] + b[2]) / 2, 0.09, (b[1] + b[3]) / 2), flat, this._s.set(c.alongX ? 1.1 : len, 1, c.alongX ? len : 1.1)));
+      }
+    }
+    this.slabs.count = n;
+    this.bars.count = m;
+    this.slabs.instanceMatrix.needsUpdate = true;
+    if (this.slabs.instanceColor) this.slabs.instanceColor.needsUpdate = true;
+    this.bars.instanceMatrix.needsUpdate = true;
   }
 }
