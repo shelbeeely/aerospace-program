@@ -255,7 +255,8 @@ async function start() {
   };
   const rig = new CameraRig(camera, canvas);
   const hud = new Hud();
-  // Multiplayer (Grid Link): inert until connected; `?room=CODE&server=ws://host:port` joins.
+  // Multiplayer (Grid Link): joins the shared WORLD room on the deployed relay on load
+  // (`?room=CODE&server=ws://host:port` for another, `?offline=1` for none).
   const net = new NetClient({ sim, scene, mode: () => mode });
   // K: the architecture inspector (region, district, streaming, structure under the cursor).
   const inspector = new ArchitectureInspector({ world: archView, terrain: terrainView, routes: routeView, sky: worldView, camera, canvas, active: () => mode === 'flight' });

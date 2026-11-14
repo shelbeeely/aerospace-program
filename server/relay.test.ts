@@ -4,7 +4,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { startServer } from './index.ts';
 import { Lobby, RateLimiter, type Peer } from './rooms.ts';
-import { MAX_MESSAGE_BYTES, PROTOCOL_VERSION, type NetState, type ServerMessage } from '../src/net/protocol.ts';
+import { MAX_MESSAGE_BYTES, MAX_PLAYERS, PROTOCOL_VERSION, type NetState, type ServerMessage } from '../src/net/protocol.ts';
 import type { CraftDef } from '../src/craft/types.ts';
 
 const CRAFT: CraftDef = {
@@ -277,4 +277,27 @@ test('rate limiting', () => {
   for (let i = 0; i < 500; i++) lobby.message(s, JSON.stringify({ t: 'state', s: state(i) }));
   expect(published.length).toBeLessThanOrEqual(60);
   expect(sent.some((d) => d.includes('rate-limited'))).toBe(true);
+});
+
+test('a full WORLD seats newcomers in its overflow rooms', () => {
+  const lobby = new Lobby({ now: () => 0, broadcast: () => {} });
+  const welcomes: string[] = [];
+  const join = () => {
+    const peer: Peer = {
+      send: (d) => { const m = JSON.parse(d) as ServerMessage; if (m.t === 'welcome') welcomes.push(m.room); },
+      close: () => {}, subscribe: () => {}, unsubscribe: () => {}, publish: () => {},
+    };
+    const s = lobby.connect(peer);
+    lobby.message(s, JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, room: 'WORLD', name: 'x', color: '#ffffff', craft: CRAFT }));
+    return s;
+  };
+  const first = Array.from({ length: MAX_PLAYERS }, join);
+  expect(welcomes.every((r) => r === 'WORLD')).toBe(true);
+  join();
+  expect(welcomes.at(-1)).toBe('WORLA');
+  expect(lobby.rooms.get('WORLD')?.size).toBe(MAX_PLAYERS);
+  // A seat frees up in WORLD: the next newcomer goes back there.
+  lobby.disconnect(first[0]);
+  join();
+  expect(welcomes.at(-1)).toBe('WORLD');
 });

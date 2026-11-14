@@ -129,6 +129,17 @@ export function isRoomCode(code: unknown): code is string {
   return typeof code === 'string' && /^[A-Z]{5}$/.test(code);
 }
 
+/**
+ * The shared world: every client joins this room on load. When it is full the relay seats the
+ * newcomer in the first overflow room with space (WORLA, WORLB, ...): everyone shares the one
+ * world, the room only decides whose craft you see.
+ */
+export const WORLD_ROOM = 'WORLD';
+export function worldOverflowRooms(): string[] {
+  return [WORLD_ROOM, ...'ABCEFGHJKLMNPQRSTUVWXYZ'.split('').map((c) => `WORL${c}`)];
+}
+export const isWorldRoom = (code: string): boolean => /^WORL[A-Z]$/.test(code);
+
 /** A random room code (letters only, no I/O so codes read aloud cleanly). */
 export function randomRoomCode(rand: () => number = Math.random): string {
   let s = '';

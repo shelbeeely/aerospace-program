@@ -937,16 +937,27 @@ test, so you can see the effect without flying.
 ## Multiplayer (Grid Link)
 
 Up to 16 programs per room share the Grid: aircraft, cars and light cycles, with their trails.
-The relay is a small [Bun](https://bun.sh) server (WebSocket only, no accounts, nothing stored).
+The relay is a small [Bun](https://bun.sh) server (WebSocket only, no accounts).
+
+**Every client joins the shared world by itself.** On load the game connects to the deployed
+relay, `wss://grid-relay-ruei.onrender.com`, and takes a seat in the room `WORLD`. When WORLD
+is full (16), the relay seats newcomers in its overflow rooms (`WORLA`, `WORLB`, …) instead of
+turning them away. While a sleeping relay wakes up, the Grid Link shows *Waking the Grid relay…*
+and keeps trying for about a minute.
+
+- `?offline=1` stays offline. Pressing **LEAVE** also keeps you offline on later visits, until
+  you join again (**JOIN THE WORLD**, **CREATE ROOM** or **JOIN** a code).
+- `?server=ws://localhost:8787` (or a server typed into Grid Link) uses another relay, and
+  `?room=CODE` joins a private room instead of the world.
 
 ```bash
 npm run server          # bun server/index.ts, ws://localhost:8787 (PORT=… to change)
-npm run dev             # then press O (or the ◈ GRID LINK button): CREATE ROOM, or JOIN a code
-npm run test:server     # bun test server: two clients join, relay, isolation, size limits
+npm run dev             # joins the deployed relay; add ?server=ws://localhost:8787 for yours
+npm run test:server     # bun test server: two clients join, relay, isolation, size limits, overflow
 ```
 
-- **Invite:** COPY INVITE gives `…/?mode=fly&room=CODE&server=ws://host:8787`; opening that
-  link joins straight away. The server defaults to `ws://<page host>:8787`.
+- **Invite:** COPY INVITE gives `…/?mode=fly&room=CODE&server=…`; opening that link joins
+  straight away.
 - **What's shared:** each player's pose, velocity and controls at 20 Hz, drawn from their
   CraftDef and interpolated 100 ms behind; their jetwalls, ribbons and contrails (in their
   colour); structure fractures (by structure name, so everyone sees the same tower fall);
@@ -956,10 +967,11 @@ npm run test:server     # bun test server: two clients join, relay, isolation, s
 - **Deploy the relay on Render** (free, TLS included): Render dashboard → **New → Blueprint** →
   this repository. `render.yaml` builds `server/Dockerfile` (Bun) into a web service at
   `https://grid-relay.onrender.com` (or the name Render gives it), health-checked on `/health`,
-  redeployed when `server/` or the protocol changes on `main`. Then repo **Settings → Secrets
-  and variables → Actions → Variables → `GRID_SERVER` = `wss://grid-relay.onrender.com`** and
-  re-run the Pages deploy: every player's Grid Link connects there by default (a typed server
-  or an invite's `?server=` still wins). Free instances sleep after 15 idle minutes (the first
+  redeployed when `server/` or the protocol changes on `main`. The game connects to
+  `wss://grid-relay-ruei.onrender.com` by default (`GRID_RELAY` in `src/net/NetClient.ts`); to
+  point a build elsewhere, set repo **Settings → Secrets and variables → Actions → Variables →
+  `GRID_SERVER`** and re-run the Pages deploy (a typed server or an invite's `?server=` still
+  wins). Free instances sleep after 15 idle minutes (the first
   player waits about a minute; sleeping drops open rooms); the `starter` plan stays up.
   Locally: `docker build -f server/Dockerfile -t grid-relay . && docker run -p 8787:8787 -e PORT=8787 grid-relay`.
 - **Server:** `GET /health` reports rooms and players. Messages are shape-checked, size-capped

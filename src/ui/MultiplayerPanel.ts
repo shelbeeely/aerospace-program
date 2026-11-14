@@ -1,10 +1,12 @@
 import { NetClient } from '../net/NetClient.ts';
-import { isRoomCode, normalizeRoom } from '../net/protocol.ts';
+import { isRoomCode, normalizeRoom, WORLD_ROOM } from '../net/protocol.ts';
 import { toast } from './ControlsPanel.ts';
 
 const NAME_KEY = 'grid.mp.name';
 const COLOR_KEY = 'grid.mp.color';
 const SERVER_KEY = 'grid.mp.server';
+/** Set when the player pressed LEAVE: they stay offline on later loads until they join again. */
+const OFFLINE_KEY = 'grid.mp.offline';
 /** Tron palette: cyan/white first, amber accent, then the other neons. */
 export const PLAYER_COLORS = ['#00eaff', '#ffb000', '#ff2bd6', '#3dff8b', '#ffffff', '#ff4a3d', '#8a7bff', '#ffe14d'];
 
@@ -15,12 +17,19 @@ const store = {
   set(k: string, v: string): void {
     try { localStorage.setItem(k, v); } catch { /* private mode */ }
   },
+  remove(k: string): void {
+    try { localStorage.removeItem(k); } catch { /* private mode */ }
+  },
 };
 
 /**
  * Grid Link: create or join a multiplayer room, copy the invite link, see who's on the Grid,
  * chat. Toggled by the ◈ button or O. In the hangar only the join / create controls show;
- * the roster and chat are for flight. `?room=CODE&server=ws://host:port` joins on load.
+ * the roster and chat are for flight.
+ *
+ * On load every client joins the shared world room (WORLD) on the deployed relay by itself.
+ * `?room=CODE&server=ws://host:port` joins that room instead; `?offline=1`, or having pressed
+ * LEAVE, keeps the client offline.
  */
 export class MultiplayerPanel {
   readonly toggleBtn: HTMLButtonElement;
@@ -81,17 +90,39 @@ export class MultiplayerPanel {
     return c && PLAYER_COLORS.includes(c) ? c : this.fallbackColor;
   }
 
-  /** Join from `?room=CODE&server=ws://…` if present. */
+  /**
+   * On load: join `?room=CODE` if given, else the shared WORLD room, on `?server=`, the server
+   * typed into Grid Link, or the deployed relay. `?offline=1` (or a LEAVE remembered from an
+   * earlier visit) stays offline.
+   */
   autoJoin(params: URLSearchParams): void {
     const room = params.get('room');
-    if (!room) return;
-    const server = params.get('server') || store.get(SERVER_KEY) || NetClient.defaultServer();
-    const code = normalizeRoom(room);
-    if (!isRoomCode(code)) {
-      toast(`"${room}" is not a room code (5 letters)`);
+    const server = params.get('server') || this.storedServer() || NetClient.defaultServer();
+    if (room) {
+      const code = normalizeRoom(room);
+      if (!isRoomCode(code)) {
+        toast(`"${room}" is not a room code (5 letters)`);
+        return;
+      }
+      this.connect(server, code);
       return;
     }
-    this.connect(server, code);
+    const off = params.get('offline');
+    if ((off !== null && off !== '0') || store.get(OFFLINE_KEY) === '1') return;
+    this.connect(server, WORLD_ROOM);
+  }
+
+  /**
+   * The server the player typed, if any. Older builds stored their default (ws://<page
+   * host>:8787) on every join; that one is forgotten unless the page really is local.
+   */
+  private storedServer(): string | null {
+    const v = store.get(SERVER_KEY)?.trim();
+    if (!v) return null;
+    const host = typeof location !== 'undefined' ? location.hostname : '';
+    const local = host === 'localhost' || host === '127.0.0.1' || host === '';
+    if (!local && /^wss?:\/\/[^/]*:8787\/?$/.test(v) && v.includes(host)) return null;
+    return v;
   }
 
   toggle(open = this.root.classList.contains('hidden')): void {
@@ -104,7 +135,10 @@ export class MultiplayerPanel {
     const name = this.name, color = this.color;
     store.set(NAME_KEY, name);
     store.set(COLOR_KEY, color);
-    store.set(SERVER_KEY, server);
+    // Only a server the player chose is remembered; the default follows the build.
+    if (server === NetClient.defaultServer()) store.remove(SERVER_KEY);
+    else store.set(SERVER_KEY, server);
+    store.set(OFFLINE_KEY, '0');
     this.net.connect({ server, room, name, color });
   }
 
@@ -140,7 +174,7 @@ export class MultiplayerPanel {
         navigator.clipboard?.writeText(link).then(done, () => prompt('Invite link', link));
         if (!navigator.clipboard) prompt('Invite link', link);
       });
-      const leave = button('LEAVE', () => net.disconnect(), 'mp-leave');
+      const leave = button('LEAVE', () => { store.set(OFFLINE_KEY, '1'); net.disconnect(); }, 'mp-leave');
       actions.append(copy, leave);
       b.append(room, actions);
 
@@ -195,7 +229,7 @@ export class MultiplayerPanel {
       colors.append(sw);
     }
     b.append(colors);
-    const serverIn = field(b, 'Server', 'text', store.get(SERVER_KEY) || NetClient.defaultServer(), (v) => store.set(SERVER_KEY, v.trim()));
+    const serverIn = field(b, 'Server', 'text', this.storedServer() || NetClient.defaultServer(), (v) => store.set(SERVER_KEY, v.trim()));
     const codeIn = field(b, 'Room code', 'text', '', () => {});
     codeIn.maxLength = 5;
     codeIn.placeholder = 'ABCDE';
@@ -207,11 +241,12 @@ export class MultiplayerPanel {
       if (!isRoomCode(code)) { toast('Room codes are 5 letters'); codeIn.focus(); return; }
       this.connect(serverIn.value.trim(), code);
     });
-    const create = button('CREATE ROOM', () => this.connect(serverIn.value.trim(), ''), 'mp-primary');
+    const create = button('CREATE ROOM', () => this.connect(serverIn.value.trim(), ''));
+    const world = button('JOIN THE WORLD', () => this.connect(serverIn.value.trim(), WORLD_ROOM), 'mp-primary');
     codeIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') join.click(); });
-    actions.append(create, join);
+    actions.append(world, create, join);
     b.append(actions);
-    b.append(el('p', 'muted small', 'Run the relay with npm run server (Bun). Up to 16 programs per room.'));
+    b.append(el('p', 'muted small', 'Everyone joins the shared world on load. Up to 16 programs per room; a full world seats newcomers in its overflow rooms.'));
   }
 }
 

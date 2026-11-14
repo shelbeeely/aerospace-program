@@ -4,6 +4,8 @@
  *
  * - Rooms are keyed by a 5-letter code. Joining an unknown valid code creates it; an empty code
  *   creates a fresh random one. At most MAX_PLAYERS per room. A room vanishes with its last player.
+ *   WORLD is the shared room every client joins on load: when it is full a newcomer is seated in
+ *   the first overflow room with space (WORLA, WORLB, ...) instead of being turned away.
  * - On join the player gets a snapshot (everyone's name, colour, CraftDef and last state); the
  *   room hears `join`. States, craft changes and events are relayed to the room's topic
  *   (everyone but the sender). Messages are shape-checked and size-capped (src/net/protocol.ts)
@@ -11,7 +13,7 @@
  * - Nothing persists: no accounts, no storage.
  */
 import {
-  MAX_PLAYERS, PROTOCOL_VERSION, asTeam, isRoomCode, parseClientMessage, randomRoomCode,
+  MAX_PLAYERS, PROTOCOL_VERSION, WORLD_ROOM, asTeam, isRoomCode, parseClientMessage, randomRoomCode, worldOverflowRooms,
   type ClientMessage, type NetTeam, type ErrorCode, type NetState, type PlayerInfo, type ServerMessage,
 } from '../src/net/protocol.ts';
 import type { CraftDef } from '../src/craft/types.ts';
@@ -152,6 +154,9 @@ export class Lobby {
       do code = randomRoomCode(); while (this.rooms.has(code));
     } else if (!isRoomCode(code)) {
       return this.error(s, 'bad-room', 'room codes are 5 letters', now, true);
+    } else if (code === WORLD_ROOM) {
+      // The shared world never turns anyone away: a full WORLD seats them in an overflow room.
+      code = worldOverflowRooms().find((c) => (this.rooms.get(c)?.size ?? 0) < MAX_PLAYERS) ?? WORLD_ROOM;
     }
     let members = this.rooms.get(code);
     if (members && members.size >= MAX_PLAYERS) {
@@ -168,8 +173,11 @@ export class Lobby {
     s.room = code;
     this.send(s, { t: 'welcome', v: PROTOCOL_VERSION, id: s.id, room: code, players: [...members].map(info) });
     members.add(s);
-    s.peer.publish(topic(code), JSON.stringify({ t: 'join', player: info(s) } satisfies ServerMessage));
+    // Subscribe first, then announce: Bun 1.2 (the relay's image) only publishes from a socket
+    // that is subscribed to the topic, so announcing first never reached the room. publish()
+    // still leaves the sender out.
     s.peer.subscribe(topic(code));
+    s.peer.publish(topic(code), JSON.stringify({ t: 'join', player: info(s) } satisfies ServerMessage));
     this.opts.log?.(`${s.name} (${s.id}) joined ${code} (${members.size}/${MAX_PLAYERS})`);
   }
 

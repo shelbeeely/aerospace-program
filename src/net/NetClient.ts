@@ -9,7 +9,7 @@ import { PLANET } from '../sim/layout.ts';
 import type { Simulation } from '../sim/Simulation.ts';
 import { DEREZ_TIME, type Trail, type TrailMode, type TrailPoint, type TrailSystem } from '../sim/trails.ts';
 import {
-  MAX_TRAIL_POINTS, PROTOCOL_VERSION, STATE_HZ, normalizeRoom, r2, r4, splitGroupName, validCraftShape, validEvent, validState,
+  MAX_TRAIL_POINTS, PROTOCOL_VERSION, STATE_HZ, isWorldRoom, normalizeRoom, r2, r4, splitGroupName, validCraftShape, validEvent, validState,
   type ClientMessage, type NetEvent, type NetState, type NetTrail, type NetTrailPoint, type PlayerInfo, type ServerMessage, asTeam, type NetTeam, HIT_KINDS,
 } from './protocol.ts';
 
@@ -31,6 +31,16 @@ import {
  * its image nearest the local craft. Not connected = single player, untouched.
  */
 export type NetStatus = 'offline' | 'connecting' | 'connected' | 'error';
+
+/** The deployed relay (render.yaml): where every client goes unless told otherwise. */
+export const GRID_RELAY = 'wss://grid-relay-ruei.onrender.com';
+/**
+ * Attempts before giving up on a relay that has never answered. A free Render instance sleeps
+ * after 15 idle minutes and takes about a minute to wake, so the first connect keeps trying
+ * (backing off to WAKE_MAX_WAIT) rather than calling it unreachable.
+ */
+const WAKE_TRIES = 9;
+const WAKE_MAX_WAIT = 12_000;
 
 /** Render remote craft this far behind their newest state (ms): absorbs jitter. */
 export const INTERP_DELAY = 100;
@@ -125,6 +135,9 @@ export class NetClient {
   private opts: ConnectOptions | null = null;
   private wantOnline = false;
   private retries = 0;
+  /** Tries while a relay that has not answered yet wakes up, and whether this connect ever got in. */
+  private wakeTries = 0;
+  private everConnected = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private sendClock = 0;
   private craftClock = 0;
@@ -150,16 +163,14 @@ export class NetClient {
   }
 
   /**
-   * The relay to use by default: the build's VITE_GRID_SERVER (the deployed relay, e.g.
-   * wss://grid-relay.onrender.com), else ws://<page host>:8787 (wss on https pages).
+   * The relay to use by default: the build's VITE_GRID_SERVER (the GRID_SERVER Pages variable),
+   * else the deployed Grid relay. Every client joins it on load (MultiplayerPanel.autoJoin);
+   * `?server=` or a server typed into Grid Link still wins.
    */
   static defaultServer(): string {
     const env = (import.meta as { env?: Record<string, string | undefined> }).env;
     const built = env?.VITE_GRID_SERVER?.trim();
-    if (built) return built;
-    const host = typeof location !== 'undefined' && location.hostname ? location.hostname : 'localhost';
-    const secure = typeof location !== 'undefined' && location.protocol === 'https:';
-    return `${secure ? 'wss' : 'ws'}://${host.includes(':') ? `[${host}]` : host}:8787`;
+    return built || GRID_RELAY;
   }
 
   get connected(): boolean {
@@ -183,6 +194,8 @@ export class NetClient {
     this.room = '';
     this.wantOnline = true;
     this.retries = 0;
+    this.wakeTries = 0;
+    this.everConnected = false;
     this.open();
   }
 
@@ -220,7 +233,10 @@ export class NetClient {
     ws.onopen = () => {
       const o = this.opts!;
       this.lastCraft = this.game.sim.craft.def;
-      this.send({ t: 'hello', v: PROTOCOL_VERSION, room: this.room || o.room, name: o.name, color: o.color, craft: this.lastCraft, team: asTeam(this.game.sim.team) });
+      // Back into the same room after a drop; a seat in a WORLD overflow room is asked for
+      // through WORLD again (the relay finds whichever has space).
+      const room = this.room && !isWorldRoom(this.room) ? this.room : o.room;
+      this.send({ t: 'hello', v: PROTOCOL_VERSION, room, name: o.name, color: o.color, craft: this.lastCraft, team: asTeam(this.game.sim.team) });
     };
     ws.onmessage = (e) => {
       let m: ServerMessage;
@@ -237,6 +253,11 @@ export class NetClient {
       if (this.wantOnline && (was || this.retries > 0) && this.retries < 5) {
         const wait = 1000 * 2 ** this.retries++;
         this.setStatus('connecting', `Connection lost; retrying in ${Math.round(wait / 1000)} s…`);
+        this.retryTimer = setTimeout(() => this.open(), wait);
+      } else if (this.wantOnline && !this.everConnected && this.wakeTries < WAKE_TRIES) {
+        // Never reached it yet: it may be asleep. Keep knocking while it wakes.
+        const wait = Math.min(WAKE_MAX_WAIT, 1000 * 2 ** this.wakeTries++);
+        this.setStatus('connecting', 'Waking the Grid relay…');
         this.retryTimer = setTimeout(() => this.open(), wait);
       } else {
         this.wantOnline = false;
@@ -280,6 +301,7 @@ export class NetClient {
         this.selfId = m.id;
         this.room = m.room;
         this.retries = 0;
+        this.everConnected = true;
         this.sentArc.clear(); // everyone gets our trails from the start
         this.craftClock = CRAFT_INTERVAL;
         this.spawnGraceUntil = performance.now() + SPAWN_GRACE_MS; // we may be sitting in someone's wall
