@@ -35,6 +35,10 @@ has two or three branches, one of them the **default**. A pure function,
 `SeasonConfig`. Because every hook has a default, each season is completely specified before
 the previous one has been played.
 
+**Solo and online play the same seasons.** A single-player campaign runs these seasons, hooks
+and story exactly as an online one, with computer-run countries in place of other players.
+Every season opens at peace.
+
 **Carry-over rules.**
 
 - Carry-over changes the world and the story. It never changes a team's treasury, stockpile or

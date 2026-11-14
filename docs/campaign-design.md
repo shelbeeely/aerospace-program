@@ -38,6 +38,13 @@ last turret (`Territory.capture` in `src/sim/territory.ts`, called from the turr
 sandbox rules. In the campaign, ownership changes only when the server resolves them, and
 hostility follows diplomacy, not team id.
 
+**Both start at peace.** The sandbox already does (its war flags in `src/sim/teams.ts`: a first
+shot or a declaration starts a war between two teams). Every campaign and every season opens
+with all countries at peace too.
+
+**Single player is the same game.** A solo campaign runs the same rules, seasons and story as
+an online one, with the other mayors and countries played by the computer (section 11a).
+
 ## 2. Audit of the existing code
 
 What the code does today, and what that means for the campaign.
@@ -250,6 +257,11 @@ and nothing more; sovereignty changes only by the province and treaty rules.
 
 ## 8. Government, diplomacy and war
 
+Every campaign and season opens with all countries at peace. While two countries are at peace
+the simulation refuses damage between them, so in the campaign a war comes only by a
+declaration that passed its national vote (the sandbox, by contrast, treats a first shot as a
+declaration).
+
 - **Roles and permissions.** Mayor (one city), country offices (treasury, infrastructure,
   foreign policy, defence), member. Each command kind names the permission it needs.
 - **Votes.** National commitments above a threshold (spending, treaties, province transfers,
@@ -380,6 +392,26 @@ Rules:
 - **Verify at build time:** current tier limits and prices; and that Render reaches the
   database through Supabase's connection pooler address (the direct address may be IPv6 only).
 
+## 11a. Single player
+
+Single player is identical to multiplayer: one implementation, not a second game.
+
+- **One core, two hosts.** The campaign core in `src/campaign/` runs either on the Bun server
+  or in the browser in a Web Worker acting as a local server. The client talks to both through
+  one `CampaignTransport` interface (a WebSocket, or worker messages) with the same commands,
+  snapshots, world events and results. No rule lives in the client or in a transport.
+- **Storage:** a third `CampaignStore` driver on IndexedDB holds solo saves.
+- **The other players** are the caretaker simulation already specified for dormant mayors and
+  neutral cities (section 9). Computer countries vote, trade, sign treaties and declare war
+  with the same commands a person sends, under the same permissions.
+- **Same seasons:** the same `SeasonConfig`s, story and `nextSeason` carry-over
+  ([`seasons.md`](seasons.md)).
+- **The only differences:** a solo player can pause and change the clock speed, the world only
+  advances while the game is open, and no sign-in is needed. Moving a solo save online is
+  deferred.
+- **Parity check:** `npm run campaign` replays one command script through both transports and
+  compares the state hash tick by tick; any difference fails.
+
 ## 12. Realtime sync and capacity
 
 Every player sees the same world live. A building knocked over is sent to every player on that
@@ -460,7 +492,8 @@ paired return portal, a scheduled bridge closure.
 Stages, each ending with passing checks and a commit:
 
 1. **Simulation core** (`src/campaign/`): state, tick, commands, economy, freight on the road
-   graph, events, scoring, `SeasonConfig` and `nextSeason` (check `npm run seasons`). Check `npm run campaign`: determinism (same commands, same state),
+   graph, events, scoring, `SeasonConfig` and `nextSeason` (check `npm run seasons`), and the
+   `CampaignTransport` interface with the solo/online parity check. Check `npm run campaign`: determinism (same commands, same state),
    idempotent commands, conservation of goods, capacity limits, a season that ends with scores
    and no war; a vote passes with absent members; a dormant mayor's city keeps its services;
    a vacant seat is taken over with its edits intact.
@@ -475,7 +508,8 @@ Stages, each ending with passing checks and a commit:
 4. **City building:** road and zoning overlays, facilities, ground refresh. `npm run drive`,
    `traffic`, `ground`, `city`, `arch`, `buildings` plus new cases: no island after any edit,
    the Navigator can drive to every new terminal.
-5. **Client:** `campaign.html`, the three views, the feed.
+5. **Client:** `campaign.html`, the three views, the feed; the Web Worker host and the IndexedDB
+   store for single player.
 6. **Portal and second planet:** activation, manifest generation and validation, transfer,
    return. `npm run portals`: two sessions activating the same portal get the same planet; a
    generated city routes to its terminal; edits survive leaving and returning.

@@ -996,6 +996,8 @@ wind, surge, rain, scheduler lifecycle and actual Rapier ground motion.
       Grid Link relay, hosted on Render, with durable state in Supabase Postgres and sign-in
       through Supabase Auth. Everyone sees the same world live: a building knocked over falls
       for every player on that planet and stays down for those who arrive later.
+    - **Single player is the same game:** the same rules, seasons and story, run in the browser
+      with computer-run countries; it can be paused and sped up. Every season starts at peace.
     - **Players who leave.** Guests can join without signing up. An absent mayor's city runs
       on standing orders, then under a caretaker, then the seat reopens; votes count active
       members only. The sandbox keeps its
