@@ -4,6 +4,8 @@ import { buildDistrict, edgeCapacity, type District, type Layout, type PlaceId, 
 import { describeRoute, route, routeTime } from './router.ts';
 import { drivePolicy, respondPolicy, type DriveAction, type DriveObs } from './policies.ts';
 import { clock, explain, type LogEntry } from './log.ts';
+import { newSquad, SQUAD, SQUAD_ACTIONS, squadPolicy, squadShape, type DangerZone, type Squad, type SquadObs } from './escort.ts';
+import { DRONE, FLIGHT_ACTIONS, flightPolicy, LAND_ACTIONS, landingPolicy, windAt, type Drone, type FlightObs, type LandObs } from './drone.ts';
 
 /**
  * The Scenario Lab: one district run as a whole, its traffic carrying the district's work.
@@ -81,6 +83,8 @@ export interface Vehicle {
   noRouteAt: number;
   /** When it entered its current edge (s). */
   enteredAt: number;
+  /** Held up by fighting until then (s). */
+  holdUntil: number;
 }
 
 export interface ScenarioSettings {
@@ -98,11 +102,19 @@ export interface ScenarioSettings {
   priorities: { ambulancesFirst: boolean; contraflow: boolean; trucksHold: boolean };
   commuters: number;
   evacuees: number;
+  /** Wind for the drone (m/s); the drone launches by itself at this time (null: only when sent). */
+  wind: number;
+  droneAt: number | null;
+  /** Escort a vehicle by itself (the checks; the player orders it on the page): the first freight truck after the closure, or the convoy's lead. */
+  escortAuto: 'none' | 'truck' | 'convoy';
+  /** The clinic's pad is busy now and then (an ambulance on it). */
+  padEvents: boolean;
 }
 
 export const DEFAULT_SCENARIO: ScenarioSettings = {
   seed: 1, driver: 'scripted', layout: 'base', evacuateAt: 60, closeAt: 90, convoyAt: 120, duration: 1200, lod: 'auto',
   priorities: { ambulancesFirst: false, contraflow: false, trucksHold: false }, commuters: 80, evacuees: 90,
+  wind: 6, droneAt: null, escortAuto: 'none', padEvents: true,
 };
 
 export const SCENARIO = {
@@ -148,6 +160,10 @@ export interface ScenarioMetrics {
   untreated: number;
   /** When the clinic's stock recovered above 10 after first running short (null: never short, or never recovered). */
   recoveredAt: number | null;
+  /** Vehicles held up by fighting (and how many of those were escorted). */
+  heldUp: number;
+  escort: { target: number | null; heldUp: number; done: boolean; tripTime: number | null; decisions: Record<string, number> };
+  drone: { state: string; flightTime: number | null; delivered: number; decisions: Record<string, number> };
 }
 
 /** A road vehicle as the view draws it. */
@@ -177,6 +193,13 @@ export class Scenario {
   private readonly delays: number[] = [];
   /** Decisions as (observation, action) pairs, when recording (training). */
   recording: Array<{ policy: 'drive' | 'respond'; obs: DriveObs; action: DriveAction }> | null = null;
+  /** The other policies' decisions as (encoded inputs, action index), when recording. */
+  brainLog: Array<{ policy: 'squad' | 'flight' | 'landing'; x: number[]; y: number }> | null = null;
+  /** The escort squad, the supply drone, and where there is fighting. */
+  squad!: Squad;
+  drone!: Drone;
+  readonly zones: DangerZone[] = [];
+  private escortArmed = false;
 
   constructor(settings: Partial<ScenarioSettings> = {}) {
     this.settings = { ...DEFAULT_SCENARIO, ...settings, priorities: { ...DEFAULT_SCENARIO.priorities, ...settings.priorities } };
@@ -188,7 +211,12 @@ export class Scenario {
     this.metricsData = {
       deliveries: [], responses: [], evacuation: { evacuees: 0, sheltered: 0, unsheltered: 0, lastArrival: null }, convoy: { arrivedAt: null, trucks: 0, arrived: 0 },
       meanDelay: 0, maxQueue: 0, collisions: 0, closedEntries: 0, decisions: { follow: 0, yield: 0, merge: 0, reroute: 0 }, shortage: 0, stockEnd: 0, untreated: 0, recoveredAt: null,
+      heldUp: 0, escort: { target: null, heldUp: 0, done: false, tripTime: null, decisions: {} }, drone: { state: 'idle', flightTime: null, delivered: 0, decisions: {} },
     };
+    const sb = this.district.nodes[this.district.places.westEntry];
+    this.squad = newSquad(sb.x + 30, sb.z - 20);
+    const dp = this.district.nodes[this.district.places.depot];
+    this.drone = { x: dp.x, z: dp.z, heading: 0, battery: DRONE.battery, state: 'idle', path: [], to: 'clinic', heldSince: null, landedAt: 0, launchedAt: 0, log: [], decisions: { straight: 0, crabLeft: 0, crabRight: 0, slow: 0, land: 0, hold: 0, divert: 0 } };
     this.populate();
     this.applyPriorities();
   }
@@ -201,7 +229,7 @@ export class Scenario {
       id: this.vehicles.length, kind, job, emergency: false, urgency: 0.3, route: [], ri: 0, edge: -1, node, s: 0, lane: 0, speed: 0,
       temper: k.temper[0] + this.rand() * (k.temper[1] - k.temper[0]), detail: false, known: new Set(), log: [], stoodAt: null, waitLogged: -1,
       yieldUntil: 0, nextDecide: 0, decidedOn: -1, dest: node, departedAt: 0, freeTime: 0, planTime: 0, dwellUntil: Infinity, payload: 0, call: -1,
-      home: node, work: node, departing: false, noRouteAt: -Infinity, enteredAt: 0,
+      home: node, work: node, departing: false, noRouteAt: -Infinity, enteredAt: 0, holdUntil: 0,
     };
     this.vehicles.push(v);
     return v;
@@ -256,6 +284,8 @@ export class Scenario {
     const e = this.district.edges[pair[0]];
     const a = this.district.nodes[e.from], b = this.district.nodes[e.to];
     const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+    // The fight that broke it goes on round its east end for a while.
+    this.zones.push({ x: b.x, z: b.z, r: 170, until: this.time + 360, name: `${name} east head` });
     for (const v of this.vehicles) {
       if (v.edge < 0) continue;
       const p = this.posOf(v);
@@ -317,6 +347,180 @@ export class Scenario {
     v.departing = true;
     v.departedAt = this.time;
     this.note(v, 'route', `${this.district.nodes[dest].name} ${describeRoute(this.district, now.edges)} (est ${(now.time / 60).toFixed(1)} min)`);
+  }
+
+  // ------------------------------------------------------------------ escort and drone
+
+  /** The player's order: escort this vehicle (null: stand the squad down). Holds until it arrives or the order changes. */
+  escort(id: number | null): void {
+    const sq = this.squad;
+    sq.target = id;
+    this.metricsData.escort = { target: id, heldUp: 0, done: false, tripTime: null, decisions: {} };
+    if (id !== null) {
+      const v = this.vehicles[id];
+      sq.log.push({ t: this.time, text: `ordered to escort ${KIND[v.kind].label} #${id}` });
+      this.note(v, 'job', 'escort squad assigned');
+    }
+  }
+
+  /** Is this vehicle escorted from where it counts (the squad ahead of it, or on its flank, within reach)? */
+  private escortedBy(v: Vehicle, slots: readonly string[]): boolean {
+    const sq = this.squad;
+    if (sq.target !== v.id || !slots.includes(sq.slot)) return false;
+    const c = squadShape(sq), p = this.posOf(v);
+    return c.units > 0 && Math.hypot(c.x - p.x, c.z - p.z) < SQUAD.reach;
+  }
+
+  private threatAt(x: number, z: number): number {
+    let t = 0;
+    for (const zn of this.zones) if (this.time < zn.until) t = Math.max(t, 1 - Math.hypot(zn.x - x, zn.z - z) / zn.r);
+    return Math.max(0, t);
+  }
+
+  private stepSquad(dt: number): void {
+    const sq = this.squad, d = this.district;
+    const target = sq.target !== null ? this.vehicles[sq.target] : null;
+    if (target && target.edge < 0 && !target.departing) {
+      // It arrived: the order is done.
+      sq.log.push({ t: this.time, text: `escort done: ${KIND[target.kind].label} #${target.id} arrived` });
+      this.metricsData.escort.done = true;
+      this.metricsData.escort.tripTime = this.time - target.departedAt;
+      sq.target = null;
+    }
+    const c = squadShape(sq);
+    if (target && target.edge >= 0 && this.time >= sq.nextDecide) {
+      sq.nextDecide = this.time + SQUAD.decideEvery;
+      const p = this.posOf(target);
+      // Fighting on the way: any of its next two junctions in a zone.
+      let threatAhead = 0;
+      for (let i = target.ri; i < Math.min(target.route.length, target.ri + 3); i++) {
+        const n = d.nodes[d.edges[target.route[i]].to];
+        threatAhead = Math.max(threatAhead, this.threatAt(n.x, n.z) > 0 ? 1 : 0);
+      }
+      const lane = this.lanes[target.edge][target.lane] ?? [];
+      const obs: SquadObs = {
+        dist: Math.hypot(c.x - p.x, c.z - p.z), targetSpeed: target.speed, spread: c.spread, threatAhead, threatNear: this.threatAt(c.x, c.z),
+        units: c.units, urgency: target.urgency, queueAhead: lane.filter((o) => o.s > target.s && o.speed < 1).length,
+      };
+      const dec = squadPolicy.decide(obs, this.settings.driver);
+      if (this.brainLog) this.brainLog.push({ policy: 'squad', x: squadPolicy.encode(obs), y: SQUAD_ACTIONS.indexOf(dec.action) });
+      const dec0 = this.metricsData.escort.decisions;
+      dec0[dec.action] = (dec0[dec.action] ?? 0) + 1;
+      sq.decisions[dec.action]++;
+      if (dec.action !== sq.slot) sq.log.push({ t: this.time, text: `${dec.action}${dec.action === 'ahead' ? ' (clear the way)' : dec.action === 'regroup' ? ` (spread ${c.spread.toFixed(0)} m)` : ''}` });
+      sq.slot = dec.action;
+    }
+    // Where it holds, and the units moving there (each at its own pace).
+    if (target && target.edge >= 0) {
+      const p = this.posOf(target);
+      const off = sq.slot === 'ahead' ? SQUAD.ahead : sq.slot === 'behind' ? -SQUAD.behind : sq.slot === 'fallback' ? -SQUAD.fallback : 0;
+      sq.aim = sq.slot === 'regroup' ? { x: c.x, z: c.z } : sq.slot === 'flank' ? { x: p.x - p.dz * SQUAD.flank, z: p.z + p.dx * SQUAD.flank } : { x: p.x + p.dx * off, z: p.z + p.dz * off };
+    }
+    sq.units.forEach((u, i) => {
+      if (u.down) return;
+      const gx = sq.aim.x + (i % 2 ? 3 : -3), gz = sq.aim.z + (i < 2 ? 3 : -3);
+      const dx = gx - u.x, dz = gz - u.z, dd = Math.hypot(dx, dz);
+      const step = Math.min(dd, SQUAD.speed * u.lag * dt * (sq.slot === 'regroup' ? 0.6 : 1));
+      if (dd > 1e-6) { u.x += (dx / dd) * step; u.z += (dz / dd) * step; }
+      // In the fighting, a unit can be hurt (seeded); the squad fights on with fewer.
+      if (this.threatAt(u.x, u.z) > 0.5 && this.rand() < 0.0004) { u.down = true; sq.log.push({ t: this.time, text: `a unit is down (${squadShape(sq).units} left)` }); }
+    });
+  }
+
+  /** Send the drone from the depot to the clinic with a small delivery. False if it is not at the depot. */
+  sendDrone(): boolean {
+    const dr = this.drone, d = this.district;
+    if (dr.state !== 'idle') return false;
+    const clinic = d.nodes[d.places.clinic];
+    dr.path = [{ x: (dr.x + clinic.x) / 2, z: (dr.z + clinic.z) / 2 - 120 }, { x: clinic.x, z: clinic.z }];
+    dr.to = 'clinic';
+    dr.state = 'flying';
+    dr.launchedAt = this.time;
+    dr.log.push({ t: this.time, text: `launched for the clinic with ${DRONE.payload} units` });
+    return true;
+  }
+
+  /** Is the clinic's pad free? (An ambulance stands on it now and then.) */
+  padBusy(): boolean {
+    if (!this.settings.padEvents) return false;
+    const t = this.time;
+    return (t > 170 && t < 215) || (t > 520 && t < 565);
+  }
+
+  private stepDrone(dt: number): void {
+    const dr = this.drone, d = this.district;
+    if (dr.state === 'idle' || dr.state === 'delivered' || dr.state === 'diverted' || dr.state === 'lost') return;
+    const w = windAt(this.time, this.settings.wind, this.settings.seed);
+    const pad = dr.path[dr.path.length - 1];
+    if (dr.state === 'landing') {
+      if (this.time - dr.landedAt >= DRONE.landTime) {
+        if (dr.to === 'clinic') {
+          this.stock.level += DRONE.payload;
+          this.metricsData.drone.delivered += DRONE.payload;
+          dr.state = 'delivered';
+          dr.log.push({ t: this.time, text: `delivered ${DRONE.payload} units to the clinic` });
+        } else {
+          dr.state = 'diverted';
+          dr.log.push({ t: this.time, text: 'landed at the shelter (diverted): delivery not made' });
+        }
+        this.metricsData.drone.flightTime = this.time - dr.launchedAt;
+      }
+      return;
+    }
+    dr.battery -= dt * (dr.state === 'holding' ? DRONE.holdCost : 1);
+    if (dr.battery <= 0) { dr.state = 'lost'; dr.log.push({ t: this.time, text: 'battery flat: down' }); return; }
+    const near = Math.hypot(pad.x - dr.x, pad.z - dr.z);
+    if (dr.path.length === 1 && near < DRONE.approach) {
+      // At the pad: the landing policy.
+      const shelter = d.nodes[d.places.shelter];
+      const obs: LandObs = { padBusy: dr.to === 'clinic' && this.padBusy() ? 1 : 0, battery: dr.battery / DRONE.battery, dist: near, wind: Math.hypot(w.x, w.z), altDist: Math.hypot(shelter.x - dr.x, shelter.z - dr.z), held: dr.heldSince === null ? 0 : this.time - dr.heldSince };
+      const dec = landingPolicy.decide(obs, this.settings.driver);
+      if (this.brainLog) this.brainLog.push({ policy: 'landing', x: landingPolicy.encode(obs), y: LAND_ACTIONS.indexOf(dec.action) });
+      dr.decisions[dec.action]++;
+      if (dec.action === 'land' && !obs.padBusy) {
+        dr.state = 'landing';
+        dr.landedAt = this.time;
+        dr.x = pad.x; dr.z = pad.z;
+        return;
+      }
+      if (dec.action === 'divert') {
+        dr.path = [{ x: shelter.x, z: shelter.z }];
+        dr.to = 'shelter';
+        dr.state = 'flying';
+        dr.heldSince = null;
+        dr.log.push({ t: this.time, text: `pad busy, battery ${(obs.battery * 100).toFixed(0)}%: diverting to the shelter` });
+        return;
+      }
+      // Hold (or a landing refused because the pad is taken): circle.
+      if (dr.heldSince === null) { dr.heldSince = this.time; dr.log.push({ t: this.time, text: 'pad busy: holding' }); }
+      dr.state = 'holding';
+      dr.heading += dt * 0.6;
+      dr.x = pad.x + Math.cos(dr.heading) * 18;
+      dr.z = pad.z + Math.sin(dr.heading) * 18;
+      return;
+    }
+    dr.state = 'flying';
+    const wp = dr.path[0];
+    const tx = wp.x - dr.x, tz = wp.z - dr.z, dist = Math.hypot(tx, tz);
+    if (dr.path.length > 1 && dist < 20) { dr.path.shift(); return; }
+    const want = Math.atan2(tz, tx);
+    // Wind across the track (+ pushes it to the left of the line, with +x east and +z south) and along it.
+    const ux = tx / Math.max(1e-6, dist), uz = tz / Math.max(1e-6, dist);
+    const cross = -(w.x * -uz + w.z * ux), head = w.x * ux + w.z * uz;
+    // The drift: where the wind would take it over the ground if it headed straight down the line.
+    const gx = Math.cos(want) * DRONE.airspeed + w.x, gz = Math.sin(want) * DRONE.airspeed + w.z;
+    let err = Math.atan2(gz, gx) - want;
+    err = Math.atan2(Math.sin(err), Math.cos(err));
+    const obs: FlightObs = { bearingErr: err, dist, last: dr.path.length === 1 ? 1 : 0, cross, head, speed: DRONE.airspeed + head, battery: dr.battery / DRONE.battery };
+    const dec = flightPolicy.decide(obs, this.settings.driver);
+    if (this.brainLog) this.brainLog.push({ policy: 'flight', x: flightPolicy.encode(obs), y: FLIGHT_ACTIONS.indexOf(dec.action) });
+    dr.decisions[dec.action]++;
+    const crab = dec.action === 'crabLeft' ? -DRONE.crab : dec.action === 'crabRight' ? DRONE.crab : 0;
+    // Crabbing right means heading to the right of the line (clockwise seen from above: +angle).
+    dr.heading = want + crab;
+    const air = dec.action === 'slow' ? DRONE.slow : DRONE.airspeed;
+    dr.x += (Math.cos(dr.heading) * air + w.x) * dt;
+    dr.z += (Math.sin(dr.heading) * air + w.z) * dt;
   }
 
   /** A new job for a vehicle already on the road: a route on from the end of its edge. */
@@ -455,6 +659,7 @@ export class Scenario {
         truck.payload = SCENARIO.delivery;
         this.trip(truck, d.places.clinic, 'deliver');
         this.metricsData.deliveries.push({ dispatched: truck.departedAt, arrived: null, lateness: null });
+        if (s.escortAuto === 'truck' && !this.escortArmed && this.closures.size) { this.escortArmed = true; this.escort(truck.id); }
       }
       this.nextDeliverAt = t + SCENARIO.deliverEvery;
     }
@@ -476,9 +681,11 @@ export class Scenario {
         v.dwellUntil = t + i * 6;
         v.dest = d.places.eastExit;
         v.job = 'reinforce';
+        if (i === 0 && s.escortAuto === 'convoy') this.escort(v.id);
       }
       this.metricsData.convoy.trucks = 4;
     }
+    if (s.droneAt !== null && t >= s.droneAt && this.drone.state === 'idle' && !this.droneSent) { this.droneSent = true; this.sendDrone(); }
     // Vehicles whose dwell is over set off.
     for (const v of this.vehicles) {
       if (v.edge >= 0 || v.departing || t < v.dwellUntil) continue;
@@ -488,6 +695,7 @@ export class Scenario {
     }
   }
   private closedOnce = false;
+  private droneSent = false;
 
   // ------------------------------------------------------------------ the drive
 
@@ -576,7 +784,7 @@ export class Scenario {
     const nextQueue = next !== undefined ? (this.lanes[next] ?? []).reduce((n, q) => n + q.filter((o) => o.speed < 1).length, 0) : 0;
     const nextClosed = next !== undefined && (v.known.has(next) || (d.edges[next].emergencyOnly && !v.emergency)) ? 1 : 0;
     let emergencyBehind = 0;
-    if (!v.emergency) for (const q of this.lanes[v.edge]) for (const o of q) if (o.emergency && o.s < v.s && v.s - o.s < 60) emergencyBehind = 1;
+    if (!v.emergency) for (const q of this.lanes[v.edge]) for (const o of q) if ((o.emergency || this.escortedBy(o, ['ahead'])) && o.s < v.s && v.s - o.s < 60) emergencyBehind = 1;
     // The route's delay against the best one it knows (from the end of this edge).
     const cur = routeTime(d, v.route, v.ri + 1, 0, this.load);
     const best = this.best(e.to, v.dest, v);
@@ -696,6 +904,7 @@ export class Scenario {
         const atEnd = v.ri >= v.route.length - 1;
         // What it must stop for: the vehicle ahead, or the junction if it cannot go on.
         let gap = lead ? lead.s - KIND[lead.kind].len - v.s : Infinity, lv = lead ? lead.speed : 0;
+        if (this.time < v.holdUntil) { gap = 0; lv = 0; }
         if (!atEnd && next !== undefined && !this.canEnter(v, next)) {
           const g = e.length - v.s - 0.5;
           if (g < gap) { gap = g; lv = 0; }
@@ -753,7 +962,7 @@ export class Scenario {
     }
     // Right of way: emergency vehicles first when the player orders it, or when they come in on an
     // emergency lane (the lane carries its own signal priority).
-    const first = (v: Vehicle) => v.emergency && (s.priorities.ambulancesFirst || (v.edge >= 0 && d.edges[v.edge].emergencyLane));
+    const first = (v: Vehicle) => (v.emergency && (s.priorities.ambulancesFirst || (v.edge >= 0 && d.edges[v.edge].emergencyLane))) || this.escortedBy(v, ['ahead']);
     asks.sort((a, b) => {
       const pa = first(a.v) ? 0 : 1, pb = first(b.v) ? 0 : 1;
       return pa - pb || a.since - b.since || a.v.id - b.v.id;
@@ -772,11 +981,25 @@ export class Scenario {
       v.enteredAt = this.time;
       v.s = carry;
       v.lane = lane;
+      // Driving into fighting: held up unless escorted from ahead or the flank (judged where it now is).
+      const end = d.nodes[e.to];
+      const zone = this.zones.find((zn) => this.time < zn.until && Math.hypot(zn.x - end.x, zn.z - end.z) < zn.r);
+      if (zone && !v.emergency && this.rand() < 0.5) {
+        if (this.escortedBy(v, ['ahead', 'flank'])) this.note(v, 'wait', `escort covered it through the fighting at ${zone.name}`);
+        else {
+          v.holdUntil = this.time + 12 + this.rand() * 10;
+          this.metricsData.heldUp++;
+          if (this.squad.target === v.id) this.metricsData.escort.heldUp++;
+          this.note(v, 'wait', `held up by fighting at ${zone.name}`);
+        }
+      }
       v.decidedOn = -1;
       this.nodeBusy[ask.node] = this.time + (v.kind === 'truck' || v.kind === 'convoy' ? SCENARIO.junctionHeavy : SCENARIO.junction);
       // The new lane's list is rebuilt next step; keep this step's view honest.
       this.lanes[ask.next][lane].push(v);
     }
+    this.stepSquad(dt);
+    this.stepDrone(dt);
     // The clinic's stock.
     this.stock.level -= SCENARIO.stockUse * dt;
     if (this.stock.level <= 0) { this.stock.shortage += dt; this.stock.everShort = true; this.stock.level = Math.max(this.stock.level, -5); }
@@ -829,6 +1052,8 @@ export class Scenario {
     m.stockEnd = this.stock.level;
     m.untreated = this.stock.untreated;
     m.recoveredAt = this.stock.recoveredAt;
+    m.drone.state = this.drone.state;
+    m.drone.decisions = { ...this.drone.decisions };
     return m;
   }
 

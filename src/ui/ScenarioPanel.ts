@@ -2,14 +2,16 @@ import { LAYOUT_LABEL, LAYOUTS, type Layout } from '../scenario/district.ts';
 import { clock } from '../scenario/log.ts';
 import { DRIVE_ACTIONS } from '../scenario/policies.ts';
 import { KIND, Scenario, summary, type ScenarioSettings } from '../scenario/scenario.ts';
+import { squadShape } from '../scenario/escort.ts';
+import { DRONE } from '../scenario/drone.ts';
 import { CHART, GeneChart } from './EvolutionCharts.ts';
 
 /**
  * The Scenario Lab's panel: run it, set who drives (the scripted driver or the networks) and on
  * which street network, close and reopen the crossings, give the player's orders, read the
- * district's state (deliveries, ambulances, the evacuation, the convoy, the clinic), watch it
- * over time, inspect any vehicle's decisions, and compare drivers and street networks on the
- * same encounter.
+ * district's state (deliveries, ambulances, the evacuation, the convoy, the clinic), order the
+ * escort squad onto a vehicle and send the supply drone, watch it over time, inspect any
+ * vehicle's decisions, and compare drivers and street networks on the same encounter.
  */
 export interface ScenarioHost {
   scenario(): Scenario;
@@ -39,6 +41,9 @@ export class ScenarioPanel {
   private readonly speedBtns = new Map<number, HTMLButtonElement>();
   private readonly closeBtns = new Map<string, HTMLButtonElement>();
   private readonly orders = new Map<string, HTMLInputElement>();
+  private readonly escortBtn: HTMLButtonElement;
+  private readonly droneBtn: HTMLButtonElement;
+  private readonly units: HTMLDivElement;
   /** Samples over time: clinic stock, vehicles standing on the roads, evacuees sheltered. */
   readonly history: Array<{ t: number; stock: number; waiting: number; sheltered: number }> = [];
 
@@ -50,7 +55,7 @@ export class ScenarioPanel {
     this.timeEl = el('span', 'sc-time', '0:00');
     head.append(this.timeEl);
     this.root.append(head);
-    this.root.append(el('p', 'sc-hint', 'One district, two crossings over the data channel. The east bank evacuates at 1:00; North Bridge closes at 1:30; the convoy must cross at 2:00. Click a vehicle to see why it did what it did.'));
+    this.root.append(el('p', 'sc-hint', 'One district, two crossings over the data channel. The east bank evacuates at 1:00; North Bridge closes at 1:30 and fighting goes on round its east end; the convoy must cross at 2:00. Click a vehicle to see why it did what it did, order the squad to escort it, or send the drone over the channel.'));
 
     // Run controls.
     const run = el('div', 'sc-row');
@@ -81,9 +86,13 @@ export class ScenarioPanel {
     seed.value = '1';
     seed.setAttribute('aria-label', 'Seed');
     seed.className = 'sc-seed';
-    for (const s of [driver, layout, seed]) s.addEventListener('change', () => this.restart());
-    this.settingsEls = { driver, layout, seed };
-    set.append(driver, layout, seed);
+    const wind = el('select');
+    wind.setAttribute('aria-label', 'Wind');
+    for (const [v, t] of [['0', 'Calm'], ['6', 'Breeze 6 m/s'], ['10', 'Strong 10 m/s']]) { const o = el('option', '', t); o.value = v; wind.append(o); }
+    wind.value = '6';
+    for (const s of [driver, layout, wind, seed]) s.addEventListener('change', () => this.restart());
+    this.settingsEls = { driver, layout, wind, seed };
+    set.append(driver, layout, wind, seed);
     this.root.append(set);
 
     // Incidents and orders (live).
@@ -113,6 +122,20 @@ export class ScenarioPanel {
       row.append(box, document.createTextNode(` ${label}`));
       this.root.append(row);
     }
+    const act = el('div', 'sc-row');
+    this.escortBtn = el('button', '', 'Escort selected');
+    this.escortBtn.addEventListener('click', () => {
+      const sc = host.scenario();
+      if (sc.squad.target !== null) sc.escort(null);
+      else if (host.selected !== null && sc.vehicles[host.selected].edge >= 0) sc.escort(host.selected);
+      this.refresh();
+    });
+    this.droneBtn = el('button', '', 'Send the drone');
+    this.droneBtn.addEventListener('click', () => { host.scenario().sendDrone(); this.refresh(); });
+    act.append(this.escortBtn, this.droneBtn);
+    this.root.append(act);
+    this.units = el('div', 'sc-units');
+    this.root.append(this.units);
 
     this.root.append(el('h4', '', 'The district'));
     this.stats = el('table', 'sc-kv');
@@ -135,12 +158,12 @@ export class ScenarioPanel {
     this.refresh();
   }
 
-  private settingsEls!: { driver: HTMLSelectElement; layout: HTMLSelectElement; seed: HTMLInputElement };
+  private settingsEls!: { driver: HTMLSelectElement; layout: HTMLSelectElement; wind: HTMLSelectElement; seed: HTMLInputElement };
 
   private settings(): Partial<ScenarioSettings> {
     const s = this.settingsEls;
     const priorities = { ambulancesFirst: !!this.orders.get('ambulancesFirst')?.checked, contraflow: !!this.orders.get('contraflow')?.checked, trucksHold: !!this.orders.get('trucksHold')?.checked };
-    return { driver: s.driver.value as ScenarioSettings['driver'], layout: s.layout.value as Layout, seed: Number(s.seed.value) | 0, priorities };
+    return { driver: s.driver.value as ScenarioSettings['driver'], layout: s.layout.value as Layout, wind: Number(s.wind.value), seed: Number(s.seed.value) | 0, priorities };
   }
 
   private restart(): void {
@@ -176,6 +199,23 @@ export class ScenarioPanel {
       }
     }
     for (const [k, box] of this.orders) box.checked = sc.settings.priorities[k as keyof ScenarioSettings['priorities']];
+    // The squad and the drone: their orders, what their policies chose, and how it went.
+    const sq = sc.squad, dr = sc.drone, sel = h.selected !== null ? sc.vehicles[h.selected] : null;
+    this.escortBtn.textContent = sq.target !== null ? 'Stand the squad down' : 'Escort selected';
+    this.escortBtn.disabled = sq.target === null && !(sel && sel.edge >= 0);
+    this.droneBtn.disabled = dr.state !== 'idle';
+    this.units.replaceChildren();
+    const unit = (name: string, now: string, last?: string) => {
+      const row = el('div', 'sc-unit');
+      row.append(el('b', '', name), document.createTextNode(` ${now}`));
+      if (last) row.append(el('span', 'sc-unit-last', ` · ${last}`));
+      this.units.append(row);
+    };
+    const tgt = sq.target !== null ? sc.vehicles[sq.target] : null;
+    const lastSq = sq.log[sq.log.length - 1];
+    unit('Squad', tgt ? `escorting ${KIND[tgt.kind].label} #${tgt.id}, holding ${sq.slot} · ${squadShape(sq).units} of 4 units` : 'standing by: select a vehicle, then Escort', lastSq ? `${clock(lastSq.t)} ${lastSq.text}` : undefined);
+    const lastDr = dr.log[dr.log.length - 1];
+    unit('Drone', `${dr.state}${dr.state === 'idle' ? ` at the depot with ${DRONE.payload} units` : ''} · battery ${Math.max(0, (dr.battery / DRONE.battery) * 100).toFixed(0)}%`, lastDr ? `${clock(lastDr.t)} ${lastDr.text}` : undefined);
     // The district now.
     const m = sc.metrics(), s = summary(m);
     this.stats.replaceChildren();
@@ -188,6 +228,10 @@ export class ScenarioPanel {
     kv('Clinic', `stock ${Math.max(0, sc.stock.level).toFixed(0)} · short for ${f0(m.shortage)} s${m.untreated ? ` · ${m.untreated} untreated` : ''}${m.recoveredAt ? ` · recovered at ${clock(m.recoveredAt)}` : ''}`);
     kv('Traffic', `longest queue ${m.maxQueue} · mean trip delay ${f0(s.delay)} s · collisions ${m.collisions}`);
     kv('Decisions', DRIVE_ACTIONS.map((a) => `${a} ${m.decisions[a]}`).join(' · '));
+    kv('Fighting', `${m.heldUp} held up${sc.zones.some((z) => sc.time < z.until) ? ` · at ${sc.zones.filter((z) => sc.time < z.until).map((z) => z.name).join(', ')}` : ''}`);
+    const sd = Object.entries(sq.decisions).filter(([, n]) => n).map(([a, n]) => `${a} ${n}`).join(' · ');
+    const fd = Object.entries(dr.decisions).filter(([, n]) => n).map(([a, n]) => `${a} ${n}`).join(' · ');
+    if (sd || fd) kv('Squad, drone', [sd && `squad: ${sd}`, fd && `drone: ${fd}`].filter(Boolean).join(' / '));
     const times = this.history.map((x) => x.t);
     this.stockChart.set(times, [
       { label: 'Clinic stock', color: CHART.series[1], values: this.history.map((x) => x.stock) },
@@ -199,7 +243,7 @@ export class ScenarioPanel {
     this.inspect.replaceChildren();
     if (!v) { this.inspect.textContent = 'Click a vehicle on the map.'; return; }
     const pol = sc.policyOf(v);
-    const title = el('div', 'sc-vtitle', `${KIND[v.kind].label} #${v.id} · ${v.job} · ${pol.id} policy (${sc.settings.driver === 'net' && pol.net ? 'network' : 'scripted'})${v.edge >= 0 ? ` · ${(v.speed * 3.6).toFixed(0)} km/h on ${sc.district.edges[v.edge].name}` : ' · parked'}`);
+    const title = el('div', 'sc-vtitle', `${KIND[v.kind].label} #${v.id}${sq.target === v.id ? ' (escorted)' : ''} · ${v.job} · ${pol.id} policy (${sc.settings.driver === 'net' && pol.net ? 'network' : 'scripted'})${v.edge >= 0 ? ` · ${(v.speed * 3.6).toFixed(0)} km/h on ${sc.district.edges[v.edge].name}` : ' · parked'}`);
     const why = el('div', 'sc-why', sc.explain(v.id));
     const list = el('ol', 'sc-log');
     for (const e of v.log.slice(-8).reverse()) list.append(el('li', '', `${clock(e.t)} ${e.text}`));

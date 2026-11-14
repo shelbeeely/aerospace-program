@@ -462,14 +462,15 @@ whoever holds their lot, fight only while that side is at war, and only through 
 one district whose roads carry its work: commuters, freight from the depot to the clinic,
 ambulances answering calls, an evacuation from the east bank to the shelter, and a military
 convoy. A recessed data channel cuts the district in two; North Bridge and South Bridge cross
-it. The east bank evacuates at 1:00, **North Bridge closes at 1:30**, the convoy must cross at
-2:00, and the district keeps running to 20:00, so you see which services recover and which
-shortages linger.
+it. The east bank evacuates at 1:00, **North Bridge closes at 1:30** and fighting goes on round
+its east end for six minutes, the convoy must cross at 2:00, and the district keeps running to
+20:00, so you see which services recover and which shortages linger.
 
 - **Run it, break it, order it.** Run at 1×, 4× or 16×; close or reopen either crossing; order
   ambulances first at junctions, an evacuation contraflow on South Bridge, or trucks to hold
-  during the evacuation. The panel shows freight, ambulance calls, the evacuation, the convoy,
-  the clinic's stock and the traffic, with a chart over time.
+  during the evacuation; pick the wind. The panel shows freight, ambulance calls, the
+  evacuation, the convoy, the clinic's stock, the fighting and the traffic, with a chart over
+  time.
 - **Ask why.** Click any vehicle for its job, its policy and its story, built only from what it
   recorded: *Clinic via North Bridge (est 1.2 min) → saw North Bridge closed (1:30) → rerouted
   via South Bridge (+0.8 min)*.
@@ -482,7 +483,7 @@ shortages linger.
   elsewhere road by road; same vehicles, same cargo.
 - **Trained from a scripted driver.** `npm run train-drive` records the scripted driver across
   64 runs, adds hard cases (blocked lanes, competing merges, emergency traffic, closures) and
-  trains by imitation: 99.8% agreement with the teacher on held-out decisions. `--evolve N`
+  trains by imitation: 99.9% agreement with the teacher on held-out decisions. `--evolve N`
   then refines it by evolution, after
   [trekhleb/self-parking-car-evolution](https://github.com/trekhleb/self-parking-car-evolution)
   (MIT; the approach, not its code). Deterministic: the same seed writes the same weights.
@@ -491,16 +492,32 @@ shortages linger.
 
   | | late freight | ambulance | trip delay | clinic short |
   | --- | --- | --- | --- | --- |
-  | scripted driver | 100 s | 162 s | 63 s | 553 s |
-  | neural networks | 99 s | 151 s | 64 s | 573 s |
+  | scripted driver | 105 s | 153 s | 65 s | 541 s |
+  | neural networks | 102 s | 151 s | 65 s | 535 s |
 
   And the design test, the same encounter on another street network: a backup crossing cuts the
-  evacuation from 8:44 to 7:14 and the trip delay from 63 s to 44 s; a depot on the clinic's
-  bank keeps the clinic supplied (18 s short instead of 553 s); an emergency lane on Market Road
-  helps the ambulances (140 s instead of 162 s) but not the freight.
+  evacuation from 8:42 to 7:04 and the trip delay from 65 s to 46 s; a depot on the clinic's
+  bank keeps the clinic supplied (22 s short instead of 541 s); an emergency lane on Market Road
+  helps the ambulances (141 s instead of 153 s) but not the freight.
+- **The escort squad** (`src/scenario/escort.ts`). Select a vehicle and order the squad to
+  escort it; the order holds until it arrives or you stand the squad down. The squad's network
+  chooses where to hold (ahead to clear the way, behind, on the flank) and when to regroup or
+  fall back. The engine moves the four units and decides the fighting. A vehicle driving into
+  the fighting is held up half the time unless escorted from ahead or the flank. Escorted from
+  ahead, it gets the right of way and traffic moves over for it. Over six seeds, the convoy's
+  lead was held up 0 times escorted against 3 alone, and the first truck after the closure
+  1 time against 5; both got through faster escorted.
+- **The supply drone** (`src/scenario/drone.ts`). *Send the drone* flies three units from the
+  depot's pad to the clinic's over the channel, while the trucks go the long way round. Its
+  flight policy flies straight, crabs into the crosswind or slows for the approach. At the pad
+  its landing policy lands, holds, or diverts to the shelter when the pad is busy and the
+  battery is running down. It delivers in about a minute, in calm air and in wind up to 10 m/s.
+  `npm run train-squad` trains both from their scripted teachers (98.8% squad, 98.6% flight
+  and 97.7% landing agreement on held-out decisions) and writes the weights deterministically.
 - Check: `npm run scenario` (determinism, no collisions, nobody on a closed crossing, rerouting,
   the comparison within 25%, both levels of detail agree, shortages when shipments never come,
-  policy switches, the recorded stories, the design test).
+  policy switches, the recorded stories, the design test, the escort holding its order and
+  getting its vehicle through, the drone delivering in wind and diverting from a busy pad).
 
 ## Programs: the working population of the streets
 

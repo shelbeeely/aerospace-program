@@ -387,8 +387,14 @@ universe, not a conventional open world decorated with neon.
   yield, merge or reroute; the engine drives (car-following), judges whether a lane change is
   safe, gives the right of way at junctions, keeps everyone off closed roads and routes by
   travel time. A policy can ask for something unsafe and simply not get it. New roles follow
-  the same split (squads: position and regroup, the engine moves and fights; aircraft:
-  waypoints and approach, the engine flies).
+  the same split.
+- **Squads and aircraft** (`src/scenario/escort.ts`, `src/scenario/drone.ts`). The player's
+  order is a squad's objective and holds until the order changes or the escorted vehicle
+  arrives. The squad's network picks where to hold (ahead, behind, flank) and when to regroup
+  or fall back; the engine moves the units, decides the fighting, and gives a vehicle escorted
+  from ahead the right of way. A drone's flight policy picks straight, crab left, crab right
+  or slow; its landing policy picks land, hold or divert. The engine flies it, drains the
+  battery and says whether the pad is free.
 - **One policy per role.** Every agent of a role shares its network; what makes each different
   (urgency, cargo, profile, job) is in its inputs. An agent switches policy when its job changes
   (an ambulance on a call drives by `respond`, afterwards by `drive`).
@@ -400,14 +406,16 @@ universe, not a conventional open world decorated with neon.
 - **Explanations come from records.** Every route set and changed, closure seen or heard of,
   wait and yield is logged as it happens; "why is this ambulance late" (`explain`) is built
   only from those records.
-- **Train and compare.** `npm run train-drive` records the scripted driver (plus generated hard
-  cases), trains by imitation and optionally refines by evolution, and writes
-  `src/brain/weights/*.json` deterministically; regenerate it rather than editing it. A change
+- **Train and compare.** `npm run train-drive` (drivers) and `npm run train-squad` (the squad
+  and the drone) record the scripted teachers (plus generated hard cases), train by imitation
+  (driving can also be refined by evolution), and write `src/brain/weights/*.json`
+  deterministically; regenerate them rather than editing them. A change
   to a policy's inputs or actions retrains it. `npm run scenario` keeps the networks within a
   stated margin of the scripted baseline, with no collisions and nobody on a closed road.
 - The Scenario Lab (`scenario.html`) is the proving ground: one district, two crossings over a
-  data channel, an evacuation and a closure; its layouts are the design test (does a different
-  street network change the plan?). Check: `npm run scenario`.
+  data channel, an evacuation and a closure, fighting at the broken crossing, an escort squad
+  and a supply drone; its layouts are the design test (does a different street network change
+  the plan?). Check: `npm run scenario`.
 
 ## 18. Destruction (project)
 

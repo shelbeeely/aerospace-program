@@ -47,6 +47,7 @@
     "evolution": "node --experimental-transform-types --no-warnings scripts/evolution.ts",
     "sappers": "node --experimental-transform-types --no-warnings scripts/sappers.ts",
     "train-drive": "node --experimental-transform-types --no-warnings scripts/trainDrive.ts",
+    "train-squad": "node --experimental-transform-types --no-warnings scripts/trainSquad.ts",
     "scenario": "node --experimental-transform-types --no-warnings scripts/scenario.ts",
     "programs": "node --experimental-transform-types --no-warnings scripts/programs.ts",
     "navigator": "node --experimental-transform-types --no-warnings scripts/navigator.ts",

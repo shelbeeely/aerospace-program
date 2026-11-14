@@ -1,11 +1,14 @@
 import type { Scenario, VehicleKind, VehicleView } from '../scenario/scenario.ts';
+import { squadShape } from '../scenario/escort.ts';
 
 /**
  * The Scenario Lab's district drawn top-down on a canvas, in the 1982 palette: a dark substrate,
  * blocks as large unlit panels, the data channel recessed between dim cyan edges, roads in dim
  * cyan (the bridges brighter, Market Road amber), closed crossings dark with a red bar at each
  * end (the road-damage convention), places marked by function, and the vehicles as small lit
- * marks by role. Light says what something does; most of the map stays dark.
+ * marks by role. Fighting is a dim red disc; the escort squad four cyan diamonds (a line to the
+ * vehicle it escorts); the drone a white dart with its course dashed. Light says what something
+ * does; most of the map stays dark.
  */
 export const ROLE_LIGHT: Record<VehicleKind, string> = {
   car: '#3d7cff',
@@ -103,6 +106,19 @@ export class ScenarioMap {
         }
       }
     }
+    // Fighting: a dim red disc with a dashed rim, while it lasts.
+    for (const zn of sc.zones) {
+      if (sc.time >= zn.until) continue;
+      c.fillStyle = 'rgba(255, 42, 18, 0.07)';
+      c.strokeStyle = 'rgba(255, 42, 18, 0.5)';
+      c.lineWidth = 1;
+      c.setLineDash([3, 5]);
+      c.beginPath();
+      c.arc(this.sx(zn.x), this.sz(zn.z), zn.r * k, 0, Math.PI * 2);
+      c.fill();
+      c.stroke();
+      c.setLineDash([]);
+    }
     // Places.
     const place = (id: Parameters<Scenario['place']>[0], colour: string, label: string, fill: boolean) => {
       const p = sc.place(id);
@@ -148,6 +164,49 @@ export class ScenarioMap {
         c.arc(cx, cz, 9, 0, Math.PI * 2);
         c.stroke();
       }
+    }
+    // The escort squad: four small diamonds, a faint line to the vehicle it escorts.
+    const sq = sc.squad, tv = sq.target !== null ? this.last.find((v) => v.id === sq.target) : undefined;
+    if (tv) {
+      const cs = squadShape(sq);
+      c.strokeStyle = 'rgba(54, 226, 255, 0.35)';
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(this.sx(cs.x), this.sz(cs.z));
+      c.lineTo(this.sx(tv.x), this.sz(tv.z));
+      c.stroke();
+    }
+    c.fillStyle = '#36e2ff';
+    for (const u of sq.units) {
+      if (u.down) continue;
+      const ux = this.sx(u.x), uz = this.sz(u.z);
+      c.beginPath();
+      c.moveTo(ux, uz - 3.5); c.lineTo(ux + 3.5, uz); c.lineTo(ux, uz + 3.5); c.lineTo(ux - 3.5, uz);
+      c.closePath();
+      c.fill();
+    }
+    // The drone: a dart pointing where it heads, its course dashed while it flies.
+    const dr = sc.drone;
+    if (dr.state === 'flying' || dr.state === 'holding') {
+      c.strokeStyle = 'rgba(223, 246, 255, 0.4)';
+      c.lineWidth = 1;
+      c.setLineDash([4, 4]);
+      c.beginPath();
+      c.moveTo(this.sx(dr.x), this.sz(dr.z));
+      for (const p of dr.path) c.lineTo(this.sx(p.x), this.sz(p.z));
+      c.stroke();
+      c.setLineDash([]);
+    }
+    if (dr.state !== 'lost') {
+      c.save();
+      c.translate(this.sx(dr.x), this.sz(dr.z));
+      c.rotate(dr.heading);
+      c.fillStyle = dr.state === 'idle' || dr.state === 'delivered' || dr.state === 'diverted' ? 'rgba(223, 246, 255, 0.45)' : '#dff6ff';
+      c.beginPath();
+      c.moveTo(7, 0); c.lineTo(-5, 4.5); c.lineTo(-2.5, 0); c.lineTo(-5, -4.5);
+      c.closePath();
+      c.fill();
+      c.restore();
     }
   }
 }

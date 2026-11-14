@@ -14,8 +14,14 @@
  *    shipped weights fit the policies; a delayed vehicle's story comes from its recorded events.
  * 6. The design test: the same encounter on a different street network plays out differently
  *    (a backup crossing, a depot on the clinic's bank).
+ * 7. The escort squad and the supply drone: the squad keeps its order until the escorted vehicle
+ *    arrives and gets it through faster; the drone delivers in calm and windy air, crabs into a
+ *    crosswind, and diverts when the clinic's pad is busy; the networks match the scripted
+ *    leader and pilot within a margin.
  */
 import { DRIVE_ACTIONS, drivePolicy, loadDriveWeights, respondPolicy } from '../src/scenario/policies.ts';
+import { loadSquadWeights, squadPolicy } from '../src/scenario/escort.ts';
+import { flightPolicy, landingPolicy, loadDroneWeights } from '../src/scenario/drone.ts';
 import { Scenario, summary, type ScenarioSettings } from '../src/scenario/scenario.ts';
 
 let failures = 0;
@@ -112,6 +118,45 @@ console.log('\n--- the design test: the same encounter on another street network
   row('depot on the clinic bank', depot);
   check(mean(backup.map((x) => x.evacuated)) < mean(base.map((x) => x.evacuated)) - 30 && mean(backup.map((x) => x.delay)) < mean(base.map((x) => x.delay)), 'a backup crossing speeds the evacuation and cuts the delay');
   check(mean(depot.map((x) => x.shortage)) < mean(base.map((x) => x.shortage)) * 0.5, 'a depot on the clinic\'s bank keeps the clinic supplied through the closure');
+}
+
+console.log('\n--- the escort squad and the supply drone');
+{
+  const sq = loadSquadWeights(), dr = loadDroneWeights();
+  check(sq && dr.flight && dr.landing, 'the shipped squad and drone weights fit their policies', `squad ${squadPolicy.sizes.join('-')}, flight ${flightPolicy.sizes.join('-')}, landing ${landingPolicy.sizes.join('-')}`);
+  // The same vehicle with and without the escort, on the same seeds: its trip (route set to arrival) and its hold-ups.
+  const tripOf = (s: Scenario, id: number) => {
+    const log = s.vehicles[id].log, from = log.find((l) => l.kind === 'route'), to = log.find((l) => l.kind === 'arrive');
+    return from && to ? to.t - from.t : Infinity;
+  };
+  const holdsOf = (s: Scenario, id: number) => s.vehicles[id].log.filter((l) => l.text.startsWith('held up')).length;
+  for (const driver of ['scripted', 'net'] as const) {
+    for (const escortAuto of ['convoy', 'truck'] as const) {
+      const esc = [1, 2, 3, 4, 5, 6].map((seed) => run({ seed, driver, escortAuto }));
+      const none = [1, 2, 3, 4, 5, 6].map((seed) => run({ seed, driver, escortAuto: 'none' }));
+      const ids = esc.map((s) => s.metrics().escort.target!);
+      const kept = esc.every((s) => s.metrics().escort.done && s.squad.log.filter((l) => l.text.startsWith('ordered')).length === 1);
+      const tE = mean(esc.map((s, i) => tripOf(s, ids[i]))), tA = mean(none.map((s, i) => tripOf(s, ids[i])));
+      const hE = esc.reduce((n, s, i) => n + holdsOf(s, ids[i]), 0), hA = none.reduce((n, s, i) => n + holdsOf(s, ids[i]), 0);
+      const what = escortAuto === 'convoy' ? "the convoy's lead" : 'the first truck after the closure';
+      check(kept, `${driver}: the squad keeps its order to escort ${what} until it arrives`);
+      check(hE < hA && tE < tA, `${driver}: escorted, ${what} is held up less and gets through faster`, `${f0(tE)} s escorted vs ${f0(tA)} s alone; held up ${hE} vs ${hA} times in six runs`);
+    }
+  }
+  const fly = (driver: 'scripted' | 'net', wind: number, seed: number) => { const s = new Scenario({ seed, driver, droneAt: 300, wind }); s.run(500); return s; };
+  for (const driver of ['scripted', 'net'] as const) {
+    const flights = [0, 6, 10].flatMap((wind) => [1, 2].map((seed) => fly(driver, wind, seed)));
+    check(flights.every((s) => s.drone.state === 'delivered'), `${driver}: the drone delivers in calm air and in wind up to 10 m/s`, flights.map((s) => `${f0(s.metrics().drone.flightTime ?? NaN)} s`).join(' '));
+    const calm = flights[0], windy = flights[2];
+    check(calm.drone.decisions.crabLeft + calm.drone.decisions.crabRight === 0 && windy.drone.decisions.crabLeft + windy.drone.decisions.crabRight > 0, `${driver}: it flies straight in calm air and crabs into a crosswind`);
+    const busy = new Scenario({ seed: 1, driver, droneAt: 125, wind: 6 });
+    busy.drone.battery = 160;
+    busy.run(400);
+    check(busy.drone.state === 'diverted', `${driver}: the clinic's pad busy and holding costly, it diverts to the shelter`, busy.drone.log.map((l) => l.text).join(' → '));
+  }
+  const tS = mean([0, 6, 10].map((w) => fly('scripted', w, 1).metrics().drone.flightTime ?? Infinity));
+  const tN = mean([0, 6, 10].map((w) => fly('net', w, 1).metrics().drone.flightTime ?? Infinity));
+  check(tN <= tS * 1.25 + 5, 'the flight network is no slower than the scripted pilot (within 25%)', `${f0(tN)} s vs ${f0(tS)} s`);
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nAll scenario checks passed');
