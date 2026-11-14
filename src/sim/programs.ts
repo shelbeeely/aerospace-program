@@ -14,7 +14,8 @@ import { FREELANCER, MERC_LIGHT, sideLight, type Side, type Team } from './teams
  * - **Archivists** (Cyan): tall hexagonal carriers of a lit data cube. They wander Cyan
  *   districts and stop at the corners of blocks to upload into the buildings.
  * - **Sentinels** (Red): tapered columns under a red halo, on patrol in threes. A player on foot
- *   who is not Red is warned (NO) and, if they come on, derezzed. Red players are saluted.
+ *   who is not Red is warned (NO); if Red is hostile to them (war, wanted) and they come on,
+ *   derezzed. Red players are saluted.
  * - **Tenders** (Amber): squat drums with an amber band, in pairs. They walk to broken roads in
  *   reach and mend them: the closure lifts, the rubble goes.
  * - **Scavengers** (freelancers): low tetrahedra with fragments circling them, in bands. They
@@ -209,6 +210,9 @@ export interface ProgramWorld {
   /** The player on foot, and their team. */
   walker?: { active: boolean; downAt: number | null; x: number; y: number; z: number };
   team?: Team;
+  /** Is Red hostile to the player now (war, wanted, renegade)? Sentinels fire only then; at
+   *  peace they warn and stand their ground. Missing: hostile to every stranger. */
+  hostile?: () => boolean;
   /** Vehicles they can be run over by. */
   threats?: ReadonlyArray<{ x: number; y: number; z: number; vx: number; vz: number }>;
 }
@@ -385,7 +389,7 @@ export class Programs {
     const w = world.walker && world.walker.active && world.walker.downAt === null ? world.walker : null;
     for (const g of [...this.groups.values()]) {
       if (g.kind === 'sentinel' && w && world.team !== undefined) {
-        if (this.guard(g, w, world.team, dt, time)) shotPlayer = true;
+        if (this.guard(g, w, world.team, dt, time, world.hostile ? world.hostile() : true)) shotPlayer = true;
       }
       if (g.activity === 'alert') { this.file(g); continue; }
       if (g.activity === 'walk' && g.to) {
@@ -552,7 +556,7 @@ export class Programs {
    * A sentinel patrol and the player on foot: a stranger close by is warned and, if they keep
    * coming, derezzed; a Red player is saluted. True if it fired at the player.
    */
-  private guard(g: ProgramGroup, w: { x: number; y: number; z: number }, team: Team, dt: number, time: number): boolean {
+  private guard(g: ProgramGroup, w: { x: number; y: number; z: number }, team: Team, dt: number, time: number, hostile: boolean): boolean {
     const S = PROGRAMS.sentinel;
     let near: Program | null = null, nd = Infinity;
     for (const p of g.members) { const d = Math.hypot(p.x - w.x, p.z - w.z); if (d < nd) { nd = d; near = p; } }
@@ -578,6 +582,7 @@ export class Programs {
       return false;
     }
     g.until = time;
+    if (!hostile) { g.aim = 0; return false; } // at peace: a warning, nothing more
     if (nd < S.fire) g.aim += dt;
     if (g.aim < S.aim) return false;
     g.aim = 0;

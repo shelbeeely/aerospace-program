@@ -27,7 +27,7 @@ import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
 import { craftBounds, WEAPON_DAMAGE, WEAPONS, WeaponSystem, type Mount, type StrategicKind, type WeaponHost, type WeaponImpact, type WeaponKind } from './weapons.ts';
 import { AiAirTraffic, type AiFlyer, type AirTarget, type Foe } from './aiTraffic.ts';
-import { hostile, sideLight, sideLivery, sideName, TEAMS, type Side, type Team } from './teams.ts';
+import { atWar, diplomacy, DIPLOMACY, hostile, isTeam, resetDiplomacy, sideLight, sideLivery, sideName, TEAMS, type Side, type Team } from './teams.ts';
 import { CREDITS, mercPrice } from './mercenaries.ts';
 import { CHARGE, STRATEGIC, strategicPrice, type StrategicBlast } from './strategic.ts';
 import { GroundTurretSystem, lineOfSight, runwayDistance, TURRET_HEAD_Y, type GroundTurret } from './groundTurrets.ts';
@@ -211,6 +211,10 @@ export class Simulation {
     if (byPlayer && f.side !== null && hostile(this.team, f.side)) {
       this.airTraffic.kills++;
       this.earn(CREDITS.aircraft, `${f.name} shot down`);
+    } else if (byPlayer && f.side !== null && isTeam(f.side) && f.role !== 'merc' && f.role !== 'hacked') {
+      // Shot down at peace (or one of your own): no pay, and it counts.
+      this.provoke(f.side, `aircraft ${f.name}`, DIPLOMACY.severity.kill);
+      if (f.side === this.team) this.credits = Math.max(0, this.credits - Simulation.ROGUE.ffFine);
     }
     const p = f.pos;
     this.explosions.push({ x: p.x, y: p.y, z: p.z, time: this.time, radius: 6 + f.radius, color: f.color, speed: f.speed });
@@ -227,12 +231,17 @@ export class Simulation {
   derezTurret(t: GroundTurret, byPlayer = false, by: Side | null = byPlayer ? this.team : null): void {
     if (t.derezAt !== null) return;
     this.turretBlast(t);
-    if (byPlayer) {
+    // Only a war's kills pay or take ground: a rogue's (or a renegade's) count against it.
+    const war = by !== null && hostile(by, t.side);
+    if (byPlayer && war) {
       this.airTraffic.kills++;
       this.earn(CREDITS.turret, 'turret destroyed');
+    } else if (byPlayer && !t.hacked) {
+      this.provoke(t.side, 'turret', DIPLOMACY.severity.turretKill);
+      if (t.side === this.team) this.credits = Math.max(0, this.credits - Simulation.ROGUE.ffFine);
     }
-    this.capturedByPlayer = byPlayer;
-    this.groundTurrets.derez(t, this.time, by);
+    this.capturedByPlayer = byPlayer && war;
+    this.groundTurrets.derez(t, this.time, war ? by : null);
     this.capturedByPlayer = false;
   }
   private capturedByPlayer = false;
@@ -291,6 +300,135 @@ export class Simulation {
   credits = 0;
   /** Things worth a word to the player (credits earned, districts captured), newest last. */
   readonly notices: Array<{ text: string; time: number }> = [];
+  /** Wars started or ended here, for the network to tell the room (drained by NetClient). */
+  readonly diplomacyEvents: Array<{ a: Team; b: Team; on: boolean }> = [];
+  /**
+   * The player as a rogue. `wanted[team]`: until when that team hunts the player personally (its
+   * turrets and aircraft fire on the player, though the teams are at peace) for attacking it.
+   * `renegadeUntil`: until when the player's own team does, for friendly fire.
+   */
+  readonly wanted: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  renegadeUntil = -Infinity;
+  /** Friendly fire so far (decays); past `ROGUE.renegade` the player turns renegade. */
+  private friendlyFire = 0;
+  private friendlyFireAt = -Infinity;
+  private friendlyWarnedAt = -Infinity;
+  /** Other players in the room who attacked us at peace, and until when our side hunts them. */
+  private readonly remoteWanted = new Map<string, number>();
+  static readonly ROGUE = { wanted: 90, renegade: 24, renegadeFor: 120, ffDecay: 0.2, ffFine: 150 } as const;
+
+  /** Does `side` fight the player now? The war, or the player's own deeds. */
+  hostileToPlayer(side: Side): boolean {
+    if (!isTeam(side)) return true; // freelancers
+    if (side === this.team) return this.time < this.renegadeUntil;
+    return hostile(side, this.team) || this.time < this.wanted[side];
+  }
+
+  /** Is that player (another in the room) one our side hunts, for attacking us at peace? */
+  remoteIsWanted(id: string): boolean {
+    return this.time < (this.remoteWanted.get(id) ?? -Infinity);
+  }
+
+  /**
+   * The player's fire (or blast) reached a side. Another team at peace: an incident (its
+   * tension with ours rises; it may mobilise) and that team hunts the player personally, so a
+   * rogue does not drag its team into war at once. Its own team: friendly fire.
+   */
+  private provoke(target: Side | null, what: string, severity: number = DIPLOMACY.severity.hit): void {
+    if (target === null || !isTeam(target)) return;
+    if (target === this.team) { this.friendlyFireBy(severity, what); return; }
+    const was = this.wanted[target];
+    diplomacy.incident(this.team, target, severity, this.time);
+    if (atWar(this.team, target)) return;
+    this.wanted[target] = this.time + Simulation.ROGUE.wanted;
+    if (was < this.time) this.notice(`${TEAMS[target].name} hunts you: you struck their ${what} at peace`);
+  }
+
+  /** Friendly fire: warnings, then renegade (your own team's turrets and aircraft turn on you). */
+  private friendlyFireBy(severity: number, what: string): void {
+    const R = Simulation.ROGUE;
+    this.friendlyFire = Math.max(0, this.friendlyFire - (this.time - this.friendlyFireAt) * R.ffDecay) + severity;
+    this.friendlyFireAt = this.time;
+    if (this.friendlyFire >= R.renegade) {
+      if (this.time >= this.renegadeUntil) this.notice(`Renegade: ${TEAMS[this.team].name} turns on you for ${R.renegadeFor / 60} minutes for friendly fire`);
+      this.renegadeUntil = this.time + R.renegadeFor;
+    } else if (this.time - this.friendlyWarnedAt > 4) {
+      this.friendlyWarnedAt = this.time;
+      this.notice(`Friendly fire on your own ${what}: hold your fire`);
+    }
+  }
+
+  /** Declare war on a team: your team mobilises, war follows. Null, or why not. */
+  declareWar(team: Team): string | null {
+    const why = diplomacy.declare(this.team, team, this.time);
+    return why ? `${TEAMS[team].name}: ${why}` : null;
+  }
+
+  /** Call off your own declaration while still mobilising. */
+  callOffWar(team: Team): string | null {
+    return diplomacy.callOff(this.team, team);
+  }
+
+  /** Pay reparations so a team mobilising against yours stands down. */
+  standDown(team: Team): string | null {
+    const price = DIPLOMACY.reparations;
+    if (diplomacy.stance(this.team, team) !== 'mobilising' || diplomacy.state(this.team, team).by !== team) return `${TEAMS[team].name} is not mobilising against you`;
+    if (this.credits < price) return `Reparations are ${price} credits`;
+    const why = diplomacy.standDown(this.team, team);
+    if (why) return why;
+    this.credits -= price;
+    this.wanted[team] = -Infinity;
+    return null;
+  }
+
+  /** Offer a cease fire: accepted after 30 s without shots; a truce follows. */
+  ceaseFire(team: Team): string | null {
+    const why = diplomacy.ceaseFire(this.team, team, this.time);
+    return why ? `${TEAMS[team].name} ${why}` : null;
+  }
+
+  /** Another player in the room started or ended a war. */
+  applyRemoteDiplomacy(a: Team, b: Team, on: boolean): void {
+    if (!diplomacy.setWar(a, b, on, this.time)) return;
+    this.notice(`${on ? 'War' : 'Cease fire'}: ${TEAMS[a].name} and ${TEAMS[b].name}`);
+  }
+
+  /** Diplomacy's clocks, and what changed said to the player and the room. */
+  private stepDiplomacy(): void {
+    diplomacy.step(this.time, this.dt);
+    const n = (t: Team) => TEAMS[t].name;
+    for (const e of diplomacy.events.splice(0)) {
+      const me = e.a === this.team ? e.b : e.b === this.team ? e.a : null;
+      const pair = `${n(e.a)} and ${n(e.b)}`;
+      switch (e.kind) {
+        case 'protest':
+          this.notice(me !== null && e.by === me ? `${n(me)} protests your attacks (tension ${Math.round(e.tension ?? 0)}/100)` : `Tension between ${pair}`);
+          break;
+        case 'mobilise':
+          if (me !== null && e.by === me) this.notice(`${n(me)} mobilises against you: war in ${e.seconds} s unless you stand down (${DIPLOMACY.reparations} cr, strike globe)`);
+          else if (me !== null) this.notice(`You mobilise against ${n(me)}: war in ${e.seconds} s (call it off on the strike globe)`);
+          else this.notice(`${n(e.by!)} mobilises: war between ${pair} in ${e.seconds} s`);
+          break;
+        case 'war':
+          this.notice(`War: ${pair}`);
+          if (me !== null) this.diplomacyEvents.push({ a: e.a, b: e.b, on: true });
+          break;
+        case 'truce-broken':
+          this.notice(`Truce broken by ${n(e.by!)}: war between ${pair}`);
+          if (me !== null) this.diplomacyEvents.push({ a: e.a, b: e.b, on: true });
+          break;
+        case 'stand-down': this.notice(`${n(e.by!)} stands down: reparations paid`); break;
+        case 'called-off': this.notice(`Mobilisation called off: ${pair}`); break;
+        case 'truce':
+          this.notice(`Truce: ${pair} for ${Math.round((e.seconds ?? 0) / 60)} minutes. Break it and the others will remember`);
+          if (me !== null) this.diplomacyEvents.push({ a: e.a, b: e.b, on: false });
+          break;
+        case 'peace': this.notice(`Peace: ${pair}`); break;
+        case 'distrust': this.notice(`${n(e.a)} no longer trusts ${n(e.b)} (tension ${Math.round(e.tension ?? 0)}/100)`); break;
+      }
+    }
+  }
+
   private notice(text: string): void {
     this.notices.push({ text, time: this.time });
     if (this.notices.length > 16) this.notices.splice(0, this.notices.length - 16);
@@ -421,6 +559,7 @@ export class Simulation {
    * own (kills pay), not another player's arriving over the network.
    */
   detonateNuke(x: number, y: number, z: number, by: Side, local: boolean): void {
+    if (local) this.provoke(this.groundTurrets.territory.ownerAt(x, z), 'district (a nuke)', DIPLOMACY.severity.strategic);
     const { fireball: F, shock: S } = STRATEGIC.nuke;
     // (Measured round the planet: things far from the craft may sit in another image of it.)
     const near = (p: THREE.Vector3) => Math.hypot(wrapDelta(x, p.x), p.y - y, wrapDelta(z, p.z));
@@ -477,6 +616,7 @@ export class Simulation {
 
   /** An EMP at (x, y, z): disables, destroys nothing. */
   detonateEmp(x: number, y: number, z: number, local: boolean): void {
+    if (local) this.provoke(this.groundTurrets.territory.ownerAt(x, z), 'district (an EMP)', DIPLOMACY.severity.strategic);
     const E = STRATEGIC.emp;
     const R = E.radius;
     // (Measured round the planet: things far from the craft may sit in another image of it.)
@@ -505,7 +645,18 @@ export class Simulation {
    * round. Returns what happened.
    */
   applyRemoteHit(from: { id: string; team: Side }, kind: WeaponKind, point: THREE.Vector3): 'applied' | 'team' | 'far' | 'rate' | 'dead' {
-    if (!hostile(from.team, this.team)) return 'team';
+    // Team-mates' rounds never land (the relay drops them too).
+    if (from.team === this.team) return 'team';
+    // A player of a team at peace opening fire is a rogue: an incident between the teams (it
+    // may come to war), and our side hunts that player. Its rounds land all the same.
+    if (isTeam(from.team)) {
+      const peace = !atWar(from.team, this.team);
+      diplomacy.incident(from.team, this.team, DIPLOMACY.severity.remoteHit, this.time);
+      if (peace && !atWar(from.team, this.team)) {
+        if (!this.remoteIsWanted(from.id)) this.notice(`A ${TEAMS[from.team].name} player attacked you at peace: your side hunts them`);
+        this.remoteWanted.set(from.id, this.time + Simulation.ROGUE.wanted);
+      }
+    }
     const reach = 40 + this.linvel.length() * 0.3;
     if (point.distanceTo(this.position) > reach) return 'far';
     const now = this.time;
@@ -686,13 +837,15 @@ export class Simulation {
   }
 
   /** Get back in. Returns why not, or null when aboard. */
+  /** How close (m, from the vehicle's centre) the Bit must be to get back in. */
+  boardingReach(): number {
+    const b = craftBounds(this.craft.def);
+    return ON_FOOT.reach + Math.max(b.max.x - b.min.x, b.max.z - b.min.z) / 2;
+  }
+
   boardVehicle(): string | null {
     if (!this.walker.active) return 'Already aboard';
-    if (!this.exploded) {
-      const b = craftBounds(this.craft.def);
-      const reach = ON_FOOT.reach + Math.max(b.max.x - b.min.x, b.max.z - b.min.z) / 2;
-      if (Math.hypot(this.walker.x - this.position.x, this.walker.z - this.position.z) > reach) return 'Too far from your vehicle';
-    }
+    if (!this.exploded && Math.hypot(this.walker.x - this.position.x, this.walker.z - this.position.z) > this.boardingReach()) return 'Too far from your vehicle';
     this.walker.board();
     return null;
   }
@@ -787,6 +940,10 @@ export class Simulation {
     this.weapons.arm(craftDef);
     this.weapons.onImpact = (h) => this.weaponImpact(h);
     this.airTraffic.onHostileImpact = (h, f) => this.weaponImpact(h, f);
+    // Who is after the player: the war, or its own deeds (wanted by a team it attacked at peace,
+    // renegade to its own for friendly fire).
+    this.playerFoe.hostileTo = (side) => this.hostileToPlayer(side);
+    this.airTraffic.playerHostile = (side) => this.hostileToPlayer(side);
     this.airTraffic.groundAt = (x, z) => (isSea(x) ? -COAST.depth : terrainHeight(x, z));
     // Runways are used into the wind (10 m up, the gusts averaged out by how seldom it is asked).
     const windProbe = new THREE.Vector3(), windOut = new THREE.Vector3();
@@ -878,7 +1035,7 @@ export class Simulation {
       },
     };
     this.bindCraft();
-    this.resetToRunway();
+    this.resetToRunway(false); // (diplomacy is the module's: a new simulation does not end a war)
   }
 
   /**
@@ -999,7 +1156,12 @@ export class Simulation {
   }
 
   /** Reset the WHOLE world: every structure rebuilt, weather and events restarted, a fresh craft on the runway. */
-  resetToRunway(): void {
+  resetToRunway(peace = true): void {
+    if (peace) resetDiplomacy(); // the world starts at peace again
+    this.wanted.fill(-Infinity);
+    this.renegadeUntil = -Infinity;
+    this.friendlyFire = 0;
+    this.remoteWanted.clear();
     this.trails.clear();
     this.traffic.clear();
     this.charges.length = 0;
@@ -1220,6 +1382,7 @@ export class Simulation {
         sites,
         walker: w,
         team: this.team,
+        hostile: () => this.hostileToPlayer(1),
         threats: this.exploded ? [] : [th],
       });
       if (shotPlayer && w.active && w.downAt === null) {
@@ -1229,7 +1392,10 @@ export class Simulation {
       }
       for (const d of this.programs.derezEvents) {
         this.chips.emit({ x: d.x, y: d.y, z: d.z, radius: 0.9, vx: th.vx * 0.5, vy: 2, vz: th.vz * 0.5, speed: 6, count: 30, size: 0.16, color: programLight(d.side) });
-        if (d.byPlayer && !Programs.friendly(d, this.team)) this.earn(PROGRAMS.sentinel.reward, `${PROGRAM_KINDS[d.kind].name} derezzed`);
+        if (!d.byPlayer || d.side === 'merc') continue;
+        // Another side's program run down: pay if they fight you, an incident if at peace.
+        if (this.hostileToPlayer(d.side)) { if (d.side !== this.team) this.earn(PROGRAMS.sentinel.reward, `${PROGRAM_KINDS[d.kind].name} derezzed`); }
+        else this.provoke(d.side, PROGRAM_KINDS[d.kind].name);
       }
       this.programs.derezEvents.length = 0;
     }
@@ -1320,6 +1486,7 @@ export class Simulation {
     if (Number.isFinite(g)) this.gForceFiltered += (g - this.gForceFiltered) * (1 - Math.exp(-this.dt / 0.15));
 
     this.time += this.dt;
+    this.stepDiplomacy();
     this.steps++;
     this.lastStepMs = performance.now() - t0;
   }
@@ -1547,8 +1714,9 @@ export class Simulation {
     const out: LockTarget[] = [];
     const air = this.airTraffic;
     // Never the player's own side: friendly aircraft, mercenaries and turrets aren't locked.
+    // Other teams can be locked at peace too; it is firing on them that starts a war.
     for (const f of air.flyers) {
-      if (f.derezAt !== null || (f.side !== null && !hostile(this.team, f.side))) continue;
+      if (f.derezAt !== null || (f.side !== null && f.side === this.team)) continue;
       out.push(f.handle);
     }
     this.liveRiders = new Set(this.traffic.riders);
@@ -1566,7 +1734,7 @@ export class Simulation {
       }
       out.push(h);
     }
-    for (const t of this.groundTurrets.turrets) if (t.derezAt === null && hostile(this.team, t.side)) out.push(t.handle);
+    for (const t of this.groundTurrets.turrets) if (t.derezAt === null && t.side !== this.team) out.push(t.handle);
     out.push(...this.extraLockTargets);
     return out;
   }
@@ -1695,7 +1863,8 @@ export class Simulation {
     const by: Side = shooter ? shooter.side! : this.team;
     const strike = (f: AiFlyer) => {
       if (f === shooter) return;
-      if (f.side !== null && !hostile(by, f.side)) return;
+      if (shooter ? f.side !== null && !hostile(by, f.side) : f.role === 'merc' || f.role === 'hacked') return;
+      if (!shooter) this.provoke(f.side, `aircraft ${f.name}`);
       if (this.airTraffic.damage(f, WEAPON_DAMAGE[h.kind], this.time)) this.derezFlyer(f, !shooter);
     };
     if (flyer) strike(flyer);
@@ -1703,7 +1872,9 @@ export class Simulation {
     // Tower turrets: the player's rounds and blasts wear them down (hostiles never hit them).
     const turret = col ? this.groundTurrets.byCollider(col.handle) : undefined;
     const hitTurret = (t: GroundTurret) => {
-      if (t === shooter || !hostile(by, t.side)) return;
+      if (t === shooter) return;
+      if (shooter ? !hostile(by, t.side) : !!t.hacked) return;
+      if (!shooter) this.provoke(t.side, 'turret', DIPLOMACY.severity.turret);
       if (this.groundTurrets.damage(t, WEAPON_DAMAGE[h.kind], this.time)) this.derezTurret(t, !shooter, by);
     };
     if (turret) hitTurret(turret);
@@ -1713,7 +1884,8 @@ export class Simulation {
     }
     // A hostile's round on the player's craft: the struck part loses hit points (and breaks off
     // at zero); a warhead that goes off against it, or beside it, derezzes it outright.
-    if (shooter && !this.exploded && hostile(by, this.team)) {
+    if (shooter && !this.exploded && this.hostileToPlayer(by)) {
+      if (isTeam(by) && atWar(by, this.team)) diplomacy.incident(by, this.team, 0, this.time); // fire traded: no cease fire yet
       const partId = col ? this.craft.partIdForCollider(col.handle) : undefined;
       const near = h.blast >= 7 && p.distanceTo(this.position) < h.blast;
       if (partId !== undefined || near) {

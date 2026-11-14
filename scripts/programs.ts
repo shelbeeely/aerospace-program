@@ -98,7 +98,7 @@ for (const team of [0, 1] as Team[]) {
   const spot = findSpot('sentinel');
   const pr = new Programs();
   const walker = { active: true, downAt: null as number | null, x: spot.x, y: terrainHeight(spot.x, spot.z), z: spot.z };
-  const world: ProgramWorld = { owner, walker, team };
+  const world: ProgramWorld = { owner, walker, team, hostile: () => true };
   let t = 0, shot = -1, warned = false, saluted = false;
   pr.step(0.1, t, spot, world);
   const g = [...pr.groups.values()].find((g) => g.kind === 'sentinel' && Math.hypot(cornerX(g.post) - spot.x, cornerZ(g.post) - spot.z) < 1)!;
@@ -132,6 +132,24 @@ for (const team of [0, 1] as Team[]) {
   walker.x = l.x + 60;
   for (let k = 20; k < 120; k++) shot ||= pr.step(0.1, 0.1 * k, spot, world).shotPlayer;
   check(alerted && !shot && g.activity !== 'alert', 'keeping your distance after the warning: never shot, and the patrol goes back to its beat', `alerted ${alerted}, now ${g.activity}`);
+}
+
+{
+  // At peace: a warning, never a shot.
+  const spot = findSpot('sentinel');
+  const pr = new Programs();
+  const walker = { active: true, downAt: null as number | null, x: 0, y: 0, z: 0 };
+  const world: ProgramWorld = { owner, walker, team: 0, hostile: () => false };
+  pr.step(0.1, 0, spot, world);
+  const g = [...pr.groups.values()].find((g) => g.kind === 'sentinel' && Math.hypot(cornerX(g.post) - spot.x, cornerZ(g.post) - spot.z) < 1)!;
+  let shot = false, warned = false;
+  for (let k = 0; k < 150; k++) {
+    const l = g.members[0];
+    walker.x = l.x + 4; walker.z = l.z;
+    shot ||= pr.step(0.1, 0.1 * (k + 1), spot, world).shotPlayer;
+    warned ||= g.activity === 'alert';
+  }
+  check(warned && !shot, 'at peace, a Sentinel patrol warns a stranger on foot and never fires', `warned ${warned}, shot ${shot}`);
 }
 
 console.log('--- tenders and scavengers');

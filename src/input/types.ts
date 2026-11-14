@@ -55,6 +55,8 @@ export type Action =
 /** What a device may know about the game when it reads. */
 export interface InputContext {
   profile: ControlProfile;
+  /** The player is on foot as its Bit (the touch controls become walking controls). */
+  onFoot?: boolean;
   /** Current throttle 0..1 (so a touch lever can display it). */
   throttle: number;
   settings: InputSettings;

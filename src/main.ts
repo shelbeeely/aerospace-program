@@ -74,7 +74,11 @@ import { craftBounds } from './sim/weapons.ts';
 import { LOADOUT_ORDER, LOADOUTS, WEAPONS, type Loadout, type WeaponKind } from './sim/weapons.ts';
 import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
-import { FlightAutopilot, type AutopilotKind } from './sim/flightAutopilot.ts';
+import { FlightAutopilot, MODE_LABELS, type AutopilotKind } from './sim/flightAutopilot.ts';
+import { FootNavigator } from './sim/footNav.ts';
+import { diplomacy } from './sim/diplomacy.ts';
+import { destinations } from './sim/nav.ts';
+import { uiProfile, type UiProfile } from './hud/profiles.ts';
 import { wallSegmentsNear } from './sim/lightWalls.ts';
 import { analyzeDesign } from './sim/flightTest.ts';
 import { AutopilotPanel } from './ui/AutopilotPanel.ts';
@@ -279,7 +283,9 @@ async function start() {
   autopilot.driver.closed = sim.roadDamage.closed;
   autopilot.onDisengage = (thr) => { player.throttle = thr; };
   autopilot.fractured = sim.staticWorld.fractured;
-  // Flight computer: approach speeds come from the design's estimated stall speed.
+  // The Navigator on foot: walks the player's Bit to a place, or back to its vehicle.
+  const footNav = new FootNavigator();
+  // Navigator: approach speeds come from the design's estimated stall speed.
   let apPerf = { stallSpeed: 30 };
   let apPerfVersion = -1;
   const autopilotPerf = () => {
@@ -293,18 +299,43 @@ async function start() {
     const k = vehicleKind(sim);
     return k === 'airplane' || k === 'rotorcraft' || k === 'ground' ? k : null;
   };
+  /** Send the Bit walking: to a destination, or back to the vehicle. Null, or why not. */
+  const walkTo = (mode: 'goto' | 'vehicle', destination?: string | null): string | null => {
+    if (mode === 'vehicle') {
+      if (sim.exploded) return 'No vehicle to go back to';
+      return footNav.engage(sim.walker, 'vehicle', { x: sim.position.x, z: sim.position.z, name: 'your vehicle' });
+    }
+    const d = destinations().find((x) => x.id === destination);
+    if (!d) return 'Choose a destination first';
+    return footNav.engage(sim.walker, 'goto', { x: d.x, z: d.z, name: d.name, id: d.id });
+  };
   const apPanel = new AutopilotPanel({
-    autopilot,
-    kind: autopilotKind,
+    state: () => sim.walker.active
+      ? {
+        ...autopilot.state, kind: 'foot', engaged: footNav.state.engaged, mode: footNav.state.mode, phase: footNav.state.phase as never,
+        destination: footNav.state.destination, status: footNav.state.status, notice: footNav.state.notice, guidance: footNav.state.guidance,
+      }
+      : autopilot.state,
+    kind: () => (sim.walker.active ? 'foot' : autopilotKind()),
     telemetry: () => telemetry,
     engage: (opts) => {
+      if (sim.walker.active) {
+        const why = walkTo(opts.mode === 'vehicle' ? 'vehicle' : 'goto', opts.destination);
+        if (why) toast(why);
+        return;
+      }
       const kind = autopilotKind();
-      if (!kind) return;
-      autopilot.engage(telemetry, kind, autopilotPerf(), opts.mode === 'chase' ? { ...opts, target: sim.lock.target } : opts);
+      if (!kind || opts.mode === 'vehicle') return;
+      const o = { ...opts, mode: opts.mode };
+      autopilot.engage(telemetry, kind, autopilotPerf(), o.mode === 'chase' ? { ...o, target: sim.lock.target } : o);
       if (autopilot.state.notice) toast(autopilot.state.notice);
     },
-    disengage: () => autopilot.disengage(),
+    disengage: () => (sim.walker.active ? footNav.disengage() : autopilot.disengage()),
   });
+  document.getElementById('nav-chip')!.addEventListener('click', () => apPanel.toggle());
+  let shownProfile: UiProfile | null = null;
+  // The world starts at peace: say so once, the first time the player flies.
+  let peaceToldAt = false;
   let pilot: ControlSource = autopilot;
 
   let debugOn = false;
@@ -1146,17 +1177,22 @@ async function start() {
     for (const a of player.poll()) {
       if (a === 'studio') setMode(mode === 'flight' ? 'hangar' : 'flight');
       else if (a === 'mute') toast(audio.toggleMute() ? '🔇 Sound off' : '🔊 Sound on');
+      else if (a === 'autopilot' && sim.walker.active) {
+        // On foot: walk back to the vehicle (or stop walking).
+        if (footNav.state.engaged) { footNav.disengage(); toast('Navigator off'); }
+        else { const why = walkTo('vehicle'); toast(why ?? 'Navigator: walking back to your vehicle'); }
+      }
       else if (a === 'autopilot') {
         if (autopilot.state.engaged) {
           autopilot.disengage();
-          toast('Autopilot off');
+          toast('Navigator off');
         } else {
           const kind = vehicleKind(sim);
-          if (kind === 'lighter-than-air' || kind === 'ground') toast('No autopilot for this craft');
+          if (kind === 'lighter-than-air' || kind === 'ground') toast(kind === 'ground' ? 'Navigator: set a destination (J or NAV) to drive there' : 'The Navigator cannot fly blimps yet');
           else {
             autopilot.engage(telemetry, kind, autopilotPerf());
             const st = autopilot.state;
-            toast(`Autopilot on · HDG ${Math.round(st.heading).toString().padStart(3, '0')} · ${st.altitude.toFixed(0)} m${kind === 'airplane' ? ` · ${(st.speed * 1.944).toFixed(0)} kt` : ''} — stick and throttle adjust it`);
+            toast(`Navigator: hold · HDG ${Math.round(st.heading).toString().padStart(3, '0')} · ${st.altitude.toFixed(0)} m${kind === 'airplane' ? ` · ${(st.speed * 1.944).toFixed(0)} kt` : ''} — stick and throttle adjust it`);
           }
         }
       }
@@ -1267,7 +1303,13 @@ async function start() {
       if (p.team !== sim.team) {
         sim.extraLockTargets.push(h);
         let foe = playerFoes.get(p.id);
-        if (!foe) playerFoes.set(p.id, (foe = { side: p.team, lock: h, kind: 'remote', engage: true, ground: false }));
+        if (!foe) {
+          const id = p.id;
+          const f: Foe = { side: p.team, lock: h, kind: 'remote', engage: true, ground: false };
+          // At war, their team's enemies; at peace, our side only if that player attacked us.
+          f.hostileTo = (side) => hostile(side, f.side) || (side === sim.team && sim.remoteIsWanted(id));
+          playerFoes.set(id, (foe = f));
+        }
         foe.side = p.team;
         sim.extraFoes.push(foe);
       }
@@ -1277,7 +1319,24 @@ async function start() {
     let stepMs = 0;
     while (accumulator >= sim.dt && stepsThisFrame < TUNING.maxStepsPerFrame) {
       const inputs = pilot.sample(sim.dt, telemetry);
-      if (sim.walker.active) sim.walkInput = player.walk();
+      if (sim.walker.active) {
+        const w = player.walk();
+        if (footNav.state.engaged && Math.abs(w.forward) + Math.abs(w.turn) + Math.abs(w.strafe) > 0.25) {
+          footNav.disengage('Off: you took over');
+          toast('Navigator off: you took over');
+        }
+        if (footNav.state.engaged) {
+          const vehicle = footNav.state.mode === 'vehicle';
+          const r = footNav.sample(sim.walker, vehicle ? sim.boardingReach() - 1 : undefined);
+          if (r === 'arrived') {
+            sim.walkInput = { forward: 0, turn: 0, strafe: 0 };
+            if (vehicle) {
+              const why = sim.boardVehicle();
+              toast(why ?? 'Navigator: aboard');
+            } else toast(`Navigator: ${footNav.state.status}`);
+          } else sim.walkInput = r;
+        } else sim.walkInput = w;
+      }
       sim.step(inputs);
       stepMs += sim.lastStepMs;
       accumulator -= sim.dt;
@@ -1559,6 +1618,45 @@ async function start() {
 
     hud.update(telemetry, player.trim, telemetry.controls.brake > 0);
     hud.setAutopilot(autopilot.state.engaged ? autopilot.state : null);
+    {
+      // Diplomacy on the HUD: who hunts you, a renegade's time, a war coming.
+      const parts: string[] = [];
+      if (sim.time < sim.renegadeUntil) parts.push(`RENEGADE ${Math.ceil(sim.renegadeUntil - sim.time)}s`);
+      for (const t of TEAMS) {
+        if (t.id === sim.team) continue;
+        if (sim.time < sim.wanted[t.id]) parts.push(`WANTED: ${t.name.toUpperCase()}`);
+        const st = diplomacy.state(sim.team, t.id);
+        if (st.stance === 'mobilising') parts.push(`WAR WITH ${t.name.toUpperCase()} IN ${Math.max(0, Math.ceil(st.until - sim.time))}s`);
+      }
+      hud.setStanding(parts.join('  '));
+    }
+    if (!peaceToldAt && mode === 'flight') {
+      peaceToldAt = true;
+      toast('The Grid is at peace. Attacks raise tension and make you wanted; war comes after a mobilisation, or by declaring it on the strike globe (Shift+Tab).');
+    }
+    // The screen follows the vehicle (or the Bit on foot): HUD readouts, controls, body class.
+    player.onFoot = sim.walker.active;
+    const prof = uiProfile(player.profile, sim.walker.active);
+    if (prof !== shownProfile) {
+      if (shownProfile) document.body.classList.remove(`profile-${shownProfile}`);
+      document.body.classList.add(`profile-${prof}`);
+      shownProfile = prof;
+      hud.setProfile(prof);
+      if (!sim.walker.active) footNav.disengage();
+      if (apPanel.visible) apPanel.show();
+    }
+    {
+      const fd = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`);
+      if (sim.walker.active) {
+        const f = footNav.state;
+        hud.setNav({ mode: f.engaged ? (f.mode === 'vehicle' ? 'TO VEHICLE' : 'WALK TO') : null, detail: f.engaged && f.guidance ? `${f.guidance.siteName} · ${fd(f.guidance.distance)}` : 'walk anywhere', available: true });
+      } else {
+        const st = autopilot.state;
+        const g = st.engaged ? st.guidance : null;
+        const detail = !st.engaged ? '' : g ? `${g.siteName} · ${fd(g.distance)}` : st.mode === 'hold' ? `${Math.round(st.heading).toString().padStart(3, '0')}° ${Math.round(st.altitude)} m` : st.phase.toUpperCase();
+        hud.setNav({ mode: st.engaged ? MODE_LABELS[st.mode].toUpperCase() : null, detail, available: autopilotKind() !== null });
+      }
+    }
     apPanel.refresh();
     mercPanel.refresh();
     // Notices from the war (credits earned, districts changing hands), and credits kept.

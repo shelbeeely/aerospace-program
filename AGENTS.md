@@ -277,7 +277,7 @@ universe, not a conventional open world decorated with neon.
 ## 14. Movement rules (project)
 
 - **Every road is pathed.** Streets, data highways and Outlands highways form one road graph.
-  The flight computer is general-purpose for all vehicles: a ground vehicle can be sent to any
+  The Navigator is general-purpose for all vehicles: a ground vehicle can be sent to any
   destination and drives there automatically along the network. Anything that adds, removes or
   blocks a road must keep the graph and the drawn ground in agreement. Islands of streets are
   linked to the network by connector roads (or removed if they cannot be), so there are none.
@@ -288,11 +288,23 @@ universe, not a conventional open world decorated with neon.
   fields and pads, one to a runway, and go around rather than land on an occupied one. Checks:
   `npm run traffic`, `npm run air`.
 - **A broken road is a closed road.** A crater that closes a road segment (`src/sim/roadDamage.ts`)
-  is a wall across the road to riders and to the flight computer, is left out of new routes, and
+  is a wall across the road to riders and to the Navigator, is left out of new routes, and
   is marked on the ground with a red bar at each rim. Anything else that blocks a road must do
   the same three things.
 - **A vehicle never runs into its own light wall** (Rapier collision groups,
   `src/sim/collisionGroups.ts`); its walls stay deadly to everyone else. Ground vehicles reverse.
+
+## 19. Screen and controls (project)
+
+- **The screen follows the vehicle.** `src/hud/profiles.ts` says, per profile (airplane,
+  rotorcraft, lighter-than-air, ground, on foot), which readouts lead the HUD, what the lever is
+  called, the thumb hints and which buttons show. A new kind of vehicle gets a profile there,
+  not special cases in the HUD or the touch code.
+- **Nothing overlaps on a phone.** HUD strip, icon bar, radar, NAV chip, lever, stick and
+  buttons each keep their own place in portrait and landscape.
+- **The Navigator** (once called the flight computer) is one computer for every vehicle and for
+  the player's Bit on foot (`src/sim/flightAutopilot.ts`, `src/sim/footNav.ts`), always on
+  screen as the NAV chip. Check: `npm run navigator`.
 
 ## 17. People (project)
 
@@ -320,7 +332,9 @@ universe, not a conventional open world decorated with neon.
   for freelancers and mercenaries, anywhere). Programs are rigid polyhedra like the Bits:
   dark bodies with selective light in their side's colour, and YES/NO in yellow and red. They
   walk the road margins in file, never into a lot or along a closed road, and are seeded per
-  road corner. A new side gets a new kind. Check: `npm run programs`.
+  road corner. They follow diplomacy: Sentinels warn strangers at peace and fire only when Red
+  is hostile to the player (`hostileToPlayer`); running a program down at peace is an incident.
+  A new side gets a new kind. Check: `npm run programs`.
 - **The player on foot is a Bit** (`BitWalker`): it steps out of a stopped vehicle, walks, and
   gets back in beside it. The vehicle stays parked.
 - **Errands on foot** (`src/sim/errands.ts`): an escorted Bit walks the trail the player
@@ -376,6 +390,13 @@ universe, not a conventional open world decorated with neon.
   warm near-black bodies and red light, still under the light budget, with the light states of
   §5 (dim on patrol, full in the attack, flickering when hit). Check: `npm run enemies`. Tower
   turrets (`src/craft/towerTurret.ts`) wear it too (check: `npm run turrets`).
+- **The world starts at peace, and war and peace take steps.** Hostility follows diplomacy
+  (`hostile()`, `src/sim/diplomacy.ts`), never team id alone: peace → tension → mobilising →
+  war → truce → peace, per pair of teams. A rogue's attack (the player, or another player, at
+  peace) makes its victim hunt that one attacker (`Foe.hostileTo`, `Simulation.wanted`) and
+  raises tension; it does not start a war by itself. Friendly fire lands and makes a renegade.
+  Only a war's kills pay or capture. A world reset restores peace. Checks that test fighting
+  call `allAtWar()` first.
 - **Every side has one livery** (`sideLivery()` in `src/sim/teams.ts`, built on `livery()` in
   `src/craft/style1982.ts`): Cyan (cyan light, cool bodies), Red (red light, warm bodies), Amber
   (amber light, cool bodies), freelancers (white light), mercenaries (bright blue light). The

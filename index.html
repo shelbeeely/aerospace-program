@@ -46,7 +46,7 @@
       <div class="row"><span>WIND</span><b id="h-wind">calm</b><small id="h-wind-arrow"></small></div>
       <div class="row"><span>OAT</span><b id="h-oat">15°C</b><small></small></div>
       <div class="row"><span>WX</span><b id="h-wx">—</b><small></small></div>
-      <div class="row" id="h-ap-row"><span>AP</span><b id="h-ap">OFF</b><small id="h-ap-t"></small></div>
+      <div class="row" id="h-ap-row"><span title="The Navigator: where it is taking you (J sets a course)">NAV</span><b id="h-ap">OFF</b><small id="h-ap-t"></small></div>
       <div id="h-appr" class="hidden">
         <div class="appr-site" id="h-appr-site"></div>
         <div class="row"><span>DIST</span><b id="h-appr-dist">--</b><small id="h-appr-eta"></small></div>
@@ -67,6 +67,7 @@
       <div id="h-flags"></div>
     </div>
 
+    <button id="nav-chip" type="button" class="panel" title="The Navigator: hold, go to, land, orbit, chase; on foot, walk anywhere or back to your vehicle (J)" aria-label="Navigator"><span>NAV</span><b>SET COURSE</b><small></small></button>
     <div id="stall" class="hidden">STALL</div>
     <div id="missile-warn" class="hidden">MISSILE</div>
     <div id="nuke-flash"></div>
@@ -95,7 +96,7 @@
         <tr><td>R</td><td>new plane on the runway (wreckage stays)</td></tr>
         <tr><td>Backspace</td><td>reset the whole world</td></tr>
         <tr><td>U</td><td>autopilot on / off</td></tr>
-        <tr><td>J</td><td>flight computer: land, go to, orbit</td></tr>
+        <tr><td>J</td><td>Navigator: hold, land, go to, orbit; on foot, walk to a place or back to the vehicle</td></tr>
         <tr><td>C</td><td>chase / orbit camera</td></tr>
         <tr><td>P</td><td>save photo (progressive when ray traced)</td></tr>
         <tr><td>F3</td><td>debug forces &amp; stats</td></tr>
@@ -160,7 +161,7 @@
         </div>
         <label>Set to <input id="w-credits-set" type="number" min="0" step="100" value="5000" /> <button type="button" id="w-credits-apply">Set</button></label>
       </div>
-      <p class="muted small">Three teams (Cyan, Red, Amber) hold the planet; pick yours in the hangar. Enemy aircraft and turrets fire on you only while your craft carries weapons (I cycles the loadout). Freelancers fight everyone. ' hires mercenaries.</p>
+      <p class="muted small">Three teams (Cyan, Red, Amber) hold the planet; pick yours in the hangar. The world starts at peace. Firing on another team at peace makes you WANTED by it and raises tension; enough incidents and it mobilises for war (stand it down with reparations on the strike globe). Declarations mobilise first; a cease fire after 30 s of quiet brings a truce. Friendly fire makes you a renegade to your own team. At war, their aircraft and turrets fire on you only while your craft carries weapons (I cycles the loadout). Freelancers come out only in wartime and fight everyone. ' hires mercenaries.</p>
       <p class="muted small">Triggers affect flight physics. Reset clears events.</p>
       <div class="legend">
         <span style="color:#33ff55">■ lift</span>

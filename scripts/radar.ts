@@ -13,6 +13,9 @@ import { JET } from '../src/craft/jet.ts';
 import { globeAngles, globeProject, globeUnproject, mapPoint, radarPoint, simContacts, wrapDelta } from '../src/sim/contacts.ts';
 import { PLANET } from '../src/sim/layout.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
+import { allAtWar } from '../src/sim/teams.ts';
+// The world starts at peace; these checks test fighting, so every team is at war with every other.
+allAtWar();
 
 await initPhysics();
 let failed = 0;

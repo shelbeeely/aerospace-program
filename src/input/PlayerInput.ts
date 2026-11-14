@@ -29,6 +29,8 @@ export class PlayerInput implements ControlSource {
   static readonly FLAP_DETENTS = 3;
   /** Control layout for the current craft (rotorcraft use mode-2 sticks). */
   profile: ControlProfile = 'airplane';
+  /** On foot as the player's Bit (set by the game each frame). */
+  onFoot = false;
   settings: InputSettings = loadInputSettings();
   private readonly smoothed = { pitch: 0, roll: 0, yaw: 0 };
   private raw: RawInput = PlayerInput.emptyRaw();
@@ -49,7 +51,7 @@ export class PlayerInput implements ControlSource {
   /** Poll devices once per rendered frame. */
   poll(): Action[] {
     this.raw = PlayerInput.emptyRaw();
-    const ctx = { profile: this.profile, throttle: this.throttle, settings: this.settings };
+    const ctx = { profile: this.profile, onFoot: this.onFoot, throttle: this.throttle, settings: this.settings };
     for (const d of this.devices) d.read(this.raw, ctx);
     if (this.raw.throttleSet !== null) this.throttle = this.raw.throttleSet;
     const max = PlayerInput.FLAP_DETENTS;

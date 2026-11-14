@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import type { CraftDef } from '../craft/types.ts';
 import { style1982, circuitOf } from '../craft/style1982.ts';
-import { FREELANCER, hostile as sidesHostile, sideLivery, type Side, type Team } from './teams.ts';
+import { anyWar, FREELANCER, foeHostile, hostile as sidesHostile, sideLivery, type Side, type Team } from './teams.ts';
 import { obstacleTop } from '../world/structures.ts';
 import { terrainHeight } from './terrain.ts';
 import { craftBounds, WeaponSystem, type WeaponHost, type WeaponImpact } from './weapons.ts';
@@ -47,6 +47,11 @@ export interface Foe {
   /** A target on the ground (attacked in a diving pass). */
   ground: boolean;
   flyer?: AiFlyer;
+  /**
+   * Is `side` against this target? Absent: the sides' diplomacy (`hostile`). The player and
+   * other players have their own: a rogue is hunted by those it attacked, at peace too.
+   */
+  hostileTo?: (side: Side) => boolean;
 }
 
 /** The player's craft, and the other things to fight that the traffic doesn't own. */
@@ -318,8 +323,12 @@ export class AiAirTraffic {
 
   /** Live aircraft that fight the player's side (enemy teams and freelancers). */
   hostileFlyers(): AiFlyer[] {
-    return this.flyers.filter((f) => f.side !== null && f.derezAt === null && sidesHostile(f.side, this.playerTeam));
+    const against = this.playerHostile ?? ((side: Side) => sidesHostile(side, this.playerTeam));
+    return this.flyers.filter((f) => f.side !== null && f.derezAt === null && against(f.side));
   }
+
+  /** Which sides are after the player (set by the simulation: a wanted or renegade player). */
+  playerHostile: ((side: Side) => boolean) | null = null;
 
   /** Live combat aircraft of every side. */
   combatFlyers(): AiFlyer[] {
@@ -561,7 +570,7 @@ export class AiAirTraffic {
         this.flyers.splice(i, 1);
       }
     }
-    const wantedOf: Record<Exclude<FlyerRole, 'merc' | 'strike' | 'hacked'>, number> = { civil: this.count, friend: this.friendlies, enemy: this.enemies, free: this.freelancers };
+    const wantedOf: Record<Exclude<FlyerRole, 'merc' | 'strike' | 'hacked'>, number> = { civil: this.count, friend: this.friendlies, enemy: this.enemies, free: anyWar() ? this.freelancers : 0 }; // freelancers only come out in wartime
     for (const role of ['civil', 'friend', 'enemy', 'free'] as const) {
       const wanted = wantedOf[role];
       let alive = this.flyers.filter((f) => f.derezAt === null && f.role === role).length;
@@ -628,7 +637,7 @@ export class AiAirTraffic {
     f.targetAt = time;
     const foes: Foe[] = [];
     for (const o of this.flyers) if (o !== f && o.foe && o.derezAt === null && !o.leaving && sidesHostile(f.side, o.side!)) foes.push(o.foe);
-    for (const o of target?.foes ?? []) if (o.engage && sidesHostile(f.side, o.side) && o.lock.alive()) foes.push(o);
+    for (const o of target?.foes ?? []) if (o.engage && foeHostile(f.side, o) && o.lock.alive()) foes.push(o);
     const from = here;
     let best: Foe | null = null, score = Infinity;
     for (const o of foes) {

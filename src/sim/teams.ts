@@ -1,5 +1,6 @@
 import type { CraftDef } from '../craft/types.ts';
 import { LIGHTS, livery } from '../craft/style1982.ts';
+import { diplomacy } from './diplomacy.ts';
 
 /**
  * Sides in the war. Three teams hold the planet's territory: Cyan, Red and Amber. Freelancers
@@ -30,9 +31,48 @@ export const MERC_LIGHT = LIGHTS[1];
 
 export const isTeam = (v: unknown): v is Team => v === 0 || v === 1 || v === 2;
 
-/** Do these two sides fight? (Freelancers fight everyone, each other included.) */
+/**
+ * Diplomacy (src/sim/diplomacy.ts): tension, mobilisation, war, truce and peace per pair of
+ * teams. The world starts at peace. These are the short questions everything else asks.
+ */
+export { diplomacy, DIPLOMACY, type Stance } from './diplomacy.ts';
+
+/** Are these two teams at war? */
+export function atWar(a: Team, b: Team): boolean {
+  return diplomacy.atWar(a, b);
+}
+
+/** Straight to war (on) or peace (off), skipping the ladder (the network, checks). */
+export function setWar(a: Team, b: Team, on: boolean, now = 0): boolean {
+  return diplomacy.setWar(a, b, on, now);
+}
+
+/** Is any pair of teams at war? (Freelancers only come out while one is.) */
+export const anyWar = (): boolean => diplomacy.anyWar();
+/** The war flags as 3 bits (Cyan-Red 1, Cyan-Amber 2, Red-Amber 4), for the network. */
+export const warMask = (): number => diplomacy.mask();
+export const setWarMask = (m: number): void => diplomacy.setMask(m);
+/** Back to peace everywhere (a world reset). */
+export function resetDiplomacy(): void {
+  diplomacy.reset();
+}
+/** Every team at war with every other (the old always-at-war world; checks use it). */
+export function allAtWar(): void {
+  diplomacy.setMask(7);
+}
+
+/**
+ * Do these two sides fight? Freelancers fight everyone; two teams fight only while at war; a
+ * side never fights itself.
+ */
 export function hostile(a: Side, b: Side): boolean {
-  return a === FREELANCER || b === FREELANCER || a !== b;
+  if (a === FREELANCER || b === FREELANCER) return true;
+  return a !== b && atWar(a, b);
+}
+
+/** Does `side` fight this target? A target may carry its own rule (a rogue player is hunted). */
+export function foeHostile(side: Side, foe: { side: Side; hostileTo?: (s: Side) => boolean }): boolean {
+  return foe.hostileTo ? foe.hostileTo(side) : hostile(side, foe.side);
 }
 
 export function sideName(s: Side): string {

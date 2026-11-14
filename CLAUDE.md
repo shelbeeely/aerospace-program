@@ -19,7 +19,7 @@ The full rules are in [AGENTS.md](AGENTS.md) (imported above). The essentials:
 - **People:** Bits are people, not vehicles: rigid hovering polyhedra with four figures (two
   blue idles, yellow YES, red NO) that walk the kerbs; the player on foot is one (`npm run bit`). Every side also has one
   street program of its own (Archivist, Sentinel, Tender, Scavenger, Broker; `npm run programs`).
-- **Roads:** every road is pathed so the flight computer can drive any ground vehicle anywhere;
+- **Roads:** every road is pathed so the Navigator can drive any ground vehicle anywhere;
   ground vehicles spawn on roads, never on airstrips.
 - **Code:** no `Math.random` in generation; sim/world/arch stay DOM- and scene-free; run
   `npm run typecheck`, `npm run arch`, `npm run drive`, `npm run city`, `npm run ground`.

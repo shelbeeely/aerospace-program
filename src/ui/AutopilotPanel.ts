@@ -7,25 +7,38 @@ import {
   type AutopilotMode,
   type AutopilotOptions,
   type AutopilotState,
-  type FlightAutopilot,
 } from '../sim/flightAutopilot.ts';
 import { destinations, type Destination } from '../sim/nav.ts';
 import type { Telemetry } from '../sim/telemetry.ts';
 
 const MS_TO_KT = 1.943844;
 
+/** What the Navigator is driving: a vehicle the flight autopilot knows, or the Bit on foot. */
+export type NavKind = AutopilotKind | 'foot';
+/** The vehicle modes plus walking back to the parked vehicle. */
+export type NavMode = AutopilotMode | 'vehicle';
+export const FOOT_MODES: readonly NavMode[] = ['goto', 'vehicle'];
+
+/** The state the panel shows (the flight autopilot's, or the foot navigator's dressed the same way). */
+export type NavState = Omit<AutopilotState, 'kind' | 'mode'> & { kind: NavKind; mode: NavMode };
+export type NavOptions = Omit<AutopilotOptions, 'mode'> & { mode: NavMode };
+
 export interface AutopilotPanelHooks {
-  autopilot: FlightAutopilot;
-  /** The current craft's autopilot kind, or null if it has none (blimp, ground vehicle). */
-  kind(): AutopilotKind | null;
+  /** The Navigator's current state. */
+  state(): NavState;
+  /** What it can drive now, or null if it cannot drive this craft (blimps, for now). */
+  kind(): NavKind | null;
   telemetry(): Telemetry;
   /** Engage (or switch) with these options. */
-  engage(opts: AutopilotOptions): void;
+  engage(opts: NavOptions): void;
   disengage(): void;
 }
 
+const NAV_LABELS: Record<NavMode, string> = { ...MODE_LABELS, vehicle: 'Back to vehicle' };
+
 type Field = 'heading' | 'altitude' | 'speed' | 'vs' | 'destination' | 'orbit';
-const FIELDS: Record<AutopilotMode, Field[]> = {
+const FIELDS: Record<NavMode, Field[]> = {
+  vehicle: [],
   hold: ['heading', 'altitude', 'speed', 'vs'],
   takeoff: ['heading', 'altitude', 'speed'],
   land: ['destination'],
@@ -35,7 +48,8 @@ const FIELDS: Record<AutopilotMode, Field[]> = {
   ascent: ['altitude'],
   chase: [],
 };
-const HINTS: Record<AutopilotMode, string> = {
+const HINTS: Record<NavMode, string> = {
+  vehicle: 'Walks you back to your parked vehicle and gets in.',
   ascent: 'Flies to a circular orbit at the selected altitude: take-off, gravity turn at full thrust, coast to the apoapsis, circularise. Needs a rocket (or enough of anything) to get there.',
   hold: 'Holds heading, altitude (or a vertical speed) and speed; takes off from a runway. Stick and throttle turn the knobs.',
   takeoff: 'Take-off roll and climb to the selected altitude, then Hold.',
@@ -50,13 +64,14 @@ const fmtTime = (s: number) => (Number.isFinite(s) && s < 36000 ? `${Math.floor(
 const fmtDist = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`);
 
 /**
- * The flight computer panel (J, or touch More → "Flight computer"): pick a mode, set its
- * fields, engage. Live status and approach guidance refresh at about 5 Hz.
+ * The Navigator panel (J, the NAV chip, or touch More → "Navigator"): pick a mode, set its
+ * fields, engage. It drives whatever the player is in, airplane, rotorcraft or ground vehicle,
+ * and walks the player's Bit on foot. Live status and guidance refresh at about 5 Hz.
  */
 export class AutopilotPanel {
   readonly root: HTMLElement;
-  private mode: AutopilotMode = 'hold';
-  private kind: AutopilotKind = 'airplane';
+  private mode: NavMode = 'hold';
+  private kind: NavKind = 'airplane';
   private readonly modeBar: HTMLElement;
   private readonly hint: HTMLElement;
   private readonly inputs: Record<Field, HTMLInputElement | HTMLSelectElement>;
@@ -78,7 +93,7 @@ export class AutopilotPanel {
     this.root = el('div', 'panel hidden');
     this.root.id = 'ap-panel';
     this.root.setAttribute('role', 'dialog');
-    this.root.setAttribute('aria-label', 'Flight computer');
+    this.root.setAttribute('aria-label', 'Navigator');
     const close = el('button', 'panel-close', 'Close ✕');
     close.type = 'button';
     close.addEventListener('click', () => this.hide());
@@ -128,7 +143,7 @@ export class AutopilotPanel {
     this.status = el('div', 'ap-status');
     this.status.setAttribute('aria-live', 'polite');
     this.guidance = el('div', 'ap-guidance');
-    this.root.append(close, el('h3', '', 'Flight computer'), this.modeBar, this.hint, fields, buttons, this.status, this.guidance);
+    this.root.append(close, el('h3', '', 'Navigator'), this.modeBar, this.hint, fields, buttons, this.status, this.guidance);
     // Enter in a field engages.
     this.root.addEventListener('keydown', (e) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -150,10 +165,10 @@ export class AutopilotPanel {
   show(): void {
     const kind = this.hooks.kind();
     this.kind = kind ?? 'airplane';
-    const st = this.hooks.autopilot.state;
+    const st = this.hooks.state();
     const modes = modesFor(this.kind);
     this.mode = st.engaged && modes.includes(st.mode) ? st.mode : this.mode;
-    if (!modes.includes(this.mode)) this.mode = 'hold';
+    if (!modes.includes(this.mode)) this.mode = modes[0];
     this.prefill(st);
     this.root.classList.remove('hidden');
     this.renderModes();
@@ -166,7 +181,7 @@ export class AutopilotPanel {
   }
 
   /** Fill the fields from the engaged computer, else from the current flight state. */
-  private prefill(st: AutopilotState): void {
+  private prefill(st: NavState): void {
     const t = this.hooks.telemetry();
     const air = this.kind === 'airplane';
     const grounded = t.onGround || t.altitude < 5;
@@ -184,7 +199,8 @@ export class AutopilotPanel {
 
   private fillDestinations(selected: string | null): void {
     const sel = this.inputs.destination as HTMLSelectElement;
-    const key = `${this.kind}:${this.mode}`;
+    const pos = this.hooks.telemetry().position;
+    const key = `${this.kind}:${this.mode}${this.kind === 'foot' ? `:${Math.round(pos[0] / 100)},${Math.round(pos[2] / 100)}` : ''}`;
     const prev = selected ?? sel.value;
     if (key !== this.destKey) {
       this.destKey = key;
@@ -194,7 +210,12 @@ export class AutopilotPanel {
       const runways = all.filter((d) => d.kind === 'runway');
       const pads = all.filter((d) => d.kind === 'helipad');
       const other = all.filter((d) => d.kind === 'hub' || d.kind === 'landmark');
-      if (land) groups.push(this.kind === 'airplane' ? ['Runways', runways] : ['Helipads', pads]);
+      if (this.kind === 'foot') {
+        // On foot distance is everything: nearest first, with how far (by air) each is.
+        const [px, , pz] = this.hooks.telemetry().position;
+        const near = all.filter((d) => d.y <= 0).map((d) => ({ d, m: Math.hypot(d.x - px, d.z - pz) })).sort((a, b) => a.m - b.m).slice(0, 40);
+        groups.push(['Nearest first', near.map(({ d, m }) => ({ ...d, name: `${d.name} · ${fmtDist(m)}` }))]);
+      } else if (land) groups.push(this.kind === 'airplane' ? ['Runways', runways] : ['Helipads', pads]);
       else groups.push(['Landmarks & hubs', other], ['Runways', runways], ['Helipads', pads]);
       const first = document.createElement('option');
       first.value = '';
@@ -221,7 +242,7 @@ export class AutopilotPanel {
       ...modes.map((m) => {
         const b = document.createElement('button');
         b.type = 'button';
-        b.textContent = this.kind === 'ground' && m === 'hold' ? 'Stop' : MODE_LABELS[m];
+        b.textContent = this.kind === 'ground' && m === 'hold' ? 'Stop' : this.kind === 'foot' && m === 'goto' ? 'Walk to' : NAV_LABELS[m];
         b.className = m === this.mode ? 'active' : '';
         b.setAttribute('aria-pressed', String(m === this.mode));
         b.addEventListener('click', () => {
@@ -232,11 +253,14 @@ export class AutopilotPanel {
       }),
     );
     const ground = this.kind === 'ground';
-    const show = new Set(FIELDS[this.mode].filter((f) => ground ? f === 'destination' || (f === 'speed' && this.mode === 'goto') : this.kind === 'airplane' || (f !== 'vs' && f !== 'orbit')));
+    const foot = this.kind === 'foot';
+    const show = new Set(FIELDS[this.mode].filter((f) => foot ? f === 'destination' : ground ? f === 'destination' || (f === 'speed' && this.mode === 'goto') : this.kind === 'airplane' || (f !== 'vs' && f !== 'orbit')));
     for (const f of Object.keys(this.rows) as Field[]) this.rows[f].classList.toggle('hidden', !show.has(f));
-    this.hint.textContent = ground
-      ? this.mode === 'goto' ? 'Drives to the destination on the road network (streets, data highways, Outlands highways). Throttle sets the cruise speed; steer or brake to take over.' : 'Stops and holds the brakes.'
-      : HINTS[this.mode];
+    this.hint.textContent = foot
+      ? this.mode === 'goto' ? 'Walks you there along the road network, on the kerb. Walk yourself to take over.' : HINTS.vehicle
+      : ground
+        ? this.mode === 'goto' ? 'Drives to the destination on the road network (streets, data highways, Outlands highways). Throttle sets the cruise speed; steer or brake to take over.' : 'Stops and holds the brakes.'
+        : HINTS[this.mode];
     this.fillDestinations(null);
   }
 
@@ -249,7 +273,7 @@ export class AutopilotPanel {
       return v === '' || !Number.isFinite(x) ? undefined : x;
     };
     const show = FIELDS[this.mode];
-    const opts: AutopilotOptions = { mode: this.mode };
+    const opts: NavOptions = { mode: this.mode };
     if (show.includes('heading')) opts.heading = n('heading');
     if (show.includes('altitude')) opts.altitude = n('altitude');
     if (show.includes('speed')) {
@@ -273,16 +297,16 @@ export class AutopilotPanel {
     const now = performance.now();
     if (!force && now - this.lastRefresh < 200) return;
     this.lastRefresh = now;
-    const st = this.hooks.autopilot.state;
+    const st = this.hooks.state();
     if (!this.hooks.kind()) {
-      this.status.textContent = 'This craft has no autopilot.';
+      this.status.textContent = 'The Navigator cannot fly this craft yet (blimps). Fly it by hand.';
       this.guidance.replaceChildren();
       this.engageBtn.disabled = true;
       return;
     }
     this.engageBtn.disabled = false;
-    this.engageBtn.textContent = st.engaged ? `Switch to ${MODE_LABELS[this.mode]}` : 'Engage';
-    this.status.textContent = st.engaged ? `${MODE_LABELS[st.mode]} · ${st.phase.toUpperCase()}${st.notice ? ` — ${st.notice}` : ''}\n${st.status}` : st.status && st.status !== 'Off' ? `Off — ${st.status}` : 'Off';
+    this.engageBtn.textContent = st.engaged ? `Switch to ${NAV_LABELS[this.mode]}` : 'Engage';
+    this.status.textContent = st.engaged ? `${NAV_LABELS[st.mode]} · ${st.phase.toUpperCase()}${st.notice ? ` — ${st.notice}` : ''}\n${st.status}` : st.status && st.status !== 'Off' ? `Off — ${st.status}` : 'Off';
     this.status.classList.toggle('on', st.engaged);
     const g = st.engaged ? st.guidance : null;
     if (!g) {
@@ -303,6 +327,6 @@ export class AutopilotPanel {
   }
 }
 
-function modesFor(kind: AutopilotKind): readonly AutopilotMode[] {
-  return kind === 'airplane' ? AIRPLANE_MODES : kind === 'ground' ? GROUND_MODES : ROTORCRAFT_MODES;
+function modesFor(kind: NavKind): readonly NavMode[] {
+  return kind === 'foot' ? FOOT_MODES : kind === 'airplane' ? AIRPLANE_MODES : kind === 'ground' ? GROUND_MODES : ROTORCRAFT_MODES;
 }

@@ -15,7 +15,7 @@ npm run sim            # headless physics regression (takeoff, turn, stalls, CoM
 npm run weather        # weather impact checks (rain, icing, ground effect, vortex ring, wet runway)
 npm run ground         # ground vehicles: flat ground, skid steering, Outlands highways and rubble, spawn sites
 npm run arch           # digital world: five families vs the ten checks, districts, interiors, Outlands
-npm run drive          # road network: one graph, every destination by road, the flight computer driving
+npm run drive          # road network: one graph, every destination by road, the Navigator driving
 npm run weapons        # weapons: fitted multiples, cannon cratering, tank bulldozer, bombs, missiles, laser, discs, armour
 npm run craft          # vehicle rules: connected parts, the 1982 palette, the vehicle grammar, ground-vehicle design loop (offline)
 npm run engines        # fast flight: compressibility, ramjet/scramjet/solid/turbojet, thrust vectoring, airbrake, chute, cone/capsule parts, weight floors
@@ -31,7 +31,7 @@ npm run adsb           # ADS-B: callsigns, speeds, squawk codes, track history; 
 npm run hacking        # the hacking beam: charges, the 3 s hold, takeovers of aircraft, turrets and light cycles, reverting
 npm run netdamage      # networked damage: hit tests, the shooter's scanner, the victim's checks, kills
 npm run enemies        # enemy aircraft: red-team colours, patrol vs hunt, gunnery, hit points, kills, determinism
-npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
+npm run orbit          # the Navigator's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
 ```
 
@@ -209,7 +209,7 @@ stick expo, haptics, and touch controls auto/on/off.
 | ; (hold) | hacking beam on the locked target (needs a hacking charge from the Armory) |
 | ← → ↑ ↓ | turret traverse and elevation (tank, or any craft with a turret part); gamepad: LB + right stick |
 | / | turret back to the nose |
-| Enter | chase the locked vehicle (flight computer *Chase lock*; Enter again, or the stick, ends it) |
+| Enter | chase the locked vehicle (Navigator *Chase lock*; Enter again, or the stick, ends it) |
 | \\ | radar range: 2 / 5 / 12 km |
 
 > Browsers don't let pages block Ctrl+W, so tapping Ctrl for throttle-down next to W can
@@ -233,19 +233,36 @@ stall onset, and a toast announces connect/disconnect.
 
 **Touch** (phones and tablets, portrait or landscape)
 
-- **Left thumb:** a throttle lever. Drag up or down and it **stays** where you leave it; on
-  rotorcraft the middle is hover. Drag sideways for yaw, which springs back.
-- **Right thumb:** a floating stick that centres where you touch. Drag down for nose up, sideways
-  to roll. It springs back.
-- **BRAKE** (hold). The top bar has **Hangar**, **Camera**, **Controls**, and **More**.
-  **More** contains New plane, Reset world, craft selection, weather, flaps, sound, photos and fullscreen.
+The screen changes with what you are driving (`src/hud/profiles.ts`): the HUD's readouts, the
+lever's name, the hints and the buttons follow the vehicle.
+
+| Vehicle | HUD strip | Left thumb | Right thumb |
+|---|---|---|---|
+| Airplane | airspeed, altitude, V/S, heading, power | power lever (stays put); sideways = rudder | stick: drag down = nose up, sideways = bank |
+| Helicopter | speed, altitude, V/S, heading, lift | lift lever, middle hovers; sideways = turn | stick: tilt and fly that way |
+| Blimp | speed, altitude, V/S, heading, power | power lever; sideways = turn | stick: nose up / down, turn |
+| Ground vehicle | speed, heading, cruise, fuel | cruise-power lever; sideways = steer | stick: up = go, down = brake (and reverse from a stop), sideways = steer |
+| On foot (your Bit) | none | BOARD gets back in | stick: drag up = walk, sideways = turn; FIRE / DROP become YES / NO |
+
+- **The HUD strip** shows only those readouts, in large type; tap it to open everything else
+  (weather, fuel, battery, credits, lock, hostiles), tap again to close. Readouts that mean
+  nothing for the vehicle are hidden (no AOA or flaps on a light cycle; no AOA or G on the
+  ground).
+- **NAV chip** under the HUD: the Navigator's mode and where it is taking you. Tap it to set a
+  course.
+- **Top bar** (icons): ✦ hangar and Studio, ◉ camera, ? controls (and the hints again),
+  ☰ more: Navigator, Nav hold, new plane, reset world, craft selection, weather and credits,
+  flaps, weapons, map, globe, on foot, mercenaries, strategic, sound, photo, fullscreen.
+- **BRAKE** (hold) beside the lever; **weapons** (FIRE, DROP, HACK) in one column at the right
+  edge when armed, with the stick moved clear of them. The radar sits in its own corner.
+- **Hints** under each thumb show the first three times you use a kind of vehicle, then fade;
+  **?** brings them back.
 - **Create / Studio:** in the hangar, tap **Create**, type in **Describe your aircraft**, then
   tap **Generate aircraft**. GitHub Pages requires your OpenRouter key under **Key & spend**.
   Model choices are under **Models & generation settings**. Studio stays closed on mobile
   until opened; its ✕ closes it. Controls and weather panels have labeled close buttons.
-- The layout adapts to orientation and notches (safe areas). Portrait gets a compact HUD strip
-  and the Studio as a bottom sheet; landscape gets a corner HUD and the Studio as a side
-  drawer. Phones render at capped resolution with smaller shadow maps to hold the frame
+- The layout adapts to orientation and notches (safe areas); nothing overlaps in either
+  orientation. Phones render at capped resolution with smaller shadow maps to hold the frame
   rate, and vibrate on crashes.
 
 To fly: press Z, roll down the runway, and pull back gently (S) at about 60 kt. Lift-off comes
@@ -374,7 +391,7 @@ their own territory.
 | Side | Program | Looks like | What it does |
 |---|---|---|---|
 | Cyan | **Archivist** | a tall hexagonal bipyramid, a lit data cube riding over it | wanders Cyan districts and stops at block corners to upload into the buildings (a thin beam) |
-| Red | **Sentinel** | an inverted square column under a red halo, a slit of light for an eye | patrols in threes. A player on foot who is not Red is warned (NO, halo flashing) within 16 m, and derezzed after 2.5 s inside 9 m. Keep your distance and the patrol goes back to its beat. Red players get a YES salute |
+| Red | **Sentinel** | an inverted square column under a red halo, a slit of light for an eye | patrols in threes. A player on foot who is not Red is warned (NO, halo flashing) within 16 m. If Red is hostile to you (at war with your team, hunting you, or you are a Red renegade) a stranger who comes on is derezzed after 2.5 s inside 9 m; at peace the warning is all. Keep your distance and the patrol goes back to its beat. Red players get a YES salute |
 | Amber | **Tender** | a squat octagonal drum with an amber band | walks (hurrying) to a broken road within 700 m and mends it in 24 s: the closure lifts, the barriers and rubble go, and traffic and the flight computer can use the road again |
 | Freelancers | **Scavenger** | a low tetrahedron, fragments circling it | bands of 2 to 4 that hurry to any fresh crater within 800 m and pick it over |
 | Mercenaries | **Broker** | a cube stood on its corner over a disc ringed in light | keeps its corner. Say YES beside one to renew every hired mercenary's contract for 2 more minutes (150 credits) |
@@ -382,7 +399,8 @@ their own territory.
 Each program answers you in the Bits' colours (YES yellow, NO red). Archivists answer only
 Cyan players with YES and Sentinels only Red players. Run over or caught in a blast, a program
 derezzes into chips of its light, and its post fills again after 3 minutes. Running down a
-program that isn't on your side pays 25 credits. About 40 to 50 programs walk the streets
+program of a side that fights you pays 25 credits; at peace it is an incident, as hitting
+anything of theirs is (that team hunts you, and tension rises). About 40 to 50 programs walk the streets
 round you at once (180 at most), alongside up to 340 Bits (9 per block, up from 6).
 Check: `npm run programs`.
 
@@ -411,13 +429,44 @@ Three teams hold the planet: **Cyan**, **Red** and **Amber** (`src/sim/teams.ts`
 with a third of the region cells, so territory comes in large contiguous patches
 (`src/sim/territory.ts`); the planet map washes every district in its holder's colour.
 
+**The world starts at peace.** No two teams are at war when you start or reset the world:
+their turrets and aircraft hold fire, other teams patrol peacefully, and no freelancers come
+out. War and peace move in steps (`src/sim/diplomacy.ts`), one ladder per pair of teams
+(Cyan-Red, Cyan-Amber, Red-Amber):
+
+| Stance | What it means | How it moves on |
+|---|---|---|
+| Peace | nobody fires | incidents raise tension, which fades in quiet |
+| Tension | the victim protests (tension 40/100) | more incidents: it mobilises; quiet: back to peace |
+| Mobilising | war in 20 s (15 s after your own declaration) | the offender pays reparations (300 cr) to stand it down, or the declarer calls it off; otherwise war |
+| War | everything of the two sides fights | a cease fire, accepted after 30 s without shots |
+| Truce | 2 minutes of no fighting | any shot breaks it: war at once, and the third team distrusts the side that broke it; otherwise peace |
+
+- **Rogues.** Your fire on another team at peace is an *incident*, not a war: that team **hunts
+  you** for 90 s (WANTED on the HUD; its turrets and aircraft fire on you, not on your team),
+  and the two teams' tension rises (a hit 8, a turret 6, a kill 30, a turret kill 35, a nuke or
+  EMP over its district enough to mobilise at once). Rogue kills pay nothing and capture
+  nothing. A player of another team who fires on you at peace is a rogue the same way: your
+  side hunts that player, and the teams' tension rises.
+- **Friendly fire.** Your rounds now land on your own team's aircraft and turrets. A first
+  hit is a warning; keep at it and you are a **renegade** for 2 minutes (RENEGADE on the HUD):
+  your own turrets and wingmen turn on you. Shooting down one of your own costs 150 credits.
+- **On the strike globe** (pick a district) each stage has its action: *Declare war* (your
+  team mobilises; during a truce it is treachery and war comes at once), *Call it off*,
+  *Stand down (300 cr)*, *Cease fire*. The panel shows the stance, the tension and how long
+  you are hunted.
+- Backspace (world reset) restores peace and forgives everything.
+- In multiplayer, wars and truces are sent to the room (protocol v4, event `war`); rogue
+  hunts are kept by each player's game.
+
 - **Pick your team** in the hangar (TEAM, above SPAWN; remembered). Your craft is restyled in
   its livery (`teamLivery` / `sideLivery`: the team's light on its bodies, within the light
   budget), and spawn sites in another team's territory say so. Your designs are saved without
   the livery.
 - **Turrets take sides:** a tower turret belongs to its district's holder. Your team's never fire
-  on you; the others' do (while you're armed), and they fire on enemy aircraft too.
-- **The AI war:** team aircraft fight every other side, not only you (F3: *Friendly aircraft*
+  on you; those of a team you are at war with do (while you're armed), and they fire on
+  aircraft of the teams they are at war with.
+- **The AI war:** at war, team aircraft fight every side they are at war with, not only you (F3: *Friendly aircraft*
   0-6, *Enemy aircraft* 0-8 split between the two other teams). With nothing to fight,
   friendlies escort you and go first for anything attacking you. Enemy aircraft also attack
   turrets of the teams they fight, diving on them and firing homing missiles from outside their
@@ -426,8 +475,8 @@ with a third of the region cells, so territory comes in large contiguous patches
   fire destroyed it (yours if you did it) and its turrets rise again in the new colours 20 s
   later. AI teams capture too, so the front line moves on its own. A world reset (Backspace)
   restores the starting map.
-- **No friendly fire:** your rounds don't hurt your side's aircraft or turrets, and theirs
-  don't hurt you; the lock never picks a friend.
+- **Friendly fire** is possible (see above), but your side's rounds never hurt you unless you
+  are a renegade, and the lock never picks a friend.
 - **Freelancers** (F3, 0-4, default 1) belong to no one and fight everyone: white light on steel.
   They never capture.
 - **Mercenaries** are wingmen you hire with credits (`'`, or *Mercenaries* in the touch menu).
@@ -666,7 +715,7 @@ points. Left alone for a moment with a lock held, the turret lays the gun on the
 itself, allowing for the shell's flight time, its drop and the target's motion (`AUTO` on the
 TURRET row). The swing is visual and ballistic: the colliders stay where they are.
 
-**Chase lock** (flight computer, `Enter` or the J panel): the aircraft chases the locked vehicle
+**Chase lock** (Navigator, `Enter` or the J panel): the aircraft chases the locked vehicle
 on its own. An aeroplane flies lead pursuit, banking up to 75° and pulling the g that holds its
 height in the bank, faster than the target while far and bleeding off speed on the way in, then
 holds station a couple of hundred metres behind it, never below the terrain and structures
@@ -695,7 +744,7 @@ the blocks bear load.
   fallen. Rooftop pads and tower turrets already went with their tower.
 - **Roads.** A crater of 5 m radius or more on a road throws up a field of solid slabs and
   closes that stretch (`src/sim/roadDamage.ts`). Red bars mark each rim. Riders turn away or
-  swing round, the flight computer re-routes, and new routes avoid it. Up to 24 closures at
+  swing round, the Navigator re-routes, and new routes avoid it. Up to 24 closures at
   once; a world reset reopens them.
 - **Outlands landforms.** A mesa, pillar, dome or orb struck hard or caught in a blast is
   fractured like a building: the terrain forgets it and blocks fill its exact shape, so an
@@ -964,6 +1013,66 @@ wind, surge, rain, scheduler lifecycle and actual Rapier ground motion.
    - Modes: free flight, races (the LLM racing work becomes "humans vs models"), light-cycle
      arenas, and co-op deliveries. Room codes and share links; craft travel as JSON.
    - Later: accounts, persistent hangars and leaderboards (needs storage on the server).
+10. **Portals and planets.** Planets are linked by a persistent network of paired portals
+    ([design](docs/campaign-design.md#6-portals)).
+    - Every planet has its own id, seed, generator version and surface configuration; cities,
+      provinces and structures carry planet-scoped ids.
+    - A portal terminal is a structure of the radial/communication family (§2E) at the end of a
+      pathed road, so the Navigator can route any ground vehicle to it. A closed terminal
+      is a closed road (§14).
+    - Crossing is server-confirmed: the server checks access, reserves the transfer and moves
+      the player and vehicle once to a safe arrival point. The client reloads into the
+      destination planet behind a short transit screen. A disconnect or retry can neither
+      strand nor duplicate anyone. (A seamless in-place swap comes later.)
+    - Dormant portals are discovered and activated during a season. The server resolves and
+      stores the destination before the route opens, so everyone who activates the same gate
+      reaches the same planet.
+    - A generated planet arrives with several working cities, at least one of them routed to
+      the arrival portal, built by the same city and architecture generators.
+    - Freight crosses too: surface travel, queues and handling take time, terminals have
+      capacity, and access is a matter for treaties.
+    - Checks: `npm run portals`.
+11. **Campaign: a persistent city-builder RTS.** One season is one continuous match on server
+    time ([design](docs/campaign-design.md)). It sits beside the Studio, flight, driving,
+    exploration and Grid Link, which stay as they are.
+    - **Cities and mayors.** Each player governs a city: lays roads (snapped to the street
+      lattice at first), zones housing and industry, places utilities, sets budgets and
+      reserves, and connects to a regional freight terminal. Road layout and traffic decide
+      delivery capacity and growth.
+    - **Countries and provinces.** A team is a country of several player-run cities and the
+      provinces round them (region cells). Mayors run their cities; the country holds the
+      treasury, intercity infrastructure, foreign policy and defence, and votes on major
+      commitments. Sovereignty, occupation, facility operation and treaty access are tracked
+      separately.
+    - **Flows.** Food, fuel and construction materials, commuters and services move on the
+      real road graph; offscreen traffic is aggregated. Cities specialise.
+    - **Peace is play.** Trade and transit treaties with enforceable terms, shared
+      infrastructure, founding settlements, ratified province exchanges, voluntary accession
+      and leases. A season can be peaceful from opening day to the finale.
+    - **War is a choice** (a later milestone): telegraphed mobilisation, bridges, depots and
+      terminals as objectives, occupation distinct from sovereignty, ratified settlements.
+    - **Offline play.** Standing orders for imports, exports, reserves and defences, and a
+      report on return.
+    - **Seasons and scoring.** Scores reward reliable services, fulfilled contracts and
+      useful shared infrastructure. The season is archived, then territory, armies and
+      stockpiles reset; cosmetics and district blueprints carry over.
+    - **Three seasons are planned** as one story ([seasons](docs/seasons.md)): First Light,
+      Open Gates and The Dimming. How each season ends adjusts the next one's world and
+      story, never a team's starting resources.
+    - **Server-authoritative.** Validated idempotent commands on the Bun server beside the
+      Grid Link relay, hosted on Render, with durable state in Supabase Postgres and sign-in
+      through Supabase Auth. Everyone sees the same world live: a building knocked over falls
+      for every player on that planet and stays down for those who arrive later.
+    - **Single player is the same game:** the same rules, seasons and story, run in the browser
+      with computer-run countries; it can be paused and sped up. Every season starts at peace.
+    - **Players who leave.** Guests can join without signing up. An absent mayor's city runs
+      on standing orders, then under a caretaker, then the seat reopens; votes count active
+      members only. The sandbox keeps its
+      local resets, free team switching and last-turret captures.
+    - **First playable slice:** Cyan and Amber on the Grid, two cities each, a shared freight
+      crossing, one dormant portal to a generated second planet, one national vote, one
+      transit treaty, one peaceful province transfer and a scheduled bridge closure.
+    - Checks: `npm run campaign`, `bun test server`.
 
 Generation roadmap, using more of OpenRouter's model types:
 
@@ -1023,7 +1132,7 @@ with the debug panel and the archetype lab; in the game, **K** opens the inspect
 - **Light is architecture:** selective edges and emissive faces by role (structure, data,
   energy, entrance, process, warning) and per-structure activity states (active, idle, damaged,
   inactive). Painted skies and haze follow the region below.
-- **Roads:** every road is on one network. The flight computer's **Go to** drives ground
+- **Roads:** every road is on one network. The Navigator's **Go to** drives ground
   vehicles there (J): right lane, corner speeds, re-routing. Ground vehicles start on a road.
 
 ## The Grid (city, airport, autopilot)
@@ -1093,15 +1202,20 @@ with the debug panel and the archetype lab; in the game, **K** opens the inspect
 - **Autopilot (U / gamepad R3 / touch "Autopilot"):** holds heading, altitude and speed (hover,
   heading and forward speed on rotorcraft), takes off by itself from the runway, and climbs to
   clear buildings ahead. While engaged, stick pitch/roll and the throttle adjust its targets.
-- **Flight computer (J / touch More → "Flight computer"):** MechJeb-style modes on top of the
-  autopilot (`src/sim/flightAutopilot.ts`, navigation in `src/sim/nav.ts`): Hold (or a V/S
-  hold), Takeoff, Land (airplanes: join → initial fix → 3° glideslope and localizer → flare →
-  rollout on a runway long enough, at 1.3 × the design's stall speed; rotorcraft: any helipad,
-  rooftops included), Go to (every landing site, the hubs and the Grid Spire, clearing
-  buildings and terrain, then Orbit), Orbit and Level. The HUD shows approach guidance while
-  landing; a firm stick input takes over. The airplane test card ends with an autoland.
+- **The Navigator** (J, the **NAV** chip on screen, or touch More → *Navigator*; it used to be
+  called the flight computer): one computer for every way of getting about, always on screen as
+  the NAV chip, which shows what it is doing and where it is taking you. MechJeb-style modes on
+  top of the autopilot (`src/sim/flightAutopilot.ts`, navigation in `src/sim/nav.ts`): Hold (or
+  a V/S hold), Takeoff, Land (airplanes: join → initial fix → 3° glideslope and localizer →
+  flare → rollout on a runway long enough, at 1.3 × the design's stall speed; rotorcraft: any
+  helipad, rooftops included), Go to (every landing site, the hubs and the Grid Spire, clearing
+  buildings and terrain, then Orbit), Orbit and Level. Ground vehicles: Go to drives the road
+  network. **On foot** (`src/sim/footNav.ts`): *Walk to* takes your Bit to a destination along
+  the roads, on the kerb, and *Back to vehicle* (also U on foot) walks it back and gets in. The
+  HUD shows approach guidance while landing; a firm stick input (or walking yourself) takes
+  over. Blimps are not flown by it yet. The airplane test card ends with an autoland.
 
-Checks: `npm run city`, `npm run autopilot`, `npm run destruction`, `npm run design-pipeline`.
+Checks: `npm run city`, `npm run autopilot`, `npm run navigator`, `npm run destruction`, `npm run design-pipeline`.
 
 ### Credits
 

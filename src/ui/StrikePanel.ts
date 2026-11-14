@@ -1,7 +1,7 @@
 import { turretSites } from '../sim/groundTurrets.ts';
 import type { Simulation } from '../sim/Simulation.ts';
 import { STRIKES, type StrikeKind } from '../sim/strikes.ts';
-import { hostile, TEAMS } from '../sim/teams.ts';
+import { diplomacy, DIPLOMACY, hostile, TEAMS, type Stance } from '../sim/teams.ts';
 import { wrapDelta } from '../sim/contacts.ts';
 import { chunkAt } from '../world/planetCity.ts';
 import type { GlobeView } from '../render/GlobeView.ts';
@@ -171,6 +171,34 @@ export class StrikePanel {
         line2.className = 'muted small';
         line2.textContent = `${(dist / 1000).toFixed(1)} km away · ${standing} ${enemy ? 'enemy ' : ''}turret${standing === 1 ? '' : 's'} standing`;
         this.target.append(line1, line2);
+        // Diplomacy with the holder: where the two teams stand, and what can be done about it.
+        if (owner !== null && owner !== sim.team) {
+          const st = diplomacy.state(sim.team, owner);
+          const name = TEAMS[owner].name;
+          const left = Math.max(0, Math.ceil(st.until - sim.time));
+          const line3 = document.createElement('div');
+          const tension = `tension ${Math.round(st.tension)}/100`;
+          const text: Record<Stance, string> = {
+            peace: `AT PEACE with ${name} (${tension}): their turrets and aircraft hold fire`,
+            tension: `TENSION with ${name} (${tension}): more incidents and they mobilise`,
+            mobilising: st.by === owner ? `${name} MOBILISES against you: war in ${left} s` : `YOU MOBILISE against ${name}: war in ${left} s`,
+            war: `AT WAR with ${name}`,
+            truce: `TRUCE with ${name}: ${left} s left; breaking it turns the others against you`,
+          };
+          line3.className = `diplo ${st.stance}`;
+          line3.textContent = text[st.stance];
+          this.target.append(line3);
+          if (sim.time < sim.wanted[owner]) {
+            const w = document.createElement('div');
+            w.className = 'diplo war';
+            w.textContent = `${name} hunts you for ${Math.ceil(sim.wanted[owner] - sim.time)} s more`;
+            this.target.append(w);
+          }
+          if (st.stance === 'war') btn('Cease fire', 'Offer a cease fire: accepted after 30 s without shots, then a truce', true, () => this.act(() => sim.ceaseFire(owner)));
+          else if (st.stance === 'mobilising' && st.by === owner) btn(`Stand down (${DIPLOMACY.reparations} cr)`, 'Pay reparations: they stop mobilising and stop hunting you', sim.credits >= DIPLOMACY.reparations, () => this.act(() => sim.standDown(owner)));
+          else if (st.stance === 'mobilising') btn('Call it off', 'Stop mobilising before the war starts', true, () => this.act(() => sim.callOffWar(owner)));
+          else btn(`Declare war on ${name}`, st.stance === 'truce' ? 'During a truce this is treachery: war at once, and the third team distrusts you' : `Your team mobilises: war in ${DIPLOMACY.declare} s`, true, () => this.act(() => sim.declareWar(owner)));
+        }
         const send = friends + mercs;
         btn(`Send aircraft (${friends} + ${mercs} merc)`, 'Your team\'s aircraft and mercenaries fly there and fight within 3 km of it for 3 minutes', send > 0, () =>
           this.act(() => (sim.orderAircraft(p.x, p.z) ? null : 'No aircraft to send')));
@@ -179,7 +207,7 @@ export class StrikePanel {
           const S = STRIKES[kind];
           const eta = sim.strikeSystem.etaTo(kind, p.x, p.z);
           btn(`${S.label} · ${S.price} cr · ${Math.round(eta)} s`, kind === 'barrage' ? 'Six cruise missiles, each on a different enemy turret within 1.5 km' : kind === 'emp' ? 'One cruise missile that bursts an EMP over the enemy turrets there' : 'A bomber of your team drops a nuke on it and turns for home', sim.credits >= S.price, () =>
-            this.act(() => sim.callStrike(kind, p.x, p.z)));
+            this.act(() => (enemy ? sim.callStrike(kind, p.x, p.z) : 'Strikes are for districts you are at war with')));
         }
       }
     }

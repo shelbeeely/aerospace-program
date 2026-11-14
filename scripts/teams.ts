@@ -29,6 +29,10 @@ import { baseOwner } from '../src/sim/territory.ts';
 import { terrainHeight } from '../src/sim/terrain.ts';
 import { obstacleTop } from '../src/world/structures.ts';
 import type { WeaponImpact } from '../src/sim/weapons.ts';
+import type { GroundTurret } from '../src/sim/groundTurrets.ts';
+import { allAtWar, atWar, diplomacy, DIPLOMACY, resetDiplomacy, setWar } from '../src/sim/teams.ts';
+// The world starts at peace; these checks test fighting, so every team is at war with every other.
+allAtWar();
 
 await initPhysics();
 let failed = 0;
@@ -189,7 +193,7 @@ console.log('--- friendly fire');
   const hit = (h: WeaponImpact, by?: AiFlyer) => (sim as unknown as { weaponImpact(h: WeaponImpact, s?: AiFlyer): void }).weaponImpact(h, by);
   const col = (f: AiFlyer) => f.body.collider(0);
   hit(impact(friend.pos, col(friend)));
-  check(friend.hp === friend.maxHp, 'your rounds don\'t hurt a friendly aircraft');
+  check(friend.hp < friend.maxHp && sim.time >= sim.renegadeUntil, 'your rounds land on a friendly aircraft: friendly fire, a warning first');
   hit(impact(enemy.pos, col(enemy)));
   check(enemy.hp < enemy.maxHp, 'they do hurt an enemy');
   const part = sim.craft.body.collider(0);
@@ -215,7 +219,7 @@ console.log('--- capture');
   run(sim, 17, p);
   const back = turretAt(sim);
   check(!!back && back.side === other, `then rise again in ${TEAMS[other].name} colours`, back ? `side ${back.side}` : 'none');
-  sim.resetToRunway();
+  sim.resetToRunway(); allAtWar();
   check(sim.groundTurrets.territory.ownerOf(site.ci, site.cj) === owner, 'a world reset restores the map');
 }
 
@@ -292,6 +296,86 @@ console.log('--- mercenaries');
   for (const m of ms) m.mercUntil = sim.time;
   run(sim, 60, at);
   check(sim.airTraffic.mercs().length === 0 && !sim.airTraffic.flyers.some((f) => f.role === 'merc' && f.pos.distanceTo(sim.position) < 4000), 'when the contract ends they leave');
+}
+
+// ---------------------------------------------------------------- the world starts at peace
+console.log('--- the world starts at peace; war and peace take steps');
+{
+  resetDiplomacy();
+  check(!hostile(0, 1) && !hostile(1, 2) && !hostile(0, 2) && hostile(FREELANCER, 0), 'at the start no two teams fight (freelancers still fight anyone)');
+  // An armed craft beside another team's turret: at peace it holds fire.
+  const p = vantage(1000, 300);
+  const calm = world(JET, other);
+  resetDiplomacy();
+  calm.airTraffic.freelancers = 2;
+  run(calm, 30, p);
+  const u = calm.groundTurrets.turrets.find((x) => x.site.id === site.id)!;
+  check(!!u && u.weapons.fired === 0 && calm.hitsTaken === 0, `a ${TEAMS[owner].name} turret holds fire on an armed ${TEAMS[other].name} craft at peace`, `${u?.weapons.fired} rounds`);
+  check(!calm.airTraffic.flyers.some((f) => f.role === 'free' && f.derezAt === null), 'no freelancers come out while the world is at peace');
+  check(calm.lockTargets().some((t) => t.id === u?.handle.id), 'its turret can still be locked (firing is what starts trouble)');
+
+  // A rogue: the player fires on that turret at peace. Its team hunts the player; no war yet.
+  const shoot = (sim: Simulation, t: GroundTurret) => (sim as unknown as { weaponImpact(h: WeaponImpact): void }).weaponImpact({ kind: 'gun', point: t.pos.clone(), normal: new THREE.Vector3(0, 1, 0), vel: new THREE.Vector3(0, 0, -600), mass: 0.05, blast: 1.6, color: '#fff', collider: t.body.collider(0) as never, time: sim.time });
+  shoot(calm, u);
+  check(!atWar(other, owner) && calm.time < calm.wanted[owner] && calm.hostileToPlayer(owner), `one rogue shot: ${TEAMS[owner].name} hunts the player, the teams stay at peace`);
+  check(!calm.hostileToPlayer(3 - owner - other as Team), 'the third team is not involved');
+  run(calm, 20, p);
+  check(u.weapons.fired > 0, 'and the turret now fires on the rogue', `${u.weapons.fired} rounds`);
+  check(diplomacy.state(other, owner).tension > 0, 'tension between the two teams rose', `${diplomacy.state(other, owner).tension.toFixed(0)}`);
+
+  // More incidents: the victim mobilises; reparations stand it down.
+  const w = world(TEST_PLANE, 0, 0);
+  resetDiplomacy();
+  for (let i = 0; i < 4; i++) diplomacy.incident(0, 1, DIPLOMACY.severity.kill, w.time);
+  check(diplomacy.stance(0, 1) === 'mobilising' && diplomacy.state(0, 1).by === 1 && !atWar(0, 1), 'enough incidents: Red mobilises against Cyan (war not yet)');
+  w.credits = DIPLOMACY.reparations;
+  check(w.standDown(1) === null && diplomacy.stance(0, 1) === 'tension' && w.credits === 0, 'paying reparations stands Red down');
+  for (let i = 0; i < 4; i++) diplomacy.incident(0, 1, DIPLOMACY.severity.kill, w.time);
+  for (let i = 0; i < 120 * (DIPLOMACY.mobilise + 1); i++) w.step(idle);
+  check(atWar(0, 1) && !atWar(0, 2), 'unanswered, the mobilisation becomes war with Red only');
+
+  // A remote player of Red opening fire is a rogue too: no war of its own making.
+  resetDiplomacy();
+  check(w.applyRemoteHit({ id: 'red-player', team: 1 }, 'gun', w.position.clone()) !== 'team' && !atWar(0, 1) && w.remoteIsWanted('red-player'), 'a Red player firing at peace is hunted by your side; the teams stay at peace');
+
+  // A declaration is telegraphed, and can be called off.
+  check(w.declareWar(2) === null && diplomacy.stance(0, 2) === 'mobilising' && !atWar(0, 2), 'declaring war on Amber mobilises first');
+  check(w.callOffWar(2) === null && !atWar(0, 2) && diplomacy.stance(0, 2) !== 'mobilising', 'and can be called off before it starts');
+  w.declareWar(2);
+  for (let i = 0; i < 120 * (DIPLOMACY.declare + 1); i++) w.step(idle);
+  check(atWar(0, 2) && w.diplomacyEvents.some((d) => d.b === 2 && d.on), 'then war with Amber, sent to the room');
+
+  // Ending it: a cease fire waits for quiet, then a truce; breaking the truce costs trust.
+  diplomacy.incident(2, 0, 0, w.time);
+  check(w.ceaseFire(2) !== null && atWar(0, 2), 'a cease fire is refused while shots are still flying');
+  for (let i = 0; i < 120 * (DIPLOMACY.quiet + 1); i++) w.step(idle);
+  check(w.ceaseFire(2) === null && diplomacy.stance(0, 2) === 'truce' && !atWar(0, 2), 'after 30 s of quiet: a truce');
+  const redBefore = diplomacy.state(0, 1).stance === 'war' ? -1 : diplomacy.state(0, 1).tension;
+  setWar(0, 1, false);
+  diplomacy.incident(0, 2, DIPLOMACY.severity.hit, w.time);
+  check(atWar(0, 2) && diplomacy.state(0, 1).tension > Math.max(0, redBefore), 'firing during the truce: war again, and Red trusts Cyan less');
+  diplomacy.incident(2, 0, 0, w.time);
+  for (let i = 0; i < 120 * (DIPLOMACY.quiet + 1); i++) w.step(idle);
+  w.ceaseFire(2);
+  for (let i = 0; i < 120 * (DIPLOMACY.truce + 1); i++) w.step(idle);
+  check(diplomacy.stance(0, 2) === 'peace', 'when the truce runs out: peace');
+
+  // Friendly fire: enough of it and the player's own team turns renegade-hunter.
+  const ff = world(JET, owner);
+  resetDiplomacy();
+  run(ff, 1.5, p);
+  const mine = ff.groundTurrets.turrets.find((x) => x.site.id === site.id)!;
+  shoot(ff, mine);
+  check(ff.time >= ff.renegadeUntil && mine.hp < mine.maxHp, 'a first friendly hit lands, with a warning');
+  for (let i = 0; i < 4; i++) shoot(ff, mine);
+  check(ff.time < ff.renegadeUntil && ff.hostileToPlayer(owner), `more of it: renegade, ${TEAMS[owner].name} turns on the player`);
+  const fired = mine.weapons.fired;
+  run(ff, 20, p);
+  check(mine.derezAt !== null || mine.weapons.fired > fired, 'and its own turret fires on the renegade', `${mine.weapons.fired - fired} rounds`);
+
+  w.resetToRunway();
+  check(!atWar(0, 2) && !atWar(0, 1) && w.time >= w.renegadeUntil, 'a world reset restores peace and forgives');
+  allAtWar();
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');

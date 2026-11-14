@@ -525,6 +525,9 @@ export class NetClient {
         if (sim.hitsTaken !== hitsBefore || (!wasDown && sim.exploded) || sim.empUntil !== empBefore) sim.lastRemoteHit = { id: p.id, time: sim.time };
         break;
       }
+      case 'war':
+        sim.applyRemoteDiplomacy(e.a, e.b, e.on);
+        break;
       case 'chat':
         this.addChat(p.name, p.color, e.text);
         this.onNotice?.({ kind: 'chat', name: p.name, color: p.color, text: e.text });
@@ -666,6 +669,8 @@ export class NetClient {
         this.stats.hitsSent++;
       }
     }
+    // Wars started or ended here: the room hears of them (the world starts at peace).
+    for (const d of sim.diplomacyEvents.splice(0)) this.sendEvent({ k: 'war', a: d.a, b: d.b, on: d.on });
     for (const b of sim.blasts) {
       if (b.remote || this.blastsSent.has(b)) continue;
       this.blastsSent.add(b);

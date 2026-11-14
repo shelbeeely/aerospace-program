@@ -259,5 +259,5 @@ URL parameters: `explore.html?seed=7&x=…&z=…&y=…&yaw=…&pitch=…&view=la
 
 `npm run arch` (families, validation, determinism, districts, interiors, terrain,
 infrastructure, reseeding), `npm run drive` (one road network, every destination by road,
-spawns on roads, the flight computer driving), `npm run city`, `npm run ground`,
+spawns on roads, the Navigator driving), `npm run city`, `npm run ground`,
 `npm run traffic`, `npm run trails`.
