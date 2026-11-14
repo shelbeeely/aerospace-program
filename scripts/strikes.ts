@@ -20,6 +20,9 @@ import { GRID } from '../src/arch/grid.ts';
 import { STRIKES } from '../src/sim/strikes.ts';
 import { PLANET } from '../src/sim/layout.ts';
 import { chunkAt } from '../src/world/planetCity.ts';
+import { allAtWar } from '../src/sim/teams.ts';
+// The world starts at peace; these checks test fighting, so every team is at war with every other.
+allAtWar();
 
 await initPhysics();
 let failed = 0;

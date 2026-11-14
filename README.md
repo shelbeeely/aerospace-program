@@ -378,13 +378,30 @@ Three teams hold the planet: **Cyan**, **Red** and **Amber** (`src/sim/teams.ts`
 with a third of the region cells, so territory comes in large contiguous patches
 (`src/sim/territory.ts`); the planet map washes every district in its holder's colour.
 
+**The world starts at peace.** No two teams are at war when you start or reset the world:
+their turrets and aircraft hold fire, other teams patrol peacefully, and no freelancers come
+out. Each pair of teams has its own war flag (Cyan-Red, Cyan-Amber, Red-Amber), and every
+system asks the same question (`hostile()`), so turrets, AI pilots, radar colours and hit
+rules all follow it.
+
+- **A war starts** when your fire (rounds, missiles, a blast, a nuke or EMP over their district)
+  strikes another team's aircraft or turret, when another team's player opens fire on you, or
+  when you declare it on the strike globe (pick a district: *Declare war on …*). It is a war
+  with that team only.
+- **A cease fire** (strike globe: *Cease fire*) is accepted once the two sides have gone 30 s
+  without trading fire. Backspace (world reset) restores peace everywhere.
+- You can lock another team's craft at peace; firing is what starts the war. Strikes and the
+  hacking beam need a war with the district's or the craft's team.
+- In multiplayer a declaration or a cease fire is sent to the room (protocol v4, event `war`).
+
 - **Pick your team** in the hangar (TEAM, above SPAWN; remembered). Your craft is restyled in
   its livery (`teamLivery` / `sideLivery`: the team's light on its bodies, within the light
   budget), and spawn sites in another team's territory say so. Your designs are saved without
   the livery.
 - **Turrets take sides:** a tower turret belongs to its district's holder. Your team's never fire
-  on you; the others' do (while you're armed), and they fire on enemy aircraft too.
-- **The AI war:** team aircraft fight every other side, not only you (F3: *Friendly aircraft*
+  on you; those of a team you are at war with do (while you're armed), and they fire on
+  aircraft of the teams they are at war with.
+- **The AI war:** at war, team aircraft fight every side they are at war with, not only you (F3: *Friendly aircraft*
   0-6, *Enemy aircraft* 0-8 split between the two other teams). With nothing to fight,
   friendlies escort you and go first for anything attacking you. Enemy aircraft also attack
   turrets of the teams they fight, diving on them and firing homing missiles from outside their

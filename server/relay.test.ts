@@ -183,6 +183,25 @@ test('networked damage: hits relay to other teams, a team-mate hit goes nowhere,
   a.close(); b.close(); c.close();
 });
 
+test('diplomacy: a war or cease fire relays to the room; a team at war with itself is refused', async () => {
+  const a = new Client(), b = new Client();
+  for (const [cl, name, team] of [[a, 'Cyan A', 0], [b, 'Red B', 1]] as const) {
+    await cl.opened();
+    cl.send({ t: 'hello', v: PROTOCOL_VERSION, room: 'PEACE', name, color: '#ffffff', craft: CRAFT, team });
+    await cl.waitFor('welcome');
+  }
+  a.send({ t: 'event', e: { k: 'war', a: 0, b: 1, on: true } });
+  const war = await b.waitFor('event', (m) => m.e.k === 'war');
+  expect(war.e).toEqual({ k: 'war', a: 0, b: 1, on: true });
+  a.send({ t: 'event', e: { k: 'war', a: 0, b: 1, on: false } });
+  const peace = await b.waitFor('event', (m) => m.e.k === 'war' && m.e.on === false);
+  expect(peace.e).toEqual({ k: 'war', a: 0, b: 1, on: false });
+  a.send({ t: 'event', e: { k: 'war', a: 1, b: 1, on: true } as never });
+  const err = await a.waitFor('error');
+  expect(err.code).toBe('bad-message');
+  a.close(); b.close();
+});
+
 test('teams: given on hello, relayed on change, invalid ones read as Cyan', async () => {
   const a = new Client(), b = new Client();
   await a.opened();

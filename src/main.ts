@@ -326,6 +326,8 @@ async function start() {
   });
   document.getElementById('nav-chip')!.addEventListener('click', () => apPanel.toggle());
   let shownProfile: UiProfile | null = null;
+  // The world starts at peace: say so once, the first time the player flies.
+  let peaceToldAt = false;
   let pilot: ControlSource = autopilot;
 
   let debugOn = false;
@@ -1565,6 +1567,10 @@ async function start() {
 
     hud.update(telemetry, player.trim, telemetry.controls.brake > 0);
     hud.setAutopilot(autopilot.state.engaged ? autopilot.state : null);
+    if (!peaceToldAt && mode === 'flight') {
+      peaceToldAt = true;
+      toast('The Grid is at peace. Fire on another team, or declare war on the strike globe (Shift+Tab), to start a war.');
+    }
     // The screen follows the vehicle (or the Bit on foot): HUD readouts, controls, body class.
     player.onFoot = sim.walker.active;
     const prof = uiProfile(player.profile, sim.walker.active);

@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import type { CraftDef } from '../craft/types.ts';
 import { style1982, circuitOf } from '../craft/style1982.ts';
-import { FREELANCER, hostile as sidesHostile, sideLivery, type Side, type Team } from './teams.ts';
+import { anyWar, FREELANCER, hostile as sidesHostile, sideLivery, type Side, type Team } from './teams.ts';
 import { obstacleTop } from '../world/structures.ts';
 import { terrainHeight } from './terrain.ts';
 import { craftBounds, WeaponSystem, type WeaponHost, type WeaponImpact } from './weapons.ts';
@@ -561,7 +561,7 @@ export class AiAirTraffic {
         this.flyers.splice(i, 1);
       }
     }
-    const wantedOf: Record<Exclude<FlyerRole, 'merc' | 'strike' | 'hacked'>, number> = { civil: this.count, friend: this.friendlies, enemy: this.enemies, free: this.freelancers };
+    const wantedOf: Record<Exclude<FlyerRole, 'merc' | 'strike' | 'hacked'>, number> = { civil: this.count, friend: this.friendlies, enemy: this.enemies, free: anyWar() ? this.freelancers : 0 }; // freelancers only come out in wartime
     for (const role of ['civil', 'friend', 'enemy', 'free'] as const) {
       const wanted = wantedOf[role];
       let alive = this.flyers.filter((f) => f.derezAt === null && f.role === role).length;

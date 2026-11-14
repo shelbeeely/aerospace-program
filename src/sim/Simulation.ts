@@ -25,7 +25,7 @@ import { Town } from '../world/Town.ts';
 import { ChipEmitter } from './chips.ts';
 import { craftBounds, WEAPON_DAMAGE, WEAPONS, WeaponSystem, type Mount, type StrategicKind, type WeaponHost, type WeaponImpact, type WeaponKind } from './weapons.ts';
 import { AiAirTraffic, type AiFlyer, type AirTarget, type Foe } from './aiTraffic.ts';
-import { hostile, sideLight, sideLivery, sideName, TEAMS, type Side, type Team } from './teams.ts';
+import { atWar, hostile, isTeam, resetDiplomacy, setWar, sideLight, sideLivery, sideName, TEAMS, type Side, type Team } from './teams.ts';
 import { CREDITS, mercPrice } from './mercenaries.ts';
 import { STRATEGIC, strategicPrice, type StrategicBlast } from './strategic.ts';
 import { GroundTurretSystem, lineOfSight, runwayDistance, TURRET_HEAD_Y, type GroundTurret } from './groundTurrets.ts';
@@ -280,6 +280,54 @@ export class Simulation {
   credits = 0;
   /** Things worth a word to the player (credits earned, districts captured), newest last. */
   readonly notices: Array<{ text: string; time: number }> = [];
+  /** When the player's team last traded fire with each team (a cease fire waits for quiet). */
+  private readonly lastClash: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  /** Wars started or ended here, for the network to tell the room (drained by NetClient). */
+  readonly diplomacyEvents: Array<{ a: Team; b: Team; on: boolean }> = [];
+  /** A cease fire needs this long without fire between the two sides (s). */
+  static readonly CEASE_FIRE_QUIET = 30;
+
+  /**
+   * The player's fire (or blast) reached a side: if that is another team at peace with the
+   * player's, this is an act of war. Recorded as a clash either way.
+   */
+  private provoke(target: Side | null, what: string): void {
+    if (target === null || !isTeam(target) || target === this.team) return;
+    this.lastClash[target] = this.time;
+    if (atWar(this.team, target)) return;
+    setWar(this.team, target, true);
+    this.diplomacyEvents.push({ a: this.team, b: target, on: true });
+    this.notice(`War with ${TEAMS[target].name}: your fire struck their ${what}`);
+  }
+
+  /** Declare war on a team (the strike globe's team chips). Null, or why not. */
+  declareWar(team: Team): string | null {
+    if (team === this.team) return 'That is your own team';
+    if (atWar(this.team, team)) return `Already at war with ${TEAMS[team].name}`;
+    setWar(this.team, team, true);
+    this.diplomacyEvents.push({ a: this.team, b: team, on: true });
+    this.notice(`War declared on ${TEAMS[team].name}`);
+    return null;
+  }
+
+  /** Offer a cease fire: accepted once the two sides have not traded fire for 30 s. */
+  ceaseFire(team: Team): string | null {
+    if (team === this.team || !atWar(this.team, team)) return `Not at war with ${TEAMS[team].name}`;
+    const quiet = this.time - this.lastClash[team];
+    if (quiet < Simulation.CEASE_FIRE_QUIET) return `${TEAMS[team].name} refuses while shots are still flying (${Math.ceil(Simulation.CEASE_FIRE_QUIET - quiet)} s)`;
+    setWar(this.team, team, false);
+    this.diplomacyEvents.push({ a: this.team, b: team, on: false });
+    this.notice(`Cease fire with ${TEAMS[team].name}`);
+    return null;
+  }
+
+  /** Another player in the room started or ended a war. */
+  applyRemoteDiplomacy(a: Team, b: Team, on: boolean): void {
+    if (!setWar(a, b, on)) return;
+    if (on && (a === this.team || b === this.team)) this.lastClash[a === this.team ? b : a] = this.time;
+    this.notice(`${on ? 'War' : 'Cease fire'}: ${TEAMS[a].name} and ${TEAMS[b].name}`);
+  }
+
   private notice(text: string): void {
     this.notices.push({ text, time: this.time });
     if (this.notices.length > 16) this.notices.splice(0, this.notices.length - 16);
@@ -331,6 +379,7 @@ export class Simulation {
    * own (kills pay), not another player's arriving over the network.
    */
   detonateNuke(x: number, y: number, z: number, by: Side, local: boolean): void {
+    if (local) this.provoke(this.groundTurrets.territory.ownerAt(x, z), 'district (a nuke)');
     const { fireball: F, shock: S } = STRATEGIC.nuke;
     // (Measured round the planet: things far from the craft may sit in another image of it.)
     const near = (p: THREE.Vector3) => Math.hypot(wrapDelta(x, p.x), p.y - y, wrapDelta(z, p.z));
@@ -383,6 +432,7 @@ export class Simulation {
 
   /** An EMP at (x, y, z): disables, destroys nothing. */
   detonateEmp(x: number, y: number, z: number, local: boolean): void {
+    if (local) this.provoke(this.groundTurrets.territory.ownerAt(x, z), 'district (an EMP)');
     const E = STRATEGIC.emp;
     const R = E.radius;
     // (Measured round the planet: things far from the craft may sit in another image of it.)
@@ -411,6 +461,12 @@ export class Simulation {
    * round. Returns what happened.
    */
   applyRemoteHit(from: { id: string; team: Side }, kind: WeaponKind, point: THREE.Vector3): 'applied' | 'team' | 'far' | 'rate' | 'dead' {
+    // A player of a team at peace with ours opening fire starts the war.
+    if (isTeam(from.team) && from.team !== this.team && !atWar(from.team, this.team)) {
+      setWar(from.team, this.team, true);
+      this.notice(`War with ${TEAMS[from.team].name}: one of their players opened fire`);
+    }
+    if (isTeam(from.team) && from.team !== this.team) this.lastClash[from.team] = this.time;
     if (!hostile(from.team, this.team)) return 'team';
     const reach = 40 + this.linvel.length() * 0.3;
     if (point.distanceTo(this.position) > reach) return 'far';
@@ -786,7 +842,7 @@ export class Simulation {
       },
     };
     this.bindCraft();
-    this.resetToRunway();
+    this.resetToRunway(false); // (diplomacy is the module's: a new simulation does not end a war)
   }
 
   /**
@@ -907,7 +963,9 @@ export class Simulation {
   }
 
   /** Reset the WHOLE world: every structure rebuilt, weather and events restarted, a fresh craft on the runway. */
-  resetToRunway(): void {
+  resetToRunway(peace = true): void {
+    if (peace) resetDiplomacy(); // the world starts at peace again
+    this.lastClash.fill(-Infinity);
     this.trails.clear();
     this.traffic.clear();
     this.bits.reset();
@@ -1414,8 +1472,9 @@ export class Simulation {
     const out: LockTarget[] = [];
     const air = this.airTraffic;
     // Never the player's own side: friendly aircraft, mercenaries and turrets aren't locked.
+    // Other teams can be locked at peace too; it is firing on them that starts a war.
     for (const f of air.flyers) {
-      if (f.derezAt !== null || (f.side !== null && !hostile(this.team, f.side))) continue;
+      if (f.derezAt !== null || (f.side !== null && f.side === this.team)) continue;
       out.push(f.handle);
     }
     this.liveRiders = new Set(this.traffic.riders);
@@ -1433,7 +1492,7 @@ export class Simulation {
       }
       out.push(h);
     }
-    for (const t of this.groundTurrets.turrets) if (t.derezAt === null && hostile(this.team, t.side)) out.push(t.handle);
+    for (const t of this.groundTurrets.turrets) if (t.derezAt === null && t.side !== this.team) out.push(t.handle);
     out.push(...this.extraLockTargets);
     return out;
   }
@@ -1562,6 +1621,7 @@ export class Simulation {
     const by: Side = shooter ? shooter.side! : this.team;
     const strike = (f: AiFlyer) => {
       if (f === shooter) return;
+      if (!shooter && f.role !== 'merc' && f.role !== 'hacked') this.provoke(f.side, `aircraft ${f.name}`);
       if (f.side !== null && !hostile(by, f.side)) return;
       if (this.airTraffic.damage(f, WEAPON_DAMAGE[h.kind], this.time)) this.derezFlyer(f, !shooter);
     };
@@ -1570,7 +1630,9 @@ export class Simulation {
     // Tower turrets: the player's rounds and blasts wear them down (hostiles never hit them).
     const turret = col ? this.groundTurrets.byCollider(col.handle) : undefined;
     const hitTurret = (t: GroundTurret) => {
-      if (t === shooter || !hostile(by, t.side)) return;
+      if (t === shooter) return;
+      if (!shooter && !t.hacked) this.provoke(t.side, 'turret');
+      if (!hostile(by, t.side)) return;
       if (this.groundTurrets.damage(t, WEAPON_DAMAGE[h.kind], this.time)) this.derezTurret(t, !shooter, by);
     };
     if (turret) hitTurret(turret);
@@ -1581,6 +1643,7 @@ export class Simulation {
     // A hostile's round on the player's craft: the struck part loses hit points (and breaks off
     // at zero); a warhead that goes off against it, or beside it, derezzes it outright.
     if (shooter && !this.exploded && hostile(by, this.team)) {
+      if (isTeam(by)) this.lastClash[by] = this.time;
       const partId = col ? this.craft.partIdForCollider(col.handle) : undefined;
       const near = h.blast >= 7 && p.distanceTo(this.position) < h.blast;
       if (partId !== undefined || near) {

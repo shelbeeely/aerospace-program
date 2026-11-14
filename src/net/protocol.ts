@@ -13,7 +13,7 @@
  */
 import type { CraftDef } from '../craft/types.ts';
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** A player's team: 0 Cyan, 1 Red, 2 Amber (sim/teams.ts). Anything else reads as Cyan. */
 export type NetTeam = 0 | 1 | 2;
@@ -85,6 +85,8 @@ export type NetEvent =
   | { k: 'kill'; by: string }
   /** A strategic weapon of the sender's went off (every game plays it out). */
   | { k: 'nuke' | 'emp'; x: number; y: number; z: number }
+  /** Teams `a` and `b` are now at war (`on`) or have a cease fire (v4). The world starts at peace. */
+  | { k: 'war'; a: NetTeam; b: NetTeam; on: boolean }
   | { k: 'chat'; text: string };
 
 export interface PlayerInfo {
@@ -190,6 +192,8 @@ export function validEvent(v: unknown): v is NetEvent {
     case 'nuke':
     case 'emp':
       return isNum(v.x) && isNum(v.y) && isNum(v.z);
+    case 'war':
+      return (v.a === 0 || v.a === 1 || v.a === 2) && (v.b === 0 || v.b === 1 || v.b === 2) && v.a !== v.b && typeof v.on === 'boolean';
     case 'chat':
       return typeof v.text === 'string' && v.text.trim().length > 0 && v.text.length <= MAX_CHAT;
     default:

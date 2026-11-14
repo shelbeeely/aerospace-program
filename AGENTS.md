@@ -373,6 +373,10 @@ universe, not a conventional open world decorated with neon.
   warm near-black bodies and red light, still under the light budget, with the light states of
   §5 (dim on patrol, full in the attack, flickering when hit). Check: `npm run enemies`. Tower
   turrets (`src/craft/towerTurret.ts`) wear it too (check: `npm run turrets`).
+- **The world starts at peace.** Hostility follows diplomacy (`hostile()` and the war flags in
+  `src/sim/teams.ts`), never team id alone. A war starts only by an attack or a declaration
+  and is between two teams; a world reset restores peace. Checks that test fighting call
+  `allAtWar()` first.
 - **Every side has one livery** (`sideLivery()` in `src/sim/teams.ts`, built on `livery()` in
   `src/craft/style1982.ts`): Cyan (cyan light, cool bodies), Red (red light, warm bodies), Amber
   (amber light, cool bodies), freelancers (white light), mercenaries (bright blue light). The

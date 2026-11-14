@@ -20,6 +20,9 @@ import { Autopilot } from '../src/sim/autopilot.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 import { terrainHeight } from '../src/sim/terrain.ts';
 import { obstacleTop } from '../src/world/structures.ts';
+import { allAtWar } from '../src/sim/teams.ts';
+// The world starts at peace; these checks test fighting, so every team is at war with every other.
+allAtWar();
 
 await initPhysics();
 let failed = 0;

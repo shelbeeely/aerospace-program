@@ -1,7 +1,7 @@
 import { turretSites } from '../sim/groundTurrets.ts';
 import type { Simulation } from '../sim/Simulation.ts';
 import { STRIKES, type StrikeKind } from '../sim/strikes.ts';
-import { hostile, TEAMS } from '../sim/teams.ts';
+import { atWar, hostile, TEAMS } from '../sim/teams.ts';
 import { wrapDelta } from '../sim/contacts.ts';
 import { chunkAt } from '../world/planetCity.ts';
 import type { GlobeView } from '../render/GlobeView.ts';
@@ -171,6 +171,16 @@ export class StrikePanel {
         line2.className = 'muted small';
         line2.textContent = `${(dist / 1000).toFixed(1)} km away · ${standing} ${enemy ? 'enemy ' : ''}turret${standing === 1 ? '' : 's'} standing`;
         this.target.append(line1, line2);
+        // Diplomacy with the holder: at peace nothing there fires on you, and nothing can be struck.
+        if (owner !== null && owner !== sim.team) {
+          const war = atWar(sim.team, owner);
+          const line3 = document.createElement('div');
+          line3.className = war ? 'diplo war' : 'diplo peace';
+          line3.textContent = war ? `AT WAR with ${TEAMS[owner].name}` : `AT PEACE with ${TEAMS[owner].name}: their turrets and aircraft hold fire`;
+          this.target.append(line3);
+          if (war) btn('Cease fire', 'Offer a cease fire: accepted after 30 s without shots between you', true, () => this.act(() => sim.ceaseFire(owner)));
+          else btn(`Declare war on ${TEAMS[owner].name}`, 'Their turrets and aircraft will fire on you, and yours on them', true, () => this.act(() => sim.declareWar(owner)));
+        }
         const send = friends + mercs;
         btn(`Send aircraft (${friends} + ${mercs} merc)`, 'Your team\'s aircraft and mercenaries fly there and fight within 3 km of it for 3 minutes', send > 0, () =>
           this.act(() => (sim.orderAircraft(p.x, p.z) ? null : 'No aircraft to send')));
@@ -179,7 +189,7 @@ export class StrikePanel {
           const S = STRIKES[kind];
           const eta = sim.strikeSystem.etaTo(kind, p.x, p.z);
           btn(`${S.label} · ${S.price} cr · ${Math.round(eta)} s`, kind === 'barrage' ? 'Six cruise missiles, each on a different enemy turret within 1.5 km' : kind === 'emp' ? 'One cruise missile that bursts an EMP over the enemy turrets there' : 'A bomber of your team drops a nuke on it and turns for home', sim.credits >= S.price, () =>
-            this.act(() => sim.callStrike(kind, p.x, p.z)));
+            this.act(() => (enemy ? sim.callStrike(kind, p.x, p.z) : 'Strikes are for districts you are at war with')));
         }
       }
     }

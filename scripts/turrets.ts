@@ -27,6 +27,9 @@ import { validateCraft } from '../src/craft/validate.ts';
 import { baseOwner } from '../src/sim/territory.ts';
 import type { Team } from '../src/sim/teams.ts';
 import { BODY_WARM, LIGHTS } from '../src/craft/style1982.ts';
+import { allAtWar } from '../src/sim/teams.ts';
+// The world starts at peace; these checks test fighting, so every team is at war with every other.
+allAtWar();
 
 await initPhysics();
 let failed = 0;
@@ -116,7 +119,7 @@ console.log('--- streaming');
   for (let i = 0; i < 150; i++) { hold(sim, far); sim.step(idle); }
   for (let i = 0; i < 150; i++) { hold(sim, near); sim.step(idle); }
   check(!turretAt(sim) && sim.groundTurrets.destroyed.has(site.id), 'a destroyed turret stays down after leaving and coming back');
-  sim.resetToRunway();
+  sim.resetToRunway(); allAtWar();
   for (let i = 0; i < 150; i++) { hold(sim, near); sim.step(idle); }
   check(!!turretAt(sim), 'and is back after a world reset');
 }

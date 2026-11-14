@@ -19,6 +19,9 @@ import { OWN_WALL_GROUPS } from '../src/sim/collisionGroups.ts';
 import type { AiFlyer } from '../src/sim/aiTraffic.ts';
 import type { LockTarget } from '../src/sim/lock.ts';
 import { wrapDelta } from '../src/sim/contacts.ts';
+import { allAtWar } from '../src/sim/teams.ts';
+// The world starts at peace; these checks test fighting, so every team is at war with every other.
+allAtWar();
 
 await initPhysics();
 let failed = 0;

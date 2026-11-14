@@ -29,6 +29,9 @@ import { baseOwner } from '../src/sim/territory.ts';
 import { terrainHeight } from '../src/sim/terrain.ts';
 import { obstacleTop } from '../src/world/structures.ts';
 import type { WeaponImpact } from '../src/sim/weapons.ts';
+import { allAtWar, atWar, resetDiplomacy } from '../src/sim/teams.ts';
+// The world starts at peace; these checks test fighting, so every team is at war with every other.
+allAtWar();
 
 await initPhysics();
 let failed = 0;
@@ -215,7 +218,7 @@ console.log('--- capture');
   run(sim, 17, p);
   const back = turretAt(sim);
   check(!!back && back.side === other, `then rise again in ${TEAMS[other].name} colours`, back ? `side ${back.side}` : 'none');
-  sim.resetToRunway();
+  sim.resetToRunway(); allAtWar();
   check(sim.groundTurrets.territory.ownerOf(site.ci, site.cj) === owner, 'a world reset restores the map');
 }
 
@@ -292,6 +295,34 @@ console.log('--- mercenaries');
   for (const m of ms) m.mercUntil = sim.time;
   run(sim, 60, at);
   check(sim.airTraffic.mercs().length === 0 && !sim.airTraffic.flyers.some((f) => f.role === 'merc' && f.pos.distanceTo(sim.position) < 4000), 'when the contract ends they leave');
+}
+
+// ---------------------------------------------------------------- the world starts at peace
+console.log('--- the world starts at peace');
+{
+  resetDiplomacy();
+  check(!hostile(0, 1) && !hostile(1, 2) && !hostile(0, 2) && hostile(FREELANCER, 0), 'at the start no two teams fight (freelancers still fight anyone)');
+  // An armed craft beside another team's turret: at peace it holds fire.
+  const p = vantage(1000, 300);
+  const calm = world(JET, other);
+  resetDiplomacy();
+  calm.airTraffic.freelancers = 2;
+  run(calm, 30, p);
+  const u = calm.groundTurrets.turrets.find((x) => x.site.id === site.id);
+  check(!!u && u.weapons.fired === 0 && calm.hitsTaken === 0, `a ${TEAMS[owner].name} turret holds fire on an armed ${TEAMS[other].name} craft at peace`, `${u?.weapons.fired} rounds`);
+  check(!calm.airTraffic.flyers.some((f) => f.role === 'free' && f.derezAt === null), 'no freelancers come out while the world is at peace');
+  check(calm.lockTargets().some((t) => t.id === u?.handle.id), 'its turret can still be locked (firing is what starts a war)');
+  // Fire on it: war with that team only.
+  const w = world(TEST_PLANE, 0, 0);
+  resetDiplomacy();
+  check(w.applyRemoteHit({ id: 'red-player', team: 1 }, 'gun', w.position.clone()) !== 'team' && atWar(0, 1) && !atWar(0, 2), 'a Red player opening fire starts war with Red, not Amber');
+  check(w.ceaseFire(1) !== null && atWar(0, 1), 'a cease fire is refused while shots are still flying');
+  for (let i = 0; i < 120 * 31; i++) w.step(idle);
+  check(w.ceaseFire(1) === null && !atWar(0, 1), 'after 30 s of quiet the cease fire holds');
+  check(w.declareWar(2) === null && atWar(0, 2) && w.diplomacyEvents.some((d) => d.b === 2 && d.on), 'declaring war on Amber is sent to the room');
+  w.resetToRunway();
+  check(!atWar(0, 2) && !atWar(0, 1), 'a world reset restores peace');
+  allAtWar();
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');

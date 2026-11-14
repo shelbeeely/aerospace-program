@@ -856,3 +856,6 @@ body.touch-ui:not(.portrait) #hud { max-width: calc(100vw - 230px - var(--sl) - 
 body.touch-ui:not(.portrait) .tbar { width: auto; }
 body.touch-ui #hud:not(.open) { width: fit-content; }
 body.touch-ui.profile-foot .tz-right .tz-hint { right: calc(var(--sr) + 92px); }
+#strike-panel .diplo, .diplo { margin-top: 4px; font-size: 12px; letter-spacing: 0.06em; }
+.diplo.peace { color: #9fe8c8; }
+.diplo.war { color: #ff6a4d; }
