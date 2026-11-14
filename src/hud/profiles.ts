@@ -8,7 +8,7 @@ import type { ControlProfile } from '../input/types.ts';
 export type UiProfile = ControlProfile | 'foot';
 
 /** HUD rows by key (the `#h-<key>` value element inside each row). */
-export type HudKey = 'speed' | 'alt' | 'vs' | 'hdg' | 'thr' | 'fuel';
+export type HudKey = 'speed' | 'alt' | 'vs' | 'hdg' | 'thr' | 'fuel' | 'task' | 'strat';
 
 export interface ProfileUi {
   /** Shown in the compact strip, in order. */
@@ -58,7 +58,8 @@ export const PROFILE_UI: Record<UiProfile, ProfileUi> = {
     hide: ['aoa', 'flaps', 'g', 'vs', 'alt', 'orb'],
   },
   foot: {
-    primary: ['hdg'],
+    // On foot the strip shows only what is under way: an errand, a charge counting down.
+    primary: ['task', 'strat'],
     speedLabel: 'SPEED',
     lever: null,
     leftHint: '',

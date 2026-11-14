@@ -807,8 +807,8 @@ body.touch-ui #hud:not(.open)::after { content: '▾'; color: #9fb2c2; font-size
 body.touch-ui #hud.open { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); max-height: 62dvh; overflow-y: auto; z-index: 12; }
 body.touch-ui #hud.open .row b { font-size: 14px; min-width: 0 !important; }
 body.touch-ui #hud.open .row[data-k="lock"], body.touch-ui #hud.open .row[data-k="hostile"] { grid-column: span 2; }
-body.touch-ui.profile-foot #hud:not(.open) .row.primary { display: none !important; }
-body.touch-ui.profile-foot #hud:not(.open) { display: none; }
+/* On foot the strip appears only while an errand or a set charge is under way. */
+body.touch-ui.profile-foot #hud:not(.open):not(:has(.row.primary:not([style*="none"]))) { display: none; }
 
 /* ---- touch: icon bar, radar, NAV */
 body.touch-ui .tbar { top: var(--st); right: var(--sr); left: auto; max-width: none; flex-wrap: nowrap; gap: 6px; }
