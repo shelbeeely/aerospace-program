@@ -6,6 +6,9 @@ import { DEATH_CAUSES, EVOLUTION, type DeathCause } from './evolution.ts';
 import { CITY } from './layout.ts';
 import { terrainHeight } from './terrain.ts';
 import { wrapCoord } from './layout.ts';
+import { kerbNear, Sappers, SAPPERS, type BattleTarget, type BattleWorld, type ChargeKind } from './sappers.ts';
+import { lotAt } from '../arch/DistrictGenerator.ts';
+import { GRID } from '../world/planetCity.ts';
 
 /**
  * The Evolution Lab: one downtown district of the real world, its real lots, rooms and Bits,
@@ -18,6 +21,9 @@ import { wrapCoord } from './layout.ts';
  *   late.
  * - **Blasts:** something goes off on a kerb now and then. Indoors is the only safe place.
  * - **Scarcity:** walking costs more energy.
+ * - **War:** three enemy towers stand in districts beyond the lab's, defended as strongly as
+ *   you set. The district drafts sappers (src/sim/sappers.ts) to set charges at their feet;
+ *   a charge that goes off takes the tower down for two minutes.
  * - Mutation rate and lifespan (a short life is a fast generation).
  *
  * Seeded: the same settings and seed give the same history. DOM- and scene-free; the explorer's
@@ -37,9 +43,11 @@ export interface LabSettings {
   lifespan: number;
   /** Which downtown hub the lab stands in. */
   hub: number;
+  /** War: how strongly the enemy towers are defended (0..1); 0 is peace (no towers, no draft). */
+  war: number;
 }
 
-export const DEFAULT_LAB: LabSettings = { seed: 1, traffic: 0, blasts: 0, scarcity: 1, mutation: EVOLUTION.mutation, lifespan: EVOLUTION.lifespan, hub: 0 };
+export const DEFAULT_LAB: LabSettings = { seed: 1, traffic: 0, blasts: 0, scarcity: 1, mutation: EVOLUTION.mutation, lifespan: EVOLUTION.lifespan, hub: 0, war: 0 };
 
 export const LAB = {
   /** Streamed radius round the lab's centre (m). */
@@ -67,6 +75,9 @@ export interface LabSample {
   style: { [F in StyleField]: Record<string, number> };
   births: number;
   deaths: Record<DeathCause, number>;
+  /** Share of the people able to set each charge (by craft), and the sappers' record so far. */
+  tiers: Record<ChargeKind, number>;
+  combat: { sent: number; set: number; shot: number; duds: number; home: number };
 }
 
 interface Runner {
@@ -92,6 +103,24 @@ export class EvolutionLab {
   blasts = 0;
   lastBlast: { x: number; y: number; z: number; time: number } | null = null;
   readonly threats: BitThreat[] = [];
+  /** War: the sappers, the enemy towers (down until when), and charges set by tier. */
+  readonly sappers = new Sappers({ max: 24, perLot: 4, chance: 0.4 });
+  towers: Array<BattleTarget & { downUntil: number }> = [];
+  readonly charges: Record<ChargeKind, number> = { demo: 0, emp: 0, nuke: 0 };
+  private readonly battle: BattleWorld = {
+    sideAt: (x, z) => (this.settings.war > 0 && this.towers.some((t) => Math.hypot(t.baseX - x, t.baseZ - z) < 170) ? 1 : 0),
+    atWar: (a, b) => this.settings.war > 0 && a !== b,
+    targets: (side, x, z, reach) => (side !== 0 || this.settings.war <= 0 ? [] : this.towers.filter((t) => this.time >= t.downUntil && Math.hypot(t.x - x, t.z - z) <= reach)),
+    defenceAt: () => 0.1 + 0.5 * this.settings.war,
+    plant: (kind, x, _y, z, by, target) => {
+      if (this.settings.war <= 0 || by !== 0 || this.battle.sideAt(x, z) !== 1) return false;
+      const t = this.towers.find((q) => q.id === target.id);
+      if (t) t.downUntil = this.time + 120;
+      this.charges[kind]++;
+      return true;
+    },
+    ground: (x, z) => terrainHeight(wrapCoord(x), wrapCoord(z)),
+  };
 
   constructor(settings: Partial<LabSettings> = {}) {
     this.settings = { ...DEFAULT_LAB, ...settings };
@@ -122,6 +151,9 @@ export class EvolutionLab {
     this.blasts = 0;
     this.lastBlast = null;
     this.threats.length = 0;
+    this.sappers.reset();
+    this.charges.demo = this.charges.emp = this.charges.nuke = 0;
+    this.towers = this.placeTowers();
     this.bits.step(LAB.dt, 0, this.centre);
     this.sampleNow();
   }
@@ -171,6 +203,7 @@ export class EvolutionLab {
       this.lastBlast = { x: k.x, y, z: k.z, time: this.time };
     }
     this.bits.step(dt, this.time, this.centre, this.threats);
+    this.sappers.step(dt, this.time, this.bits, this.battle, this.centre);
     this.bits.derezEvents.length = 0;
     if (this.time >= this.nextSample) this.sampleNow();
   }
@@ -186,20 +219,54 @@ export class EvolutionLab {
     return this.history.length ? this.history[this.history.length - 1].maxGen : 0;
   }
 
+  /**
+   * Three enemy towers on lots beyond the lab's district (220-380 m from its centre, in reach
+   * of its sappers): their kerb points are the targets, their lots' centres the towers' feet.
+   */
+  private placeTowers(): Array<BattleTarget & { downUntil: number }> {
+    const P = CITY.block + CITY.street;
+    const c = this.centre, rand = mulberry32(this.settings.seed * 131 + 7);
+    const found: Array<BattleTarget & { downUntil: number }> = [];
+    const gi0 = Math.floor((c.x - GRID.x0) / P), gj0 = Math.floor((c.z - GRID.z0) / P);
+    const cands: Array<{ x: number; z: number }> = [];
+    for (let dj = -5; dj <= 5; dj++) for (let di = -5; di <= 5; di++) {
+      const lot = lotAt(gi0 + di, gj0 + dj);
+      if (!lot) continue;
+      const x = (lot.rect.x0 + lot.rect.x1) / 2, z = (lot.rect.z0 + lot.rect.z1) / 2;
+      const d = Math.hypot(x - c.x, z - c.z);
+      if (d >= 220 && d <= 380 && !cands.some((q) => Math.hypot(q.x - x, q.z - z) < 60)) cands.push({ x, z });
+    }
+    while (found.length < 3 && cands.length) {
+      const { x, z } = cands.splice(Math.floor(rand() * cands.length), 1)[0];
+      const k = kerbNear(x, z);
+      if (!k || Math.hypot(k.x - x, k.z - z) > 160) continue;
+      // Spread round the district, so every lot has one in reach.
+      if (found.some((t) => Math.hypot(t.baseX - x, t.baseZ - z) < 200)) continue;
+      found.push({ id: `tower${found.length}`, side: 1, x: k.x, z: k.z, baseX: x, baseZ: z, roofY: 90, downUntil: 0 });
+    }
+    return found;
+  }
+
   private sampleNow(): void {
-    this.history.push(censusSample(this.bits, this.time));
+    this.history.push(censusSample(this.bits, this.time, this.sappers));
     this.nextSample = this.time + LAB.sample;
   }
 }
 
-/** A census of a population at time `t`, as the charts read it. */
-export function censusSample(bits: BitPopulation, t: number): LabSample {
+/** A census of a population at time `t` (and its sappers' record), as the charts read it. */
+export function censusSample(bits: BitPopulation, t: number, sappers: Sappers | null = null): LabSample {
   const c = bits.census();
   const deaths = {} as Record<DeathCause, number>;
   for (const d of DEATH_CAUSES) deaths[d] = bits.deaths[d];
   const mean = {} as Record<Gene, number>;
   for (const g of GENES) mean[g] = c.mean[g];
-  return { t, count: c.count, maxGen: c.maxGen, meanGen: c.meanGen, lineages: c.lineages, mean, style: c.style, births: bits.births, deaths };
+  const n = Math.max(1, bits.people.length);
+  const tiers = {
+    demo: bits.people.filter((p) => p.genome.craft >= 0.4).length / n,
+    emp: bits.people.filter((p) => p.genome.craft >= SAPPERS.emp).length / n,
+    nuke: bits.people.filter((p) => p.genome.craft >= SAPPERS.nuke).length / n,
+  };
+  return { t, count: c.count, maxGen: c.maxGen, meanGen: c.meanGen, lineages: c.lineages, mean, style: c.style, births: bits.births, deaths, tiers, combat: { ...(sappers?.stats ?? { sent: 0, set: 0, shot: 0, duds: 0, home: 0 }) } };
 }
 
 /**
@@ -209,11 +276,11 @@ export function censusSample(bits: BitPopulation, t: number): LabSample {
 export class CensusRecorder {
   readonly history: LabSample[] = [];
   private next = 0;
-  constructor(readonly bits: BitPopulation, private readonly every = 15, private readonly keep = 480) {}
+  constructor(readonly bits: BitPopulation, private readonly sappers: Sappers | null = null, private readonly every = 15, private readonly keep = 480) {}
 
   update(): void {
     if (this.bits.clock < this.next || this.bits.people.length === 0) return;
-    this.history.push(censusSample(this.bits, this.bits.clock));
+    this.history.push(censusSample(this.bits, this.bits.clock, this.sappers));
     if (this.history.length > this.keep) this.history.splice(0, this.history.length - this.keep);
     this.next = this.bits.clock + this.every;
   }

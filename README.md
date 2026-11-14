@@ -427,6 +427,35 @@ spin, the same choices as your own Bit's style. YES is yellow and NO red for eve
 - Check: `npm run evolution` (genes, breeding rules, walls, gene pools, the encoding, the lab's
   determinism and the selection results).
 
+### Bits at war: sappers
+
+In a war, the side that holds a district drafts its Bits (`src/sim/sappers.ts`). Bits side with
+whoever holds their lot, fight only while that side is at war, and only through the draft.
+
+- **The draft.** A lot with an enemy turret in reach may send a young grown Bit, more likely one
+  with nerve. It says YES, carries its charge over its head (amber for demolition, white for an
+  EMP, red for a nuke) and walks the kerbs to the foot of the enemy tower; its ground light shows
+  its side.
+- **The mission.** It kneels to set the charge (quicker with more craft; a clumsy one is a dud)
+  and walks home. Inside the enemy district it may be spotted each second, more likely the
+  stronger the defence and the less stealthy it is, and is shot (a red beam from the tower).
+- **The ladder.** A demolition charge at any skill; an EMP from craft 0.65; a nuke from 0.85,
+  only three minutes into a war, one Bit-set nuke live at a time and one per side every ten
+  minutes. Founders have almost no craft: every rung has to evolve, slowly.
+- **Defuse it.** Every charge a sapper sets counts down on your HUD (the nearest one) and can be
+  picked up with `` ` `` beside it, like your own: a demolition charge is thrown away; an EMP or a
+  nuke is yours to carry. A notice says where a sapper set an EMP or a nuke.
+- **Consequences.** A demolition at a tower's foot fractures it and brings its turret down; the
+  sapper's side takes the credit, and with the district's last turret, the district.
+- **Evolution.** A sapper shot dead leaves no more children; one home with its charge set is a
+  veteran (a burst of energy, and others readier to say YES to it). In the Evolution Lab's war
+  (the **War** slider: enemy towers beyond the district, defended as strongly as you set),
+  selection shows within each batch of sappers: the ones shot are less stealthy than those who
+  come home, and veterans have more craft than those whose charge was a dud. Only a few Bits fight,
+  so the district-wide shift in nerve, stealth and craft is slow beside drift: plenty of time.
+- Check: `npm run sappers` (no draft at peace, charges only in hostile districts at war, sappers
+  never in a wall, the rails, defusing, and a demolition taking a district).
+
 ## Programs: the working population of the streets
 
 Beside the Bits (who belong to everyone), the streets are walked by programs: one kind for each

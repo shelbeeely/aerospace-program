@@ -276,7 +276,9 @@ async function start() {
       const view = new EvolutionView(() => lab.history, { lab, speed: () => evo?.speed ?? 0, setSpeed: (sp) => { if (evo) evo.speed = sp; } });
       el.append(view.root);
       document.body.append(el);
-      evo = { lab, bits: new BitsView(scene, lab.bits, null), hazards: new EvolutionLabView(scene, lab), panel: el, view, speed: 10, acc: 0, shown: 0 };
+      const bits = new BitsView(scene, lab.bits, null);
+      bits.setSappers(lab.sappers);
+      evo = { lab, bits, hazards: new EvolutionLabView(scene, lab), panel: el, view, speed: 10, acc: 0, shown: 0 };
     }
     if (!evo) return;
     evo.panel.classList.toggle('hidden', !on);

@@ -12,6 +12,9 @@
  */
 import type { StrategicKind } from './weapons.ts';
 
+/** What can be set down by hand: the strategic weapons, and (Bit sappers only) a demolition charge. */
+export type ChargeKind = StrategicKind | 'demo';
+
 export const STRATEGIC = {
   nuke: { label: 'Nuke', price: 1500, fireball: 400, shock: 1200 },
   emp: { label: 'EMP', price: 800, radius: 800, aircraft: 8, turrets: 20, riders: 8, craft: 8 },
@@ -24,7 +27,9 @@ export const STRATEGIC = {
  */
 export const CHARGE = {
   /** Fuse (s) from setting it down to the burst. */
-  fuse: { nuke: 60, emp: 15 } as Record<StrategicKind, number>,
+  fuse: { nuke: 60, emp: 15, demo: 20 } as Record<ChargeKind, number>,
+  /** A demolition charge: how far toward the tower's foot it bites (m), and its radius (m). */
+  demo: { reach: 14, radius: 9 },
   /** Within this of a charge (m), ` picks it up again (no later than `lockout` s before it goes). */
   reach: 3,
   lockout: 5,

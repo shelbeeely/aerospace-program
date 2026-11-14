@@ -17,7 +17,8 @@ Rules for every agent and contributor working on this repo. Claude Code reads th
 - **Separation:** the simulation (`src/sim`, `src/world`, `src/arch`) stays free of three.js
   scene objects and the DOM; rendering lives in `src/render`.
 - **Checks:** `npm run typecheck`, `npm run arch`, `npm run drive`, `npm run city`,
-  `npm run ground` before pushing world or vehicle changes; `npm run bit` for the people.
+  `npm run ground` before pushing world or vehicle changes; `npm run bit`, `npm run evolution`
+  and `npm run sappers` for the people.
 
 ## Design rules
 
@@ -359,6 +360,18 @@ universe, not a conventional open world decorated with neon.
   keeps the shared world while it runs (`server/world.ts`: one holder per lot, lots nobody holds
   carried forward with the same `advancePool`); the evolution core stays free of the world, the
   DOM and three.js so the relay can run it. Checks: `npm run evolution`, `npm run test:server`.
+- **Bits fight only through the draft** (`src/sim/sappers.ts`). A Bit's side is whoever holds
+  its lot's district; while that side is at war (diplomacy, never team id alone) with a side
+  whose turret is in reach, the lot may draft a young grown Bit as a sapper. In the shared world
+  only the lot's holder drafts from it. Sappers walk the kerbs (`kerbWalk`: round their own
+  lot, the road route moved to the kerb, round the target lot; never through a lot) to the foot
+  of the enemy tower, set a charge by hand and walk home; inside the enemy district they can be
+  spotted and shot. The ladder by craft: a demolition charge (a clumsy one is a dud), an EMP from
+  0.65, a nuke from 0.85. The rails (`Simulation.plantBitCharge`): only at war with the
+  district's holder, never in the sapper's own district, a nuke only three minutes into a war,
+  one Bit-set nuke live at a time and one per side every ten minutes. Every charge a Bit sets is
+  defusable by the player's pick-up. A demolition that fells a turret's tower credits that side,
+  which can take the district. Check: `npm run sappers`.
 - The figures are the imported "BIT" meshes (CC-BY 4.0, credited in the README). Do not
   replace them with humanoids.
 - Check: `npm run bit`.

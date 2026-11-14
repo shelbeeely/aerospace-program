@@ -19,7 +19,8 @@ The full rules are in [AGENTS.md](AGENTS.md) (imported above). The essentials:
 - **People:** Bits are people, not vehicles: rigid hovering polyhedra with four figures (two
   idles in their inherited light, yellow YES, red NO) that walk the kerbs; the player on foot is
   one (`npm run bit`). Bits evolve: genes, YES–YES children, ageing, energy, gene pools kept per
-  lot, an Evolution Lab (`npm run evolution`). Every side also has one street program of its own
+  lot, an Evolution Lab (`npm run evolution`); in wars the district's side drafts sappers who set
+  defusable charges by hand (`npm run sappers`). Every side also has one street program of its own
   (Archivist, Sentinel, Tender, Scavenger, Broker; `npm run programs`).
 - **Roads:** every road is pathed so the Navigator can drive any ground vehicle anywhere;
   ground vehicles spawn on roads, never on airstrips.

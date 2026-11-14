@@ -29,7 +29,8 @@ import { craftBounds, WEAPON_DAMAGE, WEAPONS, WeaponSystem, type Mount, type Str
 import { AiAirTraffic, type AiFlyer, type AirTarget, type Foe } from './aiTraffic.ts';
 import { atWar, diplomacy, DIPLOMACY, hostile, isTeam, resetDiplomacy, sideLight, sideLivery, sideName, TEAMS, type Side, type Team } from './teams.ts';
 import { CREDITS, mercPrice } from './mercenaries.ts';
-import { CHARGE, STRATEGIC, strategicPrice, type StrategicBlast } from './strategic.ts';
+import { CHARGE, STRATEGIC, strategicPrice, type ChargeKind, type StrategicBlast } from './strategic.ts';
+import { kerbNear, Sappers, type BattleTarget, type BattleWorld } from './sappers.ts';
 import { GroundTurretSystem, lineOfSight, runwayDistance, TURRET_HEAD_Y, type GroundTurret } from './groundTurrets.ts';
 import { HACK, HackBeam, type HackCandidate } from './hacking.ts';
 import { circuitOf } from '../craft/style1982.ts';
@@ -503,8 +504,90 @@ export class Simulation {
     return word;
   }
 
-  /** Strategic charges set down by hand (on foot), oldest first. */
-  readonly charges: Array<{ kind: StrategicKind; x: number; y: number; z: number; setAt: number; fuse: number }> = [];
+  /**
+   * Charges set down by hand, oldest first: the player's (nuke, EMP) and Bit sappers' (`by` their
+   * side; a demolition charge bites toward `aim`, the foot of the tower it was set under).
+   */
+  readonly charges: Array<{ kind: ChargeKind; x: number; y: number; z: number; setAt: number; fuse: number; by?: Team; planter?: number; aim?: { x: number; z: number } }> = [];
+
+  /** Bit sappers (src/sim/sappers.ts): drafted in wars by the side holding their lot. */
+  readonly sappers = new Sappers();
+  /** When each pair of teams went to war (s), when each side's Bits last set a nuke, recent demolitions. */
+  private readonly warStart = new Map<number, number>();
+  private readonly bitNukeAt: number[] = [-Infinity, -Infinity, -Infinity];
+  private readonly bitBlasts: Array<{ x: number; z: number; side: Team; time: number }> = [];
+
+  /** The world as the sappers see it. */
+  readonly battle: BattleWorld = {
+    sideAt: (x, z) => this.groundTurrets.territory.ownerAt(x, z),
+    atWar: (a, b) => atWar(a, b),
+    targets: (side, x, z, reach) => {
+      const out: BattleTarget[] = [];
+      for (const t of this.groundTurrets.turrets) {
+        if (t.derezAt !== null || t.hacked || !isTeam(t.side) || !atWar(side, t.side)) continue;
+        if (Math.hypot(t.pos.x - x, t.pos.z - z) > reach) continue;
+        const k = kerbNear(t.pos.x, t.pos.z);
+        if (k) out.push({ id: `turret:${t.id}`, side: t.side, x: k.x, z: k.z, baseX: t.pos.x, baseZ: t.pos.z, roofY: t.pos.y });
+      }
+      return out;
+    },
+    defenceAt: (x, z, side) => {
+      const owner = this.groundTurrets.territory.ownerAt(x, z);
+      if (owner === null || owner === side) return 0;
+      let n = 0;
+      for (const t of this.groundTurrets.turrets) if (t.derezAt === null && t.side === owner && Math.hypot(t.pos.x - x, t.pos.z - z) < 600) n++;
+      return Math.min(0.75, 0.15 + 0.12 * Math.min(3, n) + (owner === 1 ? 0.1 : 0)); // Red's Sentinels watch too
+    },
+    plant: (kind, x, y, z, by, target, planter, time) => this.plantBitCharge(kind, x, y, z, by, target, planter, time),
+    ground: (x, z) => terrainHeight(x, z),
+  };
+
+  /**
+   * A sapper sets its charge. The rails: only at war with the district's holder, never in its own
+   * side's district; a nuke only when the war is three minutes old, no Bit's nuke is live
+   * anywhere, and its side has not set one for ten minutes. Every charge can be picked up
+   * (defused) by the player like their own. False if refused.
+   */
+  private plantBitCharge(kind: ChargeKind, x: number, y: number, z: number, by: Team, target: BattleTarget, planter: number, time: number): boolean {
+    const owner = this.groundTurrets.territory.ownerAt(x, z);
+    if (owner === null || owner === by || !atWar(by, owner)) return false;
+    if (kind === 'nuke') {
+      const pair = by + owner === 1 ? 0 : by + owner === 2 ? 1 : 2;
+      if (this.charges.some((c) => c.by !== undefined && c.kind === 'nuke') || time - this.bitNukeAt[by] < 600 || time - (this.warStart.get(pair) ?? time) < 180) return false;
+      this.bitNukeAt[by] = time;
+    }
+    this.charges.push({ kind, x, y, z, setAt: time, fuse: CHARGE.fuse[kind], by, planter, aim: { x: target.baseX, z: target.baseZ } });
+    this.bits.scare(x, z, 40, time);
+    if (kind !== 'demo') {
+      const me = this.walker.active ? { x: this.walker.x, z: this.walker.z } : this.position;
+      const dx = x - me.x, dz = z - me.z;
+      const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+      const compass = dirs[Math.round(((Math.atan2(dx, -dz) / (Math.PI * 2)) * 8 + 8)) % 8];
+      this.notice(`${sideName(by)} sapper set ${kind === 'nuke' ? 'a nuke' : 'an EMP'}: ${CHARGE.fuse[kind]} s · ${Math.round(Math.hypot(dx, dz))} m ${compass} · \` beside it defuses it`);
+    }
+    return true;
+  }
+
+  /** A sapper's demolition charge goes off: it bites into the foot of the tower it was set under. */
+  private detonateDemo(c: (typeof this.charges)[number]): void {
+    const a = c.aim ?? { x: c.x, z: c.z };
+    const d = Math.hypot(a.x - c.x, a.z - c.z);
+    const k = d > 1e-6 ? Math.min(CHARGE.demo.reach, d) / d : 0;
+    const x = c.x + (a.x - c.x) * k, z = c.z + (a.z - c.z) * k;
+    const y = terrainHeight(x, z) + 2;
+    const R = CHARGE.demo.radius;
+    this.explosions.push({ x, y, z, time: this.time, radius: R + 2, color: '#ffb347', speed: 0 });
+    if (this.explosions.length > 32) this.explosions.splice(0, this.explosions.length - 32);
+    this.staticWorld.blastAt(x, y, z, R, this.time);
+    this.bits.scare(x, z, 40, this.time);
+    this.bits.strike(x, y, z, R * 0.7, this.time);
+    this.programs.strike(x, y, z, R * 0.7, this.time);
+    const w = this.walker;
+    if (w.active && w.downAt === null && Math.hypot(w.x - x, w.y + BIT.hover - y, w.z - z) < R * 0.7) w.downAt = this.time;
+    if (c.by !== undefined) this.bitBlasts.push({ x: a.x, z: a.z, side: c.by, time: this.time });
+    if (this.bitBlasts.length > 16) this.bitBlasts.shift();
+    this.version++;
+  }
 
   /**
    * On foot: set the strategic weapon carried down on the ground just ahead, its fuse running;
@@ -517,10 +600,16 @@ export class Simulation {
     if (i >= 0) {
       const c = this.charges[i];
       if (c.setAt + c.fuse - this.time < CHARGE.lockout) return 'Too late to pick it up: run';
+      if (c.kind === 'demo') {
+        // A sapper's demolition charge: defused and thrown away (there is nothing to carry).
+        this.charges.splice(i, 1);
+        this.notice('Demolition charge defused');
+        return null;
+      }
       if (this.strategic) return 'Already carrying one';
       this.charges.splice(i, 1);
       this.strategic = c.kind;
-      this.notice(`${STRATEGIC[c.kind].label} picked up: disarmed`);
+      this.notice(c.by !== undefined ? `${sideName(c.by)} sapper's ${STRATEGIC[c.kind].label} defused: it is yours now` : `${STRATEGIC[c.kind].label} picked up: disarmed`);
       return null;
     }
     if (!this.strategic) return 'No strategic weapon: buy one with credits (\')';
@@ -539,7 +628,12 @@ export class Simulation {
       const c = this.charges[i];
       if (this.time < c.setAt + c.fuse) continue;
       this.charges.splice(i, 1);
-      if (c.kind === 'nuke') this.detonateNuke(c.x, c.y + 1, c.z, this.team, true);
+      if (c.kind === 'demo') this.detonateDemo(c);
+      // A sapper's: the war's (no pay, no incident), still shown to the other players.
+      else if (c.by !== undefined) {
+        if (c.kind === 'nuke') this.detonateNuke(c.x, c.y + 1, c.z, c.by, false, true);
+        else this.detonateEmp(c.x, c.y + 1, c.z, false, true);
+      } else if (c.kind === 'nuke') this.detonateNuke(c.x, c.y + 1, c.z, this.team, true);
       else this.detonateEmp(c.x, c.y + 1, c.z, true);
     }
   }
@@ -558,7 +652,7 @@ export class Simulation {
    * A nuclear detonation at (x, y, z). `by`: the side whose weapon it was; `local`: the player's
    * own (kills pay), not another player's arriving over the network.
    */
-  detonateNuke(x: number, y: number, z: number, by: Side, local: boolean): void {
+  detonateNuke(x: number, y: number, z: number, by: Side, local: boolean, broadcast = local): void {
     if (local) this.provoke(this.groundTurrets.territory.ownerAt(x, z), 'district (a nuke)', DIPLOMACY.severity.strategic);
     const { fireball: F, shock: S } = STRATEGIC.nuke;
     // (Measured round the planet: things far from the craft may sit in another image of it.)
@@ -609,13 +703,13 @@ export class Simulation {
     this.bits.strike(x, y, z, F, this.time);
     this.programs.strike(x, y, z, F, this.time);
     if (this.walker.active && this.walker.downAt === null && Math.hypot(wrapDelta(x, this.walker.x), this.walker.y - y, wrapDelta(z, this.walker.z)) < F) this.walker.downAt = this.time;
-    this.blasts.push({ kind: 'nuke', x, y, z, time: this.time, remote: !local });
+    this.blasts.push({ kind: 'nuke', x, y, z, time: this.time, remote: !broadcast });
     if (this.blasts.length > 16) this.blasts.splice(0, this.blasts.length - 16);
     this.version++;
   }
 
   /** An EMP at (x, y, z): disables, destroys nothing. */
-  detonateEmp(x: number, y: number, z: number, local: boolean): void {
+  detonateEmp(x: number, y: number, z: number, local: boolean, broadcast = local): void {
     if (local) this.provoke(this.groundTurrets.territory.ownerAt(x, z), 'district (an EMP)', DIPLOMACY.severity.strategic);
     const E = STRATEGIC.emp;
     const R = E.radius;
@@ -627,7 +721,7 @@ export class Simulation {
     // Homing missiles in it lose their lock.
     for (const w of this.allWeapons()) for (const p of w.projectiles) if (p.target && near(p.pos) < R) p.target = null;
     if (!this.exploded && near(this.position) < R) this.empUntil = this.time + E.craft;
-    this.blasts.push({ kind: 'emp', x, y, z, time: this.time, remote: !local });
+    this.blasts.push({ kind: 'emp', x, y, z, time: this.time, remote: !broadcast });
     if (this.blasts.length > 16) this.blasts.splice(0, this.blasts.length - 16);
     this.version++;
   }
@@ -955,10 +1049,14 @@ export class Simulation {
     // A tower brought down under fire takes its turret with it (the player's kill if they did it).
     this.groundTurrets.onTowerFell = (t) => {
       this.turretBlast(t);
+      // A sapper's demolition at its foot: that side brought it down (and may take the district).
+      const blast = this.bitBlasts.find((b) => this.time - b.time < 15 && Math.hypot(b.x - t.pos.x, b.z - t.pos.z) < 80 && isTeam(t.side) && atWar(b.side, t.side));
+      if (blast) return blast.side;
       if (this.time - t.hitAt < 5) {
         this.airTraffic.kills++;
         this.earn(CREDITS.turret, 'turret brought down');
       }
+      return null;
     };
     this.groundTurrets.onCapture = (_ci, _cj, team, from) => {
       const name = `${TEAMS[from].name} district`;
@@ -1165,6 +1263,10 @@ export class Simulation {
     this.trails.clear();
     this.traffic.clear();
     this.charges.length = 0;
+    this.sappers.reset();
+    this.warStart.clear();
+    this.bitNukeAt.fill(-Infinity);
+    this.bitBlasts.length = 0;
     this.errands.reset();
     this.bits.reset();
     this.walker.board();
@@ -1358,7 +1460,15 @@ export class Simulation {
     if (done && 'reward' in done) this.earn(done.reward, done.text);
     else if (done) this.notice(done.failed);
     // The people think at a quarter of the physics rate: plenty for walkers, and cheap.
-    if (++this.bitTick % 4 === 0) this.bits.step(this.dt * 4, this.time, this.playerPoint, this.exploded ? [] : [th]);
+    if (++this.bitTick % 4 === 0) {
+      this.bits.step(this.dt * 4, this.time, this.playerPoint, this.exploded ? [] : [th]);
+      // Wars: when each began (a nuke waits three minutes into one), and the sappers' draft.
+      for (const [a, b, pair] of [[0, 1, 0], [0, 2, 1], [1, 2, 2]] as const) {
+        if (!atWar(a, b)) this.warStart.delete(pair);
+        else if (!this.warStart.has(pair)) this.warStart.set(pair, this.time);
+      }
+      this.sappers.step(this.dt * 4, this.time, this.bits, this.battle, this.playerPoint);
+    }
     // A Bit run over derezzes into chips of its own light; one that dies of age or runs dry
     // fades quietly (a few slow chips rising).
     for (const d of this.bits.derezEvents) {

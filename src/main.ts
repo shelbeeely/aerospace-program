@@ -227,6 +227,7 @@ async function start() {
   const programsView = new ProgramsView(scene, sim.programs);
   const chargesView = new ChargesView(scene);
   bitsView.setErrands(sim.errands);
+  bitsView.setSappers(sim.sappers);
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
   const weaponsView = new WeaponsView(scene, () => sim.allWeapons());
@@ -263,7 +264,7 @@ async function start() {
   // (`?room=CODE&server=ws://host:port` for another, `?offline=1` for none).
   const net = new NetClient({ sim, scene, mode: () => mode });
   // K: the architecture inspector (region, district, streaming, structure under the cursor).
-  const bitsCensus = new CensusRecorder(sim.bits);
+  const bitsCensus = new CensusRecorder(sim.bits, sim.sappers);
   const inspector = new ArchitectureInspector({
     world: archView, terrain: terrainView, routes: routeView, sky: worldView, camera, canvas, active: () => mode === 'flight',
     bits: { recorder: bitsCensus, reset: () => { sim.bits.clearEvolution(); clearBitPools(); } },
@@ -1681,7 +1682,9 @@ async function start() {
     const mercs = sim.airTraffic.mercs();
     {
       const inFlight = sim.weapons.projectiles.find((p) => p.kind === 'nuke' || p.kind === 'emp');
-      const set = sim.charges[0];
+      // The nearest live charge (yours, or a sapper's): its countdown leads the strategic row.
+      const me = sim.walker.active ? { x: sim.walker.x, z: sim.walker.z } : sim.position;
+      const set = sim.charges.reduce<(typeof sim.charges)[number] | null>((a, c) => (!a || Math.hypot(c.x - me.x, c.z - me.z) < Math.hypot(a.x - me.x, a.z - me.z) ? c : a), null);
       hud.setStrategic({ carried: sim.strategic, flight: inFlight ? inFlight.kind : null, emp: Math.max(0, sim.empUntil - sim.time), onFoot: sim.walker.active, set: set ? { kind: set.kind, left: set.setAt + set.fuse - sim.time } : null });
     }
     if (sim.hackCharges !== savedHacks) {

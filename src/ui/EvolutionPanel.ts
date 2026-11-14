@@ -1,5 +1,5 @@
 import { BIT_STYLE_CHOICES } from '../people/bitStyle.ts';
-import { BEHAVIOUR_GENES, GENE_LABEL, STYLE_FIELDS, type Gene, type StyleField } from '../people/genome.ts';
+import { BEHAVIOUR_GENES, COMBAT_GENES, GENE_LABEL, STYLE_FIELDS, type Gene, type StyleField } from '../people/genome.ts';
 import { DEATH_CAUSES } from '../sim/evolution.ts';
 import { CITY } from '../sim/layout.ts';
 import type { EvolutionLab, LabSample, LabSettings } from '../sim/evolutionLab.ts';
@@ -30,12 +30,14 @@ const SLIDERS: Array<{ key: keyof LabSettings; label: string; min: number; max: 
   { key: 'scarcity', label: 'Scarcity (× drain)', min: 0.5, max: 2.5, step: 0.1, fmt: (v) => v.toFixed(1) },
   { key: 'mutation', label: 'Mutation (/gene)', min: 0, max: 0.3, step: 0.01, fmt: (v) => v.toFixed(2) },
   { key: 'lifespan', label: 'Lifespan (s)', min: 300, max: 1200, step: 50, fmt: (v) => v.toFixed(0) },
+  { key: 'war', label: 'War: enemy defence', min: 0, max: 1, step: 0.05, fmt: (v) => (v > 0 ? v.toFixed(2) : 'peace') },
 ];
 
 export class EvolutionView {
   readonly root: HTMLDivElement;
   private readonly stats: HTMLTableElement;
   private readonly genes = new GeneChart('Gene means over time');
+  private readonly combat = new GeneChart('Sapper genes over time (nerve, stealth, craft)');
   private readonly shares = new ShareChart('Looks over time');
   private readonly table: HTMLTableElement;
   private field: StyleField = 'light';
@@ -48,7 +50,7 @@ export class EvolutionView {
     this.stats = document.createElement('table');
     this.stats.className = 'arch-kv evo-stats';
     this.root.append(this.h4('Census'), this.stats);
-    this.root.append(this.genes.root);
+    this.root.append(this.genes.root, this.combat.root);
     const pick = document.createElement('select');
     pick.setAttribute('aria-label', 'Look to chart');
     for (const f of STYLE_FIELDS) {
@@ -162,15 +164,20 @@ export class EvolutionView {
       kv('Founder lines', String(last.lineages));
       kv('Born', String(last.births));
       kv('Died', DEATH_CAUSES.filter((c) => last.deaths[c] > 0).map((c) => `${last.deaths[c]} ${CAUSE_LABEL[c]}`).join(' · ') || 'none yet');
+      const w = last.combat;
+      if (w.sent > 0) kv('Sappers', `${w.sent} sent · ${w.set} charges set · ${w.shot} shot · ${w.duds} duds · ${w.home} veterans home`);
+      kv('Could set', `a sure demolition ${Math.round(last.tiers.demo * 100)}% · EMP ${Math.round(last.tiers.emp * 100)}% · nuke ${Math.round(last.tiers.nuke * 100)}%`);
     }
     const times = h.map((s) => s.t);
     this.genes.set(times, BEHAVIOUR_GENES.map((g, i) => ({ label: GENE_LABEL[g], color: CHART.series[i], values: h.map((s) => s.mean[g]) })));
+    // Slots 4-6, so no colour means two genes on one screen.
+    this.combat.set(times, COMBAT_GENES.map((g, i) => ({ label: GENE_LABEL[g], color: CHART.series[3 + i], values: h.map((s) => s.mean[g]) })));
     const choices = BIT_STYLE_CHOICES[this.field] as ReadonlyArray<readonly [string, string]>;
     this.shares.set(times, choices.map(([c, label], i) => ({ label, color: CHART.series[i], values: h.map((s) => s.style[this.field][c] ?? 0) })));
     // The table view: every gene's mean now, and the look shares now.
     this.table.replaceChildren();
     if (last) {
-      for (const g of BEHAVIOUR_GENES as Gene[]) {
+      for (const g of [...BEHAVIOUR_GENES, ...COMBAT_GENES] as Gene[]) {
         const tr = this.table.insertRow();
         tr.insertCell().textContent = GENE_LABEL[g];
         const first = h[0].mean[g];

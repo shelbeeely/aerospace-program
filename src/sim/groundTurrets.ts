@@ -223,7 +223,8 @@ export class GroundTurretSystem {
   /** Has the structure under a site fractured? (the simulation answers) */
   fractured: (structureId: string) => boolean = () => false;
   /** A turret whose tower fell (the simulation shows the derez). */
-  onTowerFell: ((t: GroundTurret) => void) | null = null;
+  /** A tower with a turret on it fell: who brought it down (a side, or null for nobody in particular). */
+  onTowerFell: ((t: GroundTurret) => Side | null | void) | null = null;
   /** Who holds each district. */
   readonly territory = new Territory();
   /** A district changed hands: its last turret fell to `team`. */
@@ -420,8 +421,9 @@ export class GroundTurretSystem {
     for (const t of this.turrets) {
       if (t.derezAt !== null) continue;
       if (this.fractured(t.site.structureId)) {
-        this.onTowerFell?.(t);
-        this.derez(t, time);
+        // Whoever brought the tower down (a sapper's charge) takes the credit, and maybe the district.
+        const by = this.onTowerFell?.(t) ?? null;
+        this.derez(t, time, by);
         continue;
       }
       this.aim(t, dt, time, foes);

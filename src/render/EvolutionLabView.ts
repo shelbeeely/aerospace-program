@@ -6,13 +6,16 @@ const MAX_RUNNERS = 64;
 
 /**
  * The Evolution Lab's pressures, drawn (the people themselves are a BitsView): each kerb runner
- * as a low light-cycle body with a short light wall trailing it, and each blast as a red ring
- * that opens and fades. Light that says what is happening (§5); nothing else lit.
+ * as a low light-cycle body with a short light wall trailing it, each blast as a red ring that
+ * opens and fades, and in war a red beacon over each standing enemy tower. Light that says what
+ * is happening (§5); nothing else lit.
  */
 export class EvolutionLabView {
   private readonly bodies: THREE.InstancedMesh;
   private readonly walls: THREE.InstancedMesh;
   private readonly ring: THREE.Mesh;
+  /** War: a red beacon over each enemy tower (dark while it is down). */
+  private readonly beacons: THREE.InstancedMesh;
   private readonly ringMat: THREE.MeshBasicNodeMaterial;
   private readonly _m = new THREE.Matrix4();
   private readonly _q = new THREE.Quaternion();
@@ -30,10 +33,15 @@ export class EvolutionLabView {
     this.ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 48).rotateX(-Math.PI / 2), this.ringMat);
     this.ring.visible = false;
     scene.add(this.ring);
+    this.beacons = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.8, 0.8, 140, 6, 1, true).translate(0, 70, 0), new THREE.MeshBasicNodeMaterial({ color: neonTint('#ff2a12').multiplyScalar(0.9), transparent: true, opacity: 0.4, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }), 8);
+    this.beacons.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.beacons.count = 0;
+    this.beacons.frustumCulled = false;
+    scene.add(this.beacons);
   }
 
   set visible(v: boolean) {
-    this.bodies.visible = this.walls.visible = v;
+    this.bodies.visible = this.walls.visible = this.beacons.visible = v;
     if (!v) this.ring.visible = false;
   }
 
@@ -51,6 +59,15 @@ export class EvolutionLabView {
     }
     this.bodies.count = this.walls.count = n;
     this.bodies.instanceMatrix.needsUpdate = this.walls.instanceMatrix.needsUpdate = true;
+    let nb = 0;
+    if (this.lab.settings.war > 0) for (const t of this.lab.towers) {
+      if (this.lab.time < t.downUntil || nb >= 8) continue;
+      this._q.identity();
+      this._p.set(t.baseX, 0, t.baseZ);
+      this.beacons.setMatrixAt(nb++, this._m.compose(this._p, this._q, this._s));
+    }
+    this.beacons.count = nb;
+    this.beacons.instanceMatrix.needsUpdate = true;
     const b = this.lab.lastBlast;
     const age = b ? this.lab.time - b.time : Infinity;
     this.ring.visible = age < 1.2;
@@ -63,7 +80,7 @@ export class EvolutionLabView {
   }
 
   dispose(): void {
-    for (const m of [this.bodies, this.walls]) { m.removeFromParent(); m.geometry.dispose(); (m.material as THREE.Material).dispose(); }
+    for (const m of [this.bodies, this.walls, this.beacons]) { m.removeFromParent(); m.geometry.dispose(); (m.material as THREE.Material).dispose(); }
     this.ring.removeFromParent();
     this.ring.geometry.dispose();
     this.ringMat.dispose();

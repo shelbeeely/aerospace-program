@@ -165,7 +165,7 @@ export function express(g: BitGenome): Phenotype {
  */
 export function yesChance(listener: BitGenome, speaker: BitGenome, prestige = 0): number {
   const base = (0.2 + 0.6 * listener.agreeable) * (1 - listener.pickiness * styleDistance(listener.style, speaker.style));
-  return Math.min(1, base + prestige * (1 - base) * 0.5);
+  return Math.min(1, base + prestige * (1 - base) * 0.8);
 }
 
 /** The middle genome: what a Bit was before genes. */

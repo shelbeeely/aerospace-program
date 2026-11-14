@@ -12,6 +12,10 @@ import { districtPlan, lotAt, type Lot } from '../arch/DistrictGenerator.ts';
 import { structureRoom, type Room, type RoomDoor } from '../arch/InteriorGenerator.ts';
 import { kitRoomAt } from '../world/kit.ts';
 import { kitRoomId } from '../world/structures.ts';
+import type { Mission } from './sappers.ts';
+
+/** A sapper hurries (× its pace; SAPPERS.pace, kept here so bits.ts needs nothing from sappers.ts at run time). */
+const SAPPER_PACE = 2;
 import {
   advancePool, census, CHILD_SLOT, childGenome, childRand, DEATH_CAUSES, DEFAULT_EVOLUTION, EVOLUTION, isGrown, lifespanOf, lotCapacity, walkDrain,
   canBreed, type Census, type DeathCause, type EvolutionOptions, type StoredBit, type StoredLot,
@@ -107,8 +111,8 @@ export interface BitPerson {
   home: BitHome;
   /** Which of the lot's people this is (founders 0..; children and newcomers CHILD_SLOT..). */
   slot: number;
-  /** Where it is: on the kerb, on its way through a door, or indoors. */
-  place: 'kerb' | 'way' | 'inside' | 'follow';
+  /** Where it is: on the kerb, on its way through a door, indoors, following the player, or on a sapper's mission. */
+  place: 'kerb' | 'way' | 'inside' | 'follow' | 'mission';
   /** Following the player: the height of the ground it is on (from the trail it walks). */
   footY: number;
   /** Distance along the kerb loop (m), walking direction and pace. */
@@ -153,6 +157,8 @@ export interface BitPerson {
   gx: number;
   gz: number;
   gh: number;
+  /** Drafted: its sapper's mission (src/sim/sappers.ts). */
+  mission: Mission | null;
   /** Moving house: the lot it is off to, and where on its own kerb it crosses over. */
   bound: BitHome | null;
   boundS: number;
@@ -488,7 +494,7 @@ export class BitPopulation {
   private snapshot(h: BitHome): StoredLot {
     const people: StoredBit[] = [];
     for (const p of this.people) {
-      if (p.home !== h || p.place === 'follow') continue;
+      if (p.home !== h || p.place === 'follow' || p.place === 'mission') continue;
       people.push({ genome: p.genome, age: p.age, life: p.life, energy: p.energy, gen: p.gen, slot: p.slot, lineage: p.lineage, prestige: p.prestige });
     }
     return { key: h.key, births: h.births, capacity: h.capacity, people };
@@ -521,7 +527,7 @@ export class BitPopulation {
       answer: null, answeredAt: -Infinity, pending: null, hurry: false,
       beat: 0,
       x: 0, y: 0, z: 0, yaw: 0,
-      rand, gx: Infinity, gz: Infinity, gh: 0, footY: 0, bound: null, boundS: 0,
+      rand, gx: Infinity, gz: Infinity, gh: 0, footY: 0, bound: null, boundS: 0, mission: null,
       genome: rec.genome, ph, age: rec.age, life: rec.life, energy: rec.energy, gen: rec.gen, lineage: rec.lineage, prestige: rec.prestige,
     };
     if (paceDraw === undefined) rand(); // the draw a founder's pace takes, so streams line up
@@ -599,6 +605,7 @@ export class BitPopulation {
 
   private place(p: BitPerson): void {
     if (p.place === 'follow') { p.y = p.footY + BIT.hover; return; }
+    if (p.place === 'mission') { p.y = this.ground(p) + BIT.hover; return; }
     if (p.place === 'way' && p.door && p.door.rise > 0.3) {
       // On the steps outside a raised door: it glides up to the threshold as it nears the wall.
       const d = p.door;
@@ -699,11 +706,12 @@ export class BitPopulation {
       if (Math.hypot(lx - cx, lz - cz) < this.opts.despawn) continue;
       this.store(h);
       this.homes.delete(key);
-      for (let i = this.people.length - 1; i >= 0; i--) if (this.people[i].home === h && this.people[i].place !== 'follow') this.people.splice(i, 1);
+      for (let i = this.people.length - 1; i >= 0; i--) if (this.people[i].home === h && this.people[i].place !== 'follow' && this.people[i].place !== 'mission') this.people.splice(i, 1);
     }
   }
 
-  private say(p: BitPerson, answer: BitAnswer, time: number): void {
+  /** A Bit says YES or NO (it shows the figure for a moment). */
+  say(p: BitPerson, answer: BitAnswer, time: number): void {
     p.answer = answer;
     p.answeredAt = time;
   }
@@ -716,7 +724,7 @@ export class BitPopulation {
     let n = 0;
     for (const p of this.people) {
       const dx = p.x - x, dz = p.z - z;
-      if (dx * dx + dz * dz > BITS.earshot * BITS.earshot || p.mood === 'scared' || p.place === 'follow') continue;
+      if (dx * dx + dz * dz > BITS.earshot * BITS.earshot || p.mood === 'scared' || p.place === 'follow' || p.place === 'mission') continue;
       p.mood = 'talk';
       p.until = time + BITS.talkTime;
       p.quietUntil = p.until + 2;
@@ -750,7 +758,7 @@ export class BitPopulation {
         this.say(p, 'no', time);
         if (p.place === 'kerb') { if (p.door) p.door = null; this.frighten(p, time); continue; }
         if (p.place === 'way' && p.then === 'kerb') { p.hurry = true; continue; }
-        if (p.place === 'follow') continue;
+        if (p.place === 'follow' || p.place === 'mission') continue;
         const d = p.door!;
         n++;
         kerbPoint(h, p.doorS, 0, _k);
@@ -793,6 +801,28 @@ export class BitPopulation {
     p.mood = 'walk';
     this.say(p, 'yes', time);
     return true;
+  }
+
+  /**
+   * A Bit back from elsewhere (a sapper home from its mission): onto its own kerb at `s`, or, its
+   * lot having streamed out meanwhile, into the lot's pool.
+   */
+  rehome(p: BitPerson, s: number, time: number): void {
+    const i = this.people.indexOf(p);
+    if (i < 0) return;
+    if (this.homes.get(p.home.key) !== p.home) {
+      this.pools.get(p.home.key)?.people.push({ genome: p.genome, age: p.age, life: p.life, energy: p.energy, gen: p.gen, slot: p.slot, lineage: p.lineage, prestige: p.prestige });
+      this.people.splice(i, 1);
+      return;
+    }
+    p.place = 'kerb';
+    p.path = [];
+    p.s = mod(s, p.home.loop);
+    p.back = p.backTo = 0;
+    p.mood = 'stand';
+    p.until = time + 3;
+    p.quietUntil = time + 2;
+    this.place(p);
   }
 
   /** A followed Bit is let go: it says NO and walks back the way it came to its own kerb (or, its lot gone, fades out). */
@@ -862,7 +892,7 @@ export class BitPopulation {
 
   /** Walk the current path; true when it is done. */
   private follow(p: BitPerson, dt: number): boolean {
-    let left = (p.place === 'follow' ? Math.max(p.pace, 7.5) : p.pace * (p.hurry ? 2.5 : 1)) * dt;
+    let left = (p.place === 'follow' ? Math.max(p.pace, 7.5) : p.place === 'mission' ? p.pace * SAPPER_PACE : p.pace * (p.hurry ? 2.5 : 1)) * dt;
     while (left > 0 && p.path.length) {
       const w = p.path[0];
       const dx = w.x - p.x, dz = w.z - p.z;
@@ -1079,6 +1109,9 @@ export class BitPopulation {
         // Following the player along the trail it walked, keeping a couple of metres back.
         if (p.path.length) this.follow(p, dt);
         p.mood = 'walk';
+      } else if (p.place === 'mission') {
+        // A sapper on its way (src/sim/sappers.ts decides what happens at each end).
+        if (p.path.length) { this.follow(p, dt); p.mood = 'walk'; }
       } else if (p.place === 'way') {
         // Through a door: it stops to talk or flinch, otherwise it keeps walking.
         if (p.mood !== 'walk' && (p.hurry || time >= p.until)) p.mood = 'walk';
@@ -1198,7 +1231,7 @@ export class BitPopulation {
     // Meetings: two of a lot's people close together, both on the kerb or both indoors, stop to talk.
     for (let i = 0; i < people.length; i++) {
       const a = people[i];
-      if (a.place === 'way' || a.place === 'follow' || a.hurry || a.mood === 'talk' || a.mood === 'scared' || time < a.quietUntil) continue;
+      if (a.place === 'way' || a.place === 'follow' || a.place === 'mission' || a.hurry || a.mood === 'talk' || a.mood === 'scared' || time < a.quietUntil) continue;
       for (let j = i + 1; j < people.length; j++) {
         const b = people[j];
         if (b.home !== a.home || b.place !== a.place || b.mood === 'talk' || b.mood === 'scared' || time < b.quietUntil) continue;

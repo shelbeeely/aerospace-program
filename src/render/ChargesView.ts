@@ -2,10 +2,12 @@ import * as THREE from 'three/webgpu';
 import { neonFillMaterial, neonTint, neonize } from './neon.ts';
 
 /**
- * Strategic charges set down by hand: a squat dark octahedral casing on a low plinth, with a
- * ring of light round its waist that pulses faster as the fuse runs down (red for a nuke,
- * white for an EMP). Light that says what it is doing (§5); the casing stays unlit.
+ * Charges set down by hand (the player's, and Bit sappers'): a squat dark octahedral casing on a
+ * low plinth, with a ring of light round its waist that pulses faster as the fuse runs down (red
+ * for a nuke, white for an EMP, amber for a sapper's demolition charge). Light that says what it
+ * is doing (§5); the casing stays unlit.
  */
+export const CHARGE_LIGHT: Record<string, string> = { nuke: '#ff2a12', emp: '#dff6ff', demo: '#ffb347' };
 export class ChargesView {
   private readonly root = new THREE.Group();
   private readonly items: Array<{ g: THREE.Group; ring: THREE.MeshBasicNodeMaterial; key: object }> = [];
@@ -30,7 +32,7 @@ export class ChargesView {
       let it = this.items.find((x) => x.key === c);
       if (!it) {
         const g = new THREE.Group();
-        const color = c.kind === 'nuke' ? '#ff2a12' : '#dff6ff';
+        const color = CHARGE_LIGHT[c.kind] ?? '#dff6ff';
         const p = new THREE.Mesh(this.plinth, this.fill);
         p.position.y = 0.15;
         const body = new THREE.Mesh(this.casing, this.fill);
@@ -49,7 +51,7 @@ export class ChargesView {
       const left = Math.max(0, c.setAt + c.fuse - time);
       const rate = left < 10 ? 5 : left < 30 ? 1.5 : 0.5;
       const on = Math.sin(time * rate * Math.PI * 2) > 0;
-      it.ring.color.copy(neonTint(c.kind === 'nuke' ? '#ff2a12' : '#dff6ff').multiplyScalar(on ? 2.4 : 0.35));
+      it.ring.color.copy(neonTint(CHARGE_LIGHT[c.kind] ?? '#dff6ff').multiplyScalar(on ? 2.4 : 0.35));
     }
   }
 }

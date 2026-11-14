@@ -202,6 +202,26 @@ console.log('\n--- the lab');
   check(paceS < paceC - 0.08, 'scarcity breeds slow walkers', `pace ${f2(paceS)} scarce vs ${f2(paceC)} control (${scarce.map((r) => f2(r.last.mean.pace)).join(' ')} vs ${control.map((r) => f2(r.last.mean.pace)).join(' ')})`);
 }
 
+console.log('\n--- sappers in the lab');
+{
+  // At war, selection acts on the sappers themselves: the stealthy come home, the skilled set
+  // their charges. (The district-wide shift is slow beside drift: only a few Bits fight.)
+  const peace = new EvolutionLab({ seed: 1 });
+  peace.run(1200);
+  check(peace.sappers.stats.sent === 0, 'at peace the lab drafts nobody');
+  const shot: number[] = [], home: number[] = [], vet: number[] = [], dud: number[] = [];
+  let sent = 0;
+  for (const seed of [1, 2]) {
+    const lab = new EvolutionLab({ seed, war: 0.5 });
+    lab.run(12000);
+    const r = lab.sappers.record;
+    shot.push(...r.shotStealth); home.push(...r.homeStealth); vet.push(...r.vetCraft); dud.push(...r.dudCraft);
+    sent += lab.sappers.stats.sent;
+  }
+  check(shot.length > 30 && home.length > 30 && mean(shot) < mean(home) - 0.03, 'spotting selects for stealth: the sappers shot were less stealthy than those who came home', `stealth ${f2(mean(shot))} shot (${shot.length}) vs ${f2(mean(home))} home (${home.length}) of ${sent} sent`);
+  check(vet.length > 10 && dud.length > 10 && mean(vet) > mean(dud), 'craft pays: veterans had more craft than the sappers whose charge was a dud', `craft ${f2(mean(vet))} veterans (${vet.length}) vs ${f2(mean(dud))} duds (${dud.length})`);
+}
+
 console.log("\n--- the relay's world");
 {
   let now = 0;

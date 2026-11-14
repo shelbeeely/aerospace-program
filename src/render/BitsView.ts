@@ -5,6 +5,9 @@ import { BIT_STATES, BitFigure, bitGeometry } from './BitFigure.ts';
 import { neonTint } from './neon.ts';
 import { STYLE_LIGHT, STYLE_SIZE, STYLE_SPIN, styledState, type BitStyle } from '../people/bitStyle.ts';
 import type { Errands } from '../sim/errands.ts';
+import type { Sappers } from '../sim/sappers.ts';
+import { sideLight } from '../sim/teams.ts';
+import { CHARGE_LIGHT } from './ChargesView.ts';
 
 /** A figure's geometry with its facets shaded into vertex colours, so a crowd needs no lights. */
 function shadedGeometry(state: BitState): THREE.BufferGeometry {
@@ -41,6 +44,7 @@ export class BitsView {
   private readonly _p = new THREE.Vector3();
   private readonly _s = new THREE.Vector3();
   private readonly _c = new THREE.Color();
+  private readonly _up = new THREE.Vector3(0, 1, 0);
   private readonly tones = new Map<BitState, THREE.Color>();
   /** Idle tone per inherited light. */
   private readonly idleTones = new Map<string, THREE.Color>();
@@ -51,6 +55,12 @@ export class BitsView {
   private readonly packet: THREE.Mesh;
   private readonly beam: THREE.Mesh;
   private errands: Errands | null = null;
+  /** Sappers: the charge each carries over it (by kind), and the beams that shoot them. */
+  private sappers: Sappers | null = null;
+  private readonly carried: THREE.InstancedMesh;
+  private readonly shotLines: THREE.LineSegments;
+  private readonly shotPos = new Float32Array(16 * 6);
+  private readonly sideTones = new Map<number, THREE.Color>();
 
   constructor(scene: THREE.Scene, private readonly bits: BitPopulation, private readonly walker: BitWalker | null) {
     for (const [name, c] of Object.entries(STYLE_LIGHT)) this.idleTones.set(name, neonTint(c).multiplyScalar(0.75));
@@ -90,6 +100,26 @@ export class BitsView {
     this.player.root.visible = false;
     this.player.root.name = 'bit.player';
     scene.add(this.player.root);
+    this.carried = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.3, 0).scale(1, 0.8, 1), new THREE.MeshBasicNodeMaterial({ color: 0xffffff }), 32);
+    this.carried.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(32 * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    this.carried.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.carried.count = 0;
+    this.carried.frustumCulled = false;
+    this.carried.name = 'bits.sapper-charges';
+    scene.add(this.carried);
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.BufferAttribute(this.shotPos, 3).setUsage(THREE.DynamicDrawUsage));
+    lg.setDrawRange(0, 0);
+    this.shotLines = new THREE.LineSegments(lg, new THREE.LineBasicNodeMaterial({ color: neonTint('#ff2a12').multiplyScalar(2.2) }));
+    this.shotLines.frustumCulled = false;
+    this.shotLines.name = 'bits.sapper-shots';
+    scene.add(this.shotLines);
+    for (const t of [0, 1, 2]) this.sideTones.set(t, neonTint(sideLight(t as 0 | 1 | 2)).multiplyScalar(0.5));
+  }
+
+  /** Draw the sappers' charges and the shots at them. */
+  setSappers(s: Sappers): void {
+    this.sappers = s;
   }
 
   /** Show what the people are asking for, and where the errand under way is going. */
@@ -107,6 +137,7 @@ export class BitsView {
     for (const m of this.meshes.values()) m.visible = v;
     this.pools.visible = v;
     this.offerCubes.visible = this.offerRings.visible = v;
+    this.carried.visible = this.shotLines.visible = v;
   }
 
   /** People drawn last frame. */
@@ -140,9 +171,34 @@ export class BitsView {
       this._q.identity();
       this._s.setScalar(size);
       this.pools.setMatrixAt(n, this._m.compose(this._p, this._q, this._s));
-      this.pools.setColorAt(n, this._c.copy(tone).multiplyScalar(answering ? 0.5 : 0.35));
+      // A sapper's pool shows whose side it fights for.
+      this.pools.setColorAt(n, p.mission ? this._c.copy(this.sideTones.get(p.mission.side)!) : this._c.copy(tone).multiplyScalar(answering ? 0.5 : 0.35));
       n++;
     }
+    // Sappers carry their charge over them until it is set.
+    let ncarry = 0;
+    for (const p of this.bits.people) {
+      const m = p.mission;
+      if (!m || m.planted || m.phase === 'home' || ncarry >= 32) continue;
+      this._p.set(p.x, p.y + 1.3, p.z);
+      this._q.setFromAxisAngle(this._up, time * 2 + p.beat);
+      this._s.setScalar(1);
+      this.carried.setMatrixAt(ncarry, this._m.compose(this._p, this._q, this._s));
+      this.carried.setColorAt(ncarry, this._c.copy(neonTint(CHARGE_LIGHT[m.kind])).multiplyScalar(1.4));
+      ncarry++;
+    }
+    this.carried.count = ncarry;
+    this.carried.instanceMatrix.needsUpdate = true;
+    if (this.carried.instanceColor) this.carried.instanceColor.needsUpdate = true;
+    // A shot at a sapper: a red line from the turret for a moment.
+    let ns = 0;
+    if (this.sappers) for (const s of this.sappers.shots) {
+      if (time - s.time > 0.3 || time < s.time || ns >= 16) continue;
+      this.shotPos.set([s.x, s.y, s.z, s.tx, s.ty, s.tz], ns * 6);
+      ns++;
+    }
+    this.shotLines.geometry.setDrawRange(0, ns * 2);
+    (this.shotLines.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
     for (const s of BIT_STATES) {
       const mesh = this.meshes.get(s)!;
       mesh.count = counts.get(s)!;
