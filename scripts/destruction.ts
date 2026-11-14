@@ -227,7 +227,7 @@ console.log('\n--- structural integrity of fractured structures');
   sim.resetToRunway();
   // The tallest slender structure with a foot big enough to cut most of away.
   const footOf = (g: (typeof groups)[number]) => { const m = structureMask(g, sim.staticWorld.structures.list); let n = 0; for (let x = 0; x < g.size[0]; x++) for (let z = 0; z < g.size[2]; z++) if (m(x, 0, z)) n++; return n; };
-  const tallOnes = groups.filter((g) => !g.kit && g.arch && !g.arch.startsWith('infra') && g.size[1] >= 8 && g.size[0] <= 10 && g.size[2] <= 10).sort((p, q) => q.size[1] * q.blockSize - p.size[1] * p.blockSize);
+  const tallOnes = groups.filter((g) => !g.kit && g.arch && !g.arch.startsWith('infra') && g.size[1] >= 8 && g.size[0] <= 14 && g.size[2] <= 14).sort((p, q) => q.size[1] * q.blockSize - p.size[1] * p.blockSize);
   const tall = tallOnes.find((g) => footOf(g) >= 12) ?? tallOnes[0];
   const b = sim.staticWorld.fracture(tall.id, { impulse: 0, x: 0, y: 0, z: 0 }, sim.time, false);
   const whole = b.aliveCount;
@@ -285,6 +285,24 @@ console.log('\n--- things that rest on others');
     const down = sim.staticWorld.downInfra();
     check(down.length === 1 && pylons.some((p) => Math.hypot(wrap(p.x - down[0].x), wrap(p.z - down[0].z)) < 12), 'a pylon brought down is reported where it stood: its beam is cut there');
   } else console.log('note: no Solar Sailer pylon in the central plan to test');
+}
+
+// ---------------------------------------------------------------- 7b. hollow kit towers
+console.log('\n--- kit towers keep their rooms when they break');
+{
+  const sim = new Simulation(TEST_PLANE);
+  const groups = sim.staticWorld.structures.groups.filter((g) => g.kit && g.room);
+  check(groups.length > 0, 'placed kit towers carry their rooms', `${groups.length} with rooms`);
+  let hollow = 0, open = 0;
+  for (const g of groups.slice(0, 6)) {
+    const mask = structureMask(g, sim.staticWorld.structures.list);
+    const s = g.blockSize, r = g.room!;
+    const cell = (x: number, y: number, z: number) => mask(Math.floor((x - g.x0) / s), Math.floor(y / s), Math.floor((z - g.z0) / s));
+    if (!cell((r.x0 + r.x1) / 2, Math.min(s / 2, r.y1 / 2), (r.z0 + r.z1) / 2)) hollow++;
+    const d = r.doors[0];
+    if (!cell(d.x, Math.min(s / 2, d.height / 2), d.z)) open++;
+  }
+  check(hollow === Math.min(6, groups.length) && open === Math.min(6, groups.length), 'fractured, a kit tower is hollow where its room is and open at its doorway', `${hollow} hollow, ${open} open`);
 }
 
 // ---------------------------------------------------------------- 8. Outlands landforms

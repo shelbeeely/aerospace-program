@@ -14,14 +14,16 @@
  */
 import { BIT, BIT_LOOK, BIT_SHAPES, bitState, type BitState } from '../src/people/bit.ts';
 import { LIGHT_CAR } from '../src/craft/lightCar.ts';
-import { BITS, BitPopulation, type BitHome, type BitPerson } from '../src/sim/bits.ts';
+import { BITS, BitPopulation, lotPopulation, type BitHome, type BitPerson } from '../src/sim/bits.ts';
+import { KIT, kitSolid } from '../src/world/kit.ts';
+import { kitRoomId } from '../src/world/structures.ts';
 import type { RoomDoor } from '../src/arch/InteriorGenerator.ts';
 import type { ControlInputs } from '../src/sim/controls.ts';
 import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
 import { terrainHeight } from '../src/sim/terrain.ts';
 import { structureMask, worldStructures } from '../src/world/structures.ts';
 import { TUNING } from '../src/tuning.ts';
-import { districtPlan } from '../src/arch/DistrictGenerator.ts';
+import { districtLayout, districtPlan } from '../src/arch/DistrictGenerator.ts';
 import { GRID } from '../src/arch/grid.ts';
 
 await initPhysics();
@@ -267,6 +269,62 @@ console.log('\n--- on foot');
   for (let i = 0; i < 360; i++) sim.step({ ...neutral, brake: 0, throttle: 1 });
   check(sim.position.distanceTo(car) > 5, 'and drives off', `${r2(sim.position.distanceTo(car))} m`);
   void parked;
+}
+
+console.log('\n--- kit towers');
+{
+  // Find a kit tower with people, and let a few minutes pass.
+  let found: { x: number; z: number; type: number; rot: number; scale: number } | null = null;
+  for (let ci = -3; ci <= 3 && !found; ci++) for (let cj = -3; cj <= 3 && !found; cj++) for (const l of districtLayout(ci, cj).lots) {
+    if (l.kind !== 'kit' || !l.kit || lotPopulation(l) < 3) continue;
+    found = { x: (l.rect.x0 + l.rect.x1) / 2, z: (l.rect.z0 + l.rect.z1) / 2, ...l.kit };
+    break;
+  }
+  // Every kit tower type: its room and the way out of each doorway are clear of its walls.
+  let types = 0, blockedCells = 0;
+  for (const t of KIT) {
+    if (!t.room) continue;
+    types++;
+    const [W, , D] = t.grid;
+    const cellOf = (x: number, z: number, y: number) => kitSolid(t, Math.floor((x + (W * t.cell) / 2) / t.cell), Math.floor(y / t.cell), Math.floor((z + (D * t.cell) / 2) / t.cell));
+    const r = t.room;
+    for (let x = r.x0 + 0.5; x < r.x1; x += 1) for (let z = r.z0 + 0.5; z < r.z1; z += 1) if (cellOf(x, z, 1)) blockedCells++;
+    for (const d of r.doors) for (let k = -d.through / 2; k < 60; k += 0.5) for (const lat of [-d.width / 2 + 0.4, 0, d.width / 2 - 0.4]) {
+      if (cellOf(d.x + d.nx * k - d.nz * lat, d.z + d.nz * k + d.nx * lat, 1)) blockedCells++;
+    }
+  }
+  check(types === KIT.length && blockedCells === 0, 'every kit tower type has a room, open and with a clear way out', `${types} of ${KIT.length} types, ${blockedCells} blocked cells`);
+  check(!!found, 'test setup: a kit tower with people');
+  if (found) {
+    const pop = new BitPopulation();
+    pop.step(1 / 30, 0, found);
+    const home = [...pop.homes.values()].find((h) => h.room?.id === kitRoomId(found!.x, found!.z));
+    check(!!home && home.room!.doors.length > 0, 'a kit tower has a room with doorways for its people', home ? `${(home.room!.x1 - home.room!.x0).toFixed(0)} × ${(home.room!.z1 - home.room!.z0).toFixed(0)} m, ${home.room!.doors.length} doors` : 'no room');
+    if (home) {
+      const t = KIT[found.type];
+      // Is (x, y, z) in a solid cell of the tower? (World → the tower's own frame, then its grid.)
+      const solidAt = (x: number, y: number, z: number) => {
+        const a = -(found!.rot * Math.PI) / 2, c = Math.cos(a), sn = Math.sin(a);
+        const dx = (x - found!.x) / found!.scale, dz = (z - found!.z) / found!.scale;
+        const lx = dx * c + dz * sn, lz = -dx * sn + dz * c;
+        const [W, , D] = t.grid;
+        return kitSolid(t, Math.floor((lx + (W * t.cell) / 2) / t.cell), Math.floor(y / found!.scale / t.cell), Math.floor((lz + (D * t.cell) / 2) / t.cell));
+      };
+      let inside = 0, inWall = 0, entered = 0;
+      for (let k = 0; k < 360 * 30; k++) {
+        pop.step(1 / 30, k / 30, found);
+        if (k % 15) continue;
+        for (const p of pop.people) {
+          if (p.home !== home) continue;
+          if (p.place === 'inside') inside++;
+          if (solidAt(p.x, p.y - BIT.hover + 0.8, p.z)) inWall++;
+        }
+      }
+      entered = pop.entries;
+      check(inside > 0 && entered > 0, 'its people go in and spend time inside', `${entered} went in`);
+      check(inWall === 0, 'nobody stands inside the tower\'s walls', `${inWall} samples`);
+    }
+  }
 }
 
 console.log('\n--- destruction');

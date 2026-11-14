@@ -7,6 +7,8 @@ import { terrainHeight } from './terrain.ts';
 import { roadBlock } from './traffic.ts';
 import { districtPlan, lotAt, type Lot } from '../arch/DistrictGenerator.ts';
 import { structureRoom, type Room, type RoomDoor } from '../arch/InteriorGenerator.ts';
+import { kitRoomAt } from '../world/kit.ts';
+import { kitRoomId } from '../world/structures.ts';
 
 /**
  * Bits are the people of the digital world, not vehicles. They live on a lot: in its building
@@ -164,6 +166,20 @@ export function lotPopulation(lot: Lot): number {
 
 /** The interior of a lot's building as its people use it (canonical coordinates), if it has one. */
 export function lotRoom(lot: Lot): Room | null {
+  if (lot.kind === 'kit' && lot.kit) {
+    // A kit tower: the room cut into its ground floor at import.
+    const cx = (lot.rect.x0 + lot.rect.x1) / 2, cz = (lot.rect.z0 + lot.rect.z1) / 2;
+    const r = kitRoomAt(lot.kit.type, lot.kit.rot, lot.kit.scale, cx, cz);
+    if (!r) return null;
+    return {
+      id: kitRoomId(cx, cz), program: 'commons', y: 0, x0: r.x0, x1: r.x1, z0: r.z0, z1: r.z1,
+      doors: r.doors.map((d) => ({
+        x: d.x, z: d.z, nx: d.nx, nz: d.nz, width: d.width, height: d.height, inset: d.through / 2, rise: 0, floor: [],
+        // Clear all the way across: a kit room has no furniture.
+        depth: d.through / 2 + (Math.abs(d.nx) > 0.5 ? r.x1 - r.x0 : r.z1 - r.z0) - 1,
+      })),
+    };
+  }
   if (lot.kind !== 'structure' && lot.kind !== 'landmark') return null;
   const plan = districtPlan(Math.floor(mod(lot.gi, N) / GRID.chunkBlocks), Math.floor(mod(lot.gj, N) / GRID.chunkBlocks));
   const i = plan.lots.findIndex((l) => l.gi === lot.gi && l.gj === lot.gj);
@@ -196,7 +212,8 @@ function doorKerb(h: BitHome, d: RoomDoor): number {
 
 /** A place to stand down the aisle behind a door. */
 function spotBehind(d: RoomDoor, rand: () => number): Waypoint {
-  const t = 3 + rand() * (d.depth - 3);
+  const t0 = d.inset + 1.5;
+  const t = t0 + rand() * Math.max(0, d.depth - t0);
   const side = (rand() - 0.5) * Math.max(0, d.width - 2.6);
   return { x: d.x - d.nx * t - d.nz * side, z: d.z - d.nz * t + d.nx * side };
 }
@@ -564,7 +581,7 @@ export class BitPopulation {
           let spot = spotBehind(d, p.rand);
           for (const q of people) {
             if (q === p || q.home !== h || q.place !== 'inside' || q.door !== d) continue;
-            const t = Math.max(3, Math.min(d.depth, (d.x - q.x) * d.nx + (d.z - q.z) * d.nz + (p.rand() < 0.5 ? 1.8 : -1.8)));
+            const t = Math.max(d.inset + 1.5, Math.min(d.depth, (d.x - q.x) * d.nx + (d.z - q.z) * d.nz + (p.rand() < 0.5 ? 1.8 : -1.8)));
             const side = (p.rand() - 0.5) * Math.max(0, d.width - 2.6);
             spot = { x: d.x - d.nx * t - d.nz * side, z: d.z - d.nz * t + d.nx * side };
             break;
