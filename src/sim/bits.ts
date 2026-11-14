@@ -182,6 +182,24 @@ interface Pool extends StoredLot {
   at: number;
 }
 
+/**
+ * Where lots' people come from and go to besides this population: the relay's world
+ * (src/net/NetClient.ts). Lots streaming in are asked for; lots this client holds are pushed
+ * back while in view and when they stream out; a Bit of a lot held elsewhere that dies here is
+ * reported. Answers come back through `receive` and `remoteDerez`.
+ */
+export interface PoolSource {
+  want(keys: number[]): void;
+  push(lot: StoredLot): void;
+  release(keys: number[]): void;
+  derez(key: number, slot: number): void;
+}
+
+/** How long a lot streaming in waits for the relay's answer before it goes on without (s). */
+const SOURCE_WAIT = 2.5;
+/** How often lots held here are pushed to the relay, and lots held elsewhere asked for again (s). */
+const SOURCE_EVERY = 30;
+
 export interface BitPopulationOptions {
   /** Births, ageing and energy (false: a fixed population, as before Bits evolved). */
   evolve: boolean;
@@ -324,6 +342,13 @@ export class BitPopulation {
   private manageAt = -Infinity;
   /** Two Bits who both said YES: their child appears when the second answer shows. */
   private readonly pendingBirths: Array<{ a: BitPerson; b: BitPerson; at: number }> = [];
+  /** The relay's world, when connected: lots held here, lots asked for (until when), lots answered. */
+  private source: PoolSource | null = null;
+  private readonly held = new Set<number>();
+  private readonly asked = new Map<number, number>();
+  private readonly answered = new Set<number>();
+  private sourceAt = 0;
+  private lastTime = 0;
 
   constructor(opts: Partial<BitPopulationOptions> = {}) {
     this.opts = { evolve: true, radius: BITS.radius, despawn: BITS.despawn, seed: 0, ...opts, evolution: { ...DEFAULT_EVOLUTION, ...opts.evolution } };
@@ -345,6 +370,62 @@ export class BitPopulation {
     this.talks = 0;
     this.entries = 0;
     this.exits = 0;
+  }
+
+  /**
+   * Join the relay's world (or leave it, null). Lots in view are asked for at once, so the relay
+   * hands over the ones nobody holds; lots streaming in from now on wait briefly for its answer.
+   */
+  attach(source: PoolSource | null): void {
+    this.source = source;
+    this.held.clear();
+    this.asked.clear();
+    this.answered.clear();
+    this.sourceAt = this.clock + SOURCE_EVERY;
+    if (source && this.homes.size) {
+      const keys = [...this.homes.keys()];
+      for (const k of keys) this.answered.add(k);
+      for (let i = 0; i < keys.length; i += 64) source.want(keys.slice(i, i + 64));
+    }
+  }
+
+  /** Is this population in the relay's world? And does it hold lot `key`? */
+  get linked(): boolean {
+    return this.source !== null;
+  }
+  holds(key: number): boolean {
+    return this.held.has(key);
+  }
+
+  /**
+   * The relay's answer for lot `key`: its people (null: none yet) and whether this client now
+   * holds it. A lot already in view keeps its own people (taking up the lease if granted); one
+   * not yet in view streams in from the relay's pool.
+   */
+  receive(key: number, lot: StoredLot | null, holder: boolean): void {
+    if (!this.source) return;
+    this.answered.add(key);
+    this.asked.delete(key);
+    if (holder) this.held.add(key);
+    else this.held.delete(key);
+    const h = this.homes.get(key);
+    if (h) {
+      if (holder) this.source.push(this.snapshot(h));
+      return;
+    }
+    if (lot) this.pools.set(key, { key: lot.key, births: lot.births, capacity: lot.capacity, people: lot.people, at: this.clock });
+    this.manageAt = -Infinity; // stream it in at the next step
+  }
+
+  /** A Bit of a lot held here was derezzed in another player's game. */
+  remoteDerez(key: number, slot: number): void {
+    const i = this.people.findIndex((p) => p.home.key === key && p.slot === slot && p.place !== 'follow');
+    if (i >= 0) this.derez(this.people[i], i, this.lastTime, 'blast');
+    else {
+      const pool = this.pools.get(key);
+      const j = pool ? pool.people.findIndex((p) => p.slot === slot) : -1;
+      if (pool && j >= 0) pool.people.splice(j, 1);
+    }
   }
 
   /** Forget every gene pool too: the world's Bits start again from their founders. */
@@ -413,9 +494,17 @@ export class BitPopulation {
     return { key: h.key, births: h.births, capacity: h.capacity, people };
   }
 
-  /** Keep a lot's people as its gene pool (it is streaming out). */
+  /** Keep a lot's people as its gene pool (it is streaming out); a lot held here goes back to the relay. */
   private store(h: BitHome): void {
-    this.pools.set(h.key, { ...this.snapshot(h), at: this.clock });
+    const snap = this.snapshot(h);
+    this.pools.set(h.key, { ...snap, at: this.clock });
+    if (this.source && this.held.has(h.key)) {
+      this.source.push(snap);
+      this.source.release([h.key]);
+    }
+    this.held.delete(h.key);
+    this.answered.delete(h.key);
+    this.asked.delete(h.key);
   }
 
   /** A new Bit on a home, placed on its kerb or (by its homebody share) indoors. */
@@ -560,6 +649,7 @@ export class BitPopulation {
     const gi0 = Math.floor((cx - GRID.x0) / P), gj0 = Math.floor((cz - GRID.z0) / P);
     const ring = Math.ceil(this.opts.radius / P) + 3; // a lot spans up to four blocks: reach its origin
     const seen = new Set<number>();
+    const ask: number[] = [];
     for (let dj = -ring; dj <= ring; dj++) for (let di = -ring; di <= ring; di++) {
       const gi = gi0 + di, gj = gj0 + dj;
       const lot = lotAt(gi, gj);
@@ -588,11 +678,21 @@ export class BitPopulation {
         }
         continue;
       }
+      if (this.source && !this.answered.has(key)) {
+        // In the relay's world: ask for the lot and wait (briefly) for its people.
+        const until = this.asked.get(key);
+        if (until === undefined) { this.asked.set(key, this.clock + SOURCE_WAIT); ask.push(key); continue; }
+        if (this.clock < until) continue;
+        this.asked.delete(key); // no answer in time: on with what we have, not holding it
+        this.answered.add(key);
+      }
       const h = this.home(gi, gj, lot);
       if (!h) continue;
       this.homes.set(key, h);
       this.populate(h, lot, time);
+      if (this.source && this.held.has(key)) this.source.push(this.snapshot(h)); // registers it (or brings it up to date)
     }
+    if (this.source) for (let i = 0; i < ask.length; i += 64) this.source.want(ask.slice(i, i + 64));
     for (const [key, h] of this.homes) {
       if (seen.has(key)) continue;
       const lx = Math.max(h.x0, Math.min(h.x1, cx)), lz = Math.max(h.z0, Math.min(h.z1, cz));
@@ -730,6 +830,8 @@ export class BitPopulation {
   derez(p: BitPerson, i: number, time: number, cause: DeathCause): void {
     if (this.people[i] !== p) i = this.people.indexOf(p);
     if (i < 0) return;
+    // Killed here on a lot someone else holds: tell the relay (natural deaths are the holder's business).
+    if (this.source && !this.held.has(p.home.key) && p.place !== 'follow' && (cause === 'run-over' || cause === 'blast' || cause === 'shot')) this.source.derez(p.home.key, p.slot);
     this.derezzed++;
     this.deaths[cause]++;
     this.derezEvents.push({ x: p.x, y: p.y, z: p.z, time, cause, color: BitPopulation.light(p) });
@@ -924,7 +1026,18 @@ export class BitPopulation {
   step(dt: number, time: number, centre: { x: number; z: number }, threats: readonly BitThreat[] = []): void {
     if (!this.enabled) return;
     this.clock += dt;
+    this.lastTime = time;
     const evolve = this.opts.evolve;
+    if (this.source && this.clock >= this.sourceAt) {
+      // Keep the relay up to date with the lots held here; ask again for the rest in view.
+      this.sourceAt = this.clock + SOURCE_EVERY;
+      const again: number[] = [];
+      for (const h of this.homes.values()) {
+        if (this.held.has(h.key)) this.source.push(this.snapshot(h));
+        else again.push(h.key);
+      }
+      for (let i = 0; i < again.length; i += 64) this.source.want(again.slice(i, i + 64));
+    }
     const lm = this.lastManage;
     if (!lm || time - this.manageAt > 1 || Math.hypot(centre.x - lm.x, centre.z - lm.z) > 40) {
       this.manage(centre.x, centre.z, time);

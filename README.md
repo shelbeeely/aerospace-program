@@ -405,9 +405,17 @@ spin, the same choices as your own Bit's style. YES is yellow and NO red for eve
   kerb and cross the street to a lot with room, so emptied lots fill again.
 - **Lots remember.** Founders are a pure function of the lot. After that a lot keeps its people
   when it streams out, and carries them forward for the time you were away when it comes back:
-  older, fewer or more, changed. Your browser keeps every lot's gene pool between sessions, so
-  the city goes on evolving from one visit to the next. A world reset keeps evolution; *Reset
-  evolution* in the K inspector's **Bits** tab forgets it.
+  older, fewer or more, changed. A world reset keeps evolution; *Reset evolution* in the K
+  inspector's **Bits** tab forgets it.
+- **The relay keeps the world.** Connected (every client joins the Grid relay on load), the
+  Bits' world lives on the relay for as long as it runs (`server/world.ts`): every lot anyone
+  has seen, carried forward every 10 s while nobody is near it, with the same genetics. The
+  first game into a district holds its lots: it simulates their Bits in full and sends them back
+  every 30 s and when it leaves; other players there see the same people, and a Bit they run
+  over leaves the holder's game too. Offline, the Bits evolve in your game alone. Either way your
+  browser keeps every lot's gene pool between sessions, and offers them to a relay that has lost
+  its memory (a free Render instance does, when it sleeps or redeploys), so the world reseeds
+  from what players saw. An always-on world needs Render's `starter` plan (`render.yaml`).
 - **Watch it.** The K inspector's **Bits** tab charts the Bits around you: how many, how many
   generations deep, births and deaths by cause, each gene's mean over time, and the share of
   each look. In the Digital World Explorer (`explore.html`, **Evo**, or `?view=evo`) the
@@ -994,7 +1002,7 @@ and keeps trying for about a minute.
 ```bash
 npm run server          # bun server/index.ts, ws://localhost:8787 (PORT=… to change)
 npm run dev             # joins the deployed relay; add ?server=ws://localhost:8787 for yours
-npm run test:server     # bun test server: two clients join, relay, isolation, size limits, overflow
+npm run test:server     # bun test server: two clients join, relay, isolation, size limits, overflow, the world
 ```
 
 - **Invite:** COPY INVITE gives `…/?mode=fly&room=CODE&server=…`; opening that link joins
@@ -1003,6 +1011,9 @@ npm run test:server     # bun test server: two clients join, relay, isolation, s
   CraftDef and interpolated 100 ms behind; their jetwalls, ribbons and contrails (in their
   colour); structure fractures (by structure name, so everyone sees the same tower fall);
   explosions; derezzes; chat. Remote jetwalls near you are solid: ride into one and you derez.
+  And the Bits' world, across every room (see *Bits evolve*): the relay keeps each lot's gene
+  pool and lives the lots nobody is near; `GET /health` reports its lots, births and deepest
+  generation.
 - **Not shared:** the weather, the town's loose blocks and rubble physics (each client simulates
   its own collapse from the same fracture), and craft-to-craft collisions.
 - **Deploy the relay on Render** (free, TLS included): Render dashboard → **New → Blueprint** →
@@ -1015,7 +1026,7 @@ npm run test:server     # bun test server: two clients join, relay, isolation, s
   wins). Free instances sleep after 15 idle minutes (the first
   player waits about a minute; sleeping drops open rooms); the `starter` plan stays up.
   Locally: `docker build -f server/Dockerfile -t grid-relay . && docker run -p 8787:8787 -e PORT=8787 grid-relay`.
-- **Server:** `GET /health` reports rooms and players. Messages are shape-checked, size-capped
+- **Server:** `GET /health` reports rooms, players and the world. Messages are shape-checked, size-capped
   (32 KB, 256 KB for a craft) and rate-limited; silent players are dropped after 20 s.
   Protocol: `src/net/protocol.ts` (versioned; client and server share it). Room logic:
   `server/rooms.ts`. Client: `src/net/NetClient.ts`, `src/render/RemoteCraftView.ts`,

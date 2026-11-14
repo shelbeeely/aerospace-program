@@ -12,5 +12,5 @@
     "verbatimModuleSyntax": true,
     "types": []
   },
-  "include": ["*.ts", "../src/net/protocol.ts"]
+  "include": ["*.ts", "../src/net/protocol.ts", "../src/sim/evolution.ts", "../src/people/genome.ts", "../src/people/bitStyle.ts"]
 }

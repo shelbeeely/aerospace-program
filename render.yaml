@@ -9,7 +9,8 @@ services:
     dockerfilePath: ./server/Dockerfile
     dockerContext: .
     # Free instances sleep after 15 minutes without traffic (the first player waits ~1 minute
-    # while it wakes, and sleeping drops open rooms). Use "starter" for an always-on relay.
+    # while it wakes; sleeping drops open rooms and the Bits' world, which players' saved pools
+    # then reseed). Use "starter" for an always-on relay whose world never stops.
     plan: free
     region: oregon
     branch: main
@@ -19,6 +20,9 @@ services:
       paths:
         - server/**
         - src/net/protocol.ts
+        - src/sim/evolution.ts
+        - src/people/genome.ts
+        - src/people/bitStyle.ts
     envVars:
       - key: NODE_ENV
         value: production

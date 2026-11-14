@@ -8,8 +8,17 @@
  * Flow: the client opens ws://host:port/ws and sends `hello` (room '' = create a new room). The
  * server answers `welcome` with a snapshot of everyone in the room (name, colour, CraftDef, last
  * state), then relays each player's `state` (20 Hz), `craft` changes and `event`s to the rest of
- * the room. `join` / `leave` announce roster changes. Nothing is stored: no accounts, no
- * persistence, the room disappears with its last player.
+ * the room. `join` / `leave` announce roster changes. No accounts; a room disappears with its
+ * last player.
+ *
+ * The world (additive, no version bump): a relay that keeps the Bits' world says so in its
+ * `welcome` (`world`). A client streaming a lot in asks for it (`lot-want`) and gets the lot's
+ * gene pool, or none yet, and whether it now holds the lot (`lot`). The holder simulates the
+ * lot's Bits and sends the pool back (`lot-push`) while it is in view and when it lets go
+ * (`lot-release`); a Bit another client derezzes is reported (`lot-derez`) and passed on to the
+ * holder. A client offers its own saved pools (`lot-offer`) so a restarted relay reseeds. Lots
+ * nobody holds are carried forward by the relay itself. Pools are `encodePools` bytes in base64
+ * (src/sim/evolution.ts); the relay decodes and range-checks them.
  */
 import type { CraftDef } from '../craft/types.ts';
 
@@ -26,6 +35,11 @@ export const STATE_HZ = 20;
 export const MAX_CRAFT_BYTES = 256 * 1024;
 /** Largest state / event / chat message. */
 export const MAX_MESSAGE_BYTES = 32 * 1024;
+/** Most lots named in one lot-want / lot-release, and carried in one lot-offer. */
+export const MAX_LOT_KEYS = 64;
+export const MAX_OFFER_LOTS = 24;
+/** Largest lot key (blocks round the planet, squared, with room to spare). */
+export const MAX_LOT_KEY = 2 ** 31 - 1;
 export const MAX_NAME = 24;
 export const MAX_CHAT = 280;
 /** Trail limits per state message. */
@@ -104,10 +118,30 @@ export type ClientMessage =
   | { t: 'state'; s: NetState }
   | { t: 'craft'; craft: CraftDef }
   | { t: 'event'; e: NetEvent }
-  | { t: 'ping' };
+  | { t: 'ping' }
+  /** The world: lots streaming in (and lots in view this client does not hold yet). */
+  | { t: 'lot-want'; keys: number[] }
+  /** The holder's lot as it is now (one lot, base64 encodePools). */
+  | { t: 'lot-push'; key: number; pool: string }
+  | { t: 'lot-release'; keys: number[] }
+  /** A Bit of a lot this client does not hold was derezzed here. */
+  | { t: 'lot-derez'; key: number; slot: number }
+  /** Saved pools for a relay that lacks them (several lots, base64), each away so many seconds. */
+  | { t: 'lot-offer'; pool: string; away: number[] };
+
+/** What a world-keeping relay says about its world in `welcome`. */
+export interface WorldInfo {
+  /** How long the relay has been running (s), and how many lots it keeps. */
+  uptime: number;
+  lots: number;
+}
 
 export type ServerMessage =
-  | { t: 'welcome'; v: number; id: string; room: string; players: PlayerInfo[] }
+  | { t: 'welcome'; v: number; id: string; room: string; players: PlayerInfo[]; world?: WorldInfo }
+  /** A lot asked for: its pool (null: the relay has none yet), and whether the asker now holds it. */
+  | { t: 'lot'; key: number; pool: string | null; holder: boolean }
+  /** One of your lot's Bits was derezzed in another player's game. */
+  | { t: 'lot-derez'; key: number; slot: number }
   | { t: 'join'; player: PlayerInfo }
   | { t: 'leave'; id: string; reason: string }
   | { t: 'state'; id: string; s: NetState }
@@ -153,6 +187,10 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 const isNum = (v: unknown, lim = 1e7): v is number => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= lim;
 const isNumArr = (v: unknown, n: number, lim = 1e7) => Array.isArray(v) && v.length === n && v.every((x) => isNum(x, lim));
 const isColor = (v: unknown): v is string => typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v);
+
+const isKey = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= MAX_LOT_KEY;
+const isKeyList = (v: unknown, max: number): v is number[] => Array.isArray(v) && v.length > 0 && v.length <= max && v.every(isKey);
+const isPool = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= MAX_MESSAGE_BYTES && /^[A-Za-z0-9+/=]+$/.test(v);
 
 export function sanitizeName(v: unknown): string {
   const s = typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, MAX_NAME) : '';
@@ -238,6 +276,16 @@ export function parseClientMessage(raw: string, bytes = raw.length): ClientMessa
       return validEvent(m.e) ? { t: 'event', e: m.e } : bad('invalid event');
     case 'ping':
       return { t: 'ping' };
+    case 'lot-want':
+    case 'lot-release':
+      return isKeyList(m.keys, MAX_LOT_KEYS) ? { t: m.t, keys: m.keys } : bad('keys must be up to 64 lot keys');
+    case 'lot-push':
+      return isKey(m.key) && isPool(m.pool) ? { t: 'lot-push', key: m.key, pool: m.pool } : bad('invalid lot push');
+    case 'lot-derez':
+      return isKey(m.key) && isKey(m.slot) ? { t: 'lot-derez', key: m.key, slot: m.slot } : bad('invalid lot derez');
+    case 'lot-offer':
+      return isPool(m.pool) && Array.isArray(m.away) && m.away.length <= MAX_OFFER_LOTS && m.away.every((a) => isNum(a, 1e9) && a >= 0)
+        ? { t: 'lot-offer', pool: m.pool, away: m.away } : bad('invalid lot offer');
     default:
       return bad('unknown message type');
   }

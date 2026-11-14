@@ -355,8 +355,10 @@ universe, not a conventional open world decorated with neon.
   reads an existing one, and keeps `scripts/evolution.ts` passing. The Evolution Lab
   (`src/sim/evolutionLab.ts`, the explorer's Evo view) runs one district fast under kerb
   traffic, blasts and scarcity; the K inspector's Bits tab charts the game's own streets.
-  The browser keeps the gene pools between sessions (`src/app/bitPools.ts`). Check:
-  `npm run evolution`.
+  The browser keeps the gene pools between sessions (`src/app/bitPools.ts`), and the relay
+  keeps the shared world while it runs (`server/world.ts`: one holder per lot, lots nobody holds
+  carried forward with the same `advancePool`); the evolution core stays free of the world, the
+  DOM and three.js so the relay can run it. Checks: `npm run evolution`, `npm run test:server`.
 - The figures are the imported "BIT" meshes (CC-BY 4.0, credited in the README). Do not
   replace them with humanoids.
 - Check: `npm run bit`.

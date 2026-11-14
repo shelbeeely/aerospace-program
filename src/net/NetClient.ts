@@ -8,6 +8,8 @@ import { TrailView } from '../render/TrailView.ts';
 import { PLANET } from '../sim/layout.ts';
 import type { Simulation } from '../sim/Simulation.ts';
 import { DEREZ_TIME, type Trail, type TrailMode, type TrailPoint, type TrailSystem } from '../sim/trails.ts';
+import { decodePools, encodePools, fromBase64, toBase64, type StoredLot } from '../sim/evolution.ts';
+import type { PoolSource } from '../sim/bits.ts';
 import {
   MAX_TRAIL_POINTS, PROTOCOL_VERSION, STATE_HZ, isWorldRoom, normalizeRoom, r2, r4, splitGroupName, validCraftShape, validEvent, validState,
   type ClientMessage, type NetEvent, type NetState, type NetTrail, type NetTrailPoint, type PlayerInfo, type ServerMessage, asTeam, type NetTeam, HIT_KINDS,
@@ -29,6 +31,11 @@ import {
  *
  * Positions are flat-world coordinates; the planet wraps, so every remote position is shown at
  * its image nearest the local craft. Not connected = single player, untouched.
+ *
+ * The Bits' world: when the relay keeps one (its welcome says so), the local Bit population
+ * joins it (`BitPopulation.attach`): lots streaming in come from the relay, lots this game holds
+ * go back to it, and the gene pools this browser saved are offered so a restarted relay
+ * reseeds. Without it, the Bits evolve locally as before.
  */
 export type NetStatus = 'offline' | 'connecting' | 'connected' | 'error';
 
@@ -130,6 +137,16 @@ export class NetClient {
   private readonly scanner = new ShotScanner();
   private wasExploded = false;
   private readonly blastsSent = new Set<object>();
+
+  /** The relay keeps the Bits' world, and this game is part of it. */
+  worldLinked = false;
+  private offerTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly poolLink: PoolSource = {
+    want: (keys) => this.send({ t: 'lot-want', keys }),
+    push: (lot) => this.send({ t: 'lot-push', key: lot.key, pool: toBase64(encodePools([lot])) }),
+    release: (keys) => this.send({ t: 'lot-release', keys }),
+    derez: (key, slot) => this.send({ t: 'lot-derez', key, slot }),
+  };
 
   private ws: WebSocket | null = null;
   private opts: ConnectOptions | null = null;
@@ -307,6 +324,16 @@ export class NetClient {
         this.spawnGraceUntil = performance.now() + SPAWN_GRACE_MS; // we may be sitting in someone's wall
         for (const p of m.players) this.addPlayer(p);
         this.setStatus('connected', `Room ${m.room} · ${m.players.length + 1} on the Grid`);
+        if (m.world) this.linkWorld();
+        break;
+      case 'lot': {
+        const bytes = m.pool ? fromBase64(m.pool) : null;
+        const lots = bytes ? decodePools(bytes) : null;
+        this.game.sim.bits.receive(m.key, lots && lots.length === 1 && lots[0].key === m.key ? lots[0] : null, m.holder);
+        break;
+      }
+      case 'lot-derez':
+        this.game.sim.bits.remoteDerez(m.key, m.slot);
         break;
       case 'join':
         this.addPlayer(m.player);
@@ -398,6 +425,39 @@ export class NetClient {
     for (const p of [...this.players.values()]) this.removePlayer(p);
     this.pendingFractures.length = 0;
     this.selfId = '';
+    this.unlinkWorld();
+  }
+
+  /** Join the relay's world: the Bits stream in from it, and this browser's saved pools are offered to it. */
+  private linkWorld(): void {
+    this.worldLinked = true;
+    const bits = this.game.sim.bits;
+    bits.attach(this.poolLink);
+    // Offer what this browser remembers, a few lots at a time (the relay keeps only those it lacks).
+    const saved = bits.exportPools().filter((l) => l.people.length > 0);
+    const next = () => {
+      this.offerTimer = null;
+      if (!this.worldLinked || !saved.length) return;
+      const chunk: Array<StoredLot & { away: number }> = [];
+      let bytes = 1;
+      while (saved.length && chunk.length < 24 && bytes + 10 + saved[0].people.length * 30 < 20_000) {
+        const l = saved.shift()!;
+        bytes += 10 + l.people.length * 30;
+        chunk.push(l);
+      }
+      if (!chunk.length) chunk.push(saved.shift()!);
+      this.send({ t: 'lot-offer', pool: toBase64(encodePools(chunk)), away: chunk.map((l) => Math.round(l.away)) });
+      this.offerTimer = setTimeout(next, 600);
+    };
+    this.offerTimer = setTimeout(next, 1500);
+  }
+
+  private unlinkWorld(): void {
+    if (this.offerTimer) clearTimeout(this.offerTimer);
+    this.offerTimer = null;
+    if (!this.worldLinked) return;
+    this.worldLinked = false;
+    this.game.sim.bits.attach(null);
   }
 
   private applyState(p: RemotePlayer, s: NetState): void {

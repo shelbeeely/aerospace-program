@@ -13,6 +13,9 @@
  * 4. The lab is deterministic for a seed, and selection works: kerb traffic breeds timid Bits
  *    and scarcity slow ones, against a control (four seeds each).
  * 5. YES stays yellow and NO red for every Bit, whatever its look.
+ * 6. The relay's world (server/world.ts), with two games joined to it in-process: lots stream
+ *    in from the relay, the holder's lots go back to it, lots nobody holds live on there, and a
+ *    Bit killed in the other game leaves the holder's.
  */
 import { BIT_LOOK } from '../src/people/bit.ts';
 import { BIT_STYLE_CHOICES, styledState } from '../src/people/bitStyle.ts';
@@ -20,6 +23,8 @@ import { crossover, express, founderGenome, GENES, midGenome, mutate, sanitizeGe
 import { BITS, BitPopulation, roomPlaces, type BitPerson } from '../src/sim/bits.ts';
 import { advancePool, CHILD_SLOT, decodePools, encodePools, EVOLUTION, fromBase64, isGrown, toBase64, type StoredLot } from '../src/sim/evolution.ts';
 import { EvolutionLab } from '../src/sim/evolutionLab.ts';
+import { World } from '../server/world.ts';
+import type { PoolSource } from '../src/sim/bits.ts';
 import { districtPlan } from '../src/arch/DistrictGenerator.ts';
 import { GRID } from '../src/arch/grid.ts';
 
@@ -195,6 +200,52 @@ console.log('\n--- the lab');
   check(control.every((r) => r.last.maxGen > 40), 'over 3 h of lab time Bits go through many generations', `${control.map((r) => r.last.maxGen).join(' ')} deep`);
   check(boldT < boldC - 0.1, 'kerb traffic breeds timid Bits', `boldness ${f2(boldT)} under traffic vs ${f2(boldC)} control (${traffic.map((r) => f2(r.last.mean.boldness)).join(' ')} vs ${control.map((r) => f2(r.last.mean.boldness)).join(' ')})`);
   check(paceS < paceC - 0.08, 'scarcity breeds slow walkers', `pace ${f2(paceS)} scarce vs ${f2(paceC)} control (${scarce.map((r) => f2(r.last.mean.pace)).join(' ')} vs ${control.map((r) => f2(r.last.mean.pace)).join(' ')})`);
+}
+
+console.log("\n--- the relay's world");
+{
+  let now = 0;
+  const world = new World({ now: () => now });
+  // Two games, joined to the relay in-process (the messages a NetClient would carry, carried at once).
+  const join = (id: string, pop: BitPopulation): PoolSource => ({
+    want: (keys) => { for (const r of world.want(id, keys)) pop.receive(r.key, r.pool ? decodePools(fromBase64(r.pool)!)![0] : null, r.holder); },
+    push: (lot) => { if (!world.push(id, lot.key, toBase64(encodePools([lot])))) pop.receive(lot.key, null, false); },
+    release: (keys) => world.release(id, keys),
+    derez: (key, slot) => { const h = world.derez(id, key, slot); if (h === 'b') b.remoteDerez(key, slot); if (h === 'a') a.remoteDerez(key, slot); },
+  });
+  const a = new BitPopulation(), b = new BitPopulation();
+  a.attach(join('a', a));
+  b.attach(join('b', b));
+  let t = 0;
+  const run = (pop: BitPopulation, at: { x: number; z: number }, seconds: number) => { for (let i = 0; i < seconds * 5; i++) { t += 0.2; now += 200; pop.step(0.2, t, at); } };
+  run(a, C0, 120);
+  const heldA = [...a.homes.keys()].filter((k) => a.holds(k));
+  check(a.people.length > 20 && heldA.length === a.homes.size && world.lots.size === a.homes.size, 'the first game into a district holds its lots and registers them with the relay', `${heldA.length} lots, ${a.people.length} Bits`);
+  // b arrives: it sees a's lots but does not hold them.
+  run(b, C0, 10);
+  check(b.homes.size > 0 && [...b.homes.keys()].every((k) => !b.holds(k)), 'a second game there draws the lots but does not hold them');
+  const sameKeys = [...b.homes.keys()].filter((k) => a.homes.has(k));
+  const slotsA = new Set(a.people.filter((p) => sameKeys.includes(p.home.key)).map((p) => `${p.home.key}:${p.slot}`));
+  const shared = b.people.filter((p) => slotsA.has(`${p.home.key}:${p.slot}`)).length;
+  check(shared > b.people.length * 0.6, 'it streams in the same people the holder has', `${shared} of ${b.people.length}`);
+  // b runs one of a's Bits over (a blast): it leaves a's game too.
+  const victim = b.people.find((p) => a.people.some((q) => q.home.key === p.home.key && q.slot === p.slot && q.place !== 'follow'))!;
+  const key = victim.home.key, slot = victim.slot;
+  b.strike(victim.x, victim.y, victim.z, 0.1, t);
+  check(!a.people.some((q) => q.home.key === key && q.slot === slot), 'a Bit killed in the other game leaves the holder\'s');
+  // Both leave; an hour passes on the relay alone.
+  const far = { x: C0.x + 6000, z: C0.z };
+  run(a, far, 1);
+  run(b, far, 1);
+  const before = world.stats();
+  for (let i = 0; i < 360; i++) { now += 10_000; world.tick(); }
+  const after = world.stats();
+  check(after.held === 0 && after.births > before.births && after.maxGen > before.maxGen, 'lots nobody is near live on in the relay', `births ${before.births} → ${after.births}, deepest generation ${before.maxGen} → ${after.maxGen}`);
+  // b comes back: it finds the relay's people, not its own memory of them.
+  run(b, C0, 5);
+  const fromRelay = [...b.homes.keys()].filter((k) => world.lots.has(k));
+  const gens = Math.max(...b.people.map((p) => p.gen));
+  check(fromRelay.length > 0 && gens >= after.maxGen - 2 && fromRelay.every((k) => b.holds(k)), 'coming back, a game finds the lots as the relay kept them, and holds them now', `deepest generation in view ${gens}`);
 }
 
 console.log('\n--- what a Bit says');

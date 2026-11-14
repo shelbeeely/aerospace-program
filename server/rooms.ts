@@ -10,13 +10,15 @@
  *   room hears `join`. States, craft changes and events are relayed to the room's topic
  *   (everyone but the sender). Messages are shape-checked and size-capped (src/net/protocol.ts)
  *   and rate-limited per player; players that go quiet are dropped.
- * - Nothing persists: no accounts, no storage.
+ * - No accounts. The Bits' world (server/world.ts), when the relay keeps one, is shared by every
+ *   room: `lot-*` messages go there, and the welcome says the world is kept.
  */
 import {
   MAX_PLAYERS, PROTOCOL_VERSION, WORLD_ROOM, asTeam, isRoomCode, parseClientMessage, randomRoomCode, worldOverflowRooms,
   type ClientMessage, type NetTeam, type ErrorCode, type NetState, type PlayerInfo, type ServerMessage,
 } from '../src/net/protocol.ts';
 import type { CraftDef } from '../src/craft/types.ts';
+import type { World } from './world.ts';
 
 /** The bits of a Bun ServerWebSocket the lobby uses. */
 export interface Peer {
@@ -57,7 +59,7 @@ export interface Session {
   lastSeen: number;
   strikes: number;
   lastErrorAt: number;
-  limits: Record<'all' | 'state' | 'event' | 'chat' | 'craft', RateLimiter>;
+  limits: Record<'all' | 'state' | 'event' | 'chat' | 'craft' | 'lots', RateLimiter>;
 }
 
 export interface LobbyOptions {
@@ -67,6 +69,8 @@ export interface LobbyOptions {
   /** Publish to every subscriber of a topic (Bun: server.publish). */
   broadcast: (topic: string, data: string) => void;
   log?: (msg: string) => void;
+  /** The Bits' world this relay keeps (absent: a plain relay). */
+  world?: World;
 }
 
 const topic = (room: string) => `room:${room}`;
@@ -76,6 +80,7 @@ const MAX_STRIKES = 200;
 export class Lobby {
   readonly rooms = new Map<string, Set<Session>>();
   private readonly sessions = new Set<Session>();
+  private readonly byId = new Map<string, Session>();
   private readonly now: () => number;
   private readonly idleMs: number;
   private nextId = 1;
@@ -102,9 +107,12 @@ export class Lobby {
         event: new RateLimiter(20, 60, now),
         chat: new RateLimiter(1, 5, now),
         craft: new RateLimiter(2, 5, now),
+        // Streaming a district in asks for a few dozen lots at once; offers trickle in after.
+        lots: new RateLimiter(20, 120, now),
       },
     };
     this.sessions.add(s);
+    this.byId.set(s.id, s);
     return s;
   }
 
@@ -117,11 +125,41 @@ export class Lobby {
     if (m.t === 'ping') return this.send(s, { t: 'pong' });
     if (m.t === 'hello') return this.join(s, m);
     if (!s.room) return this.error(s, 'not-joined', 'send hello first', now, true);
+    if (m.t === 'lot-want' || m.t === 'lot-push' || m.t === 'lot-release' || m.t === 'lot-derez' || m.t === 'lot-offer') return this.worldMessage(s, m, now);
     this.relay(s, m, now);
+  }
+
+  /** The Bits' world: lots asked for, pushed, let go, derezzed elsewhere, offered. */
+  private worldMessage(s: Session, m: Extract<ClientMessage, { t: 'lot-want' | 'lot-push' | 'lot-release' | 'lot-derez' | 'lot-offer' }>, now: number): void {
+    const w = this.opts.world;
+    if (!w) return;
+    if (!s.limits.lots.take(now)) return this.limited(s, now);
+    switch (m.t) {
+      case 'lot-want':
+        for (const r of w.want(s.id, m.keys)) this.send(s, { t: 'lot', key: r.key, pool: r.pool, holder: r.holder });
+        return;
+      case 'lot-push':
+        if (!w.push(s.id, m.key, m.pool)) this.send(s, { t: 'lot', key: m.key, pool: null, holder: false });
+        return;
+      case 'lot-release':
+        w.release(s.id, m.keys);
+        return;
+      case 'lot-derez': {
+        const holder = w.derez(s.id, m.key, m.slot);
+        const to = holder ? this.byId.get(holder) : undefined;
+        if (to) this.send(to, { t: 'lot-derez', key: m.key, slot: m.slot });
+        return;
+      }
+      case 'lot-offer':
+        w.offer(m.pool, m.away);
+        return;
+    }
   }
 
   disconnect(s: Session, reason = 'left'): void {
     if (!this.sessions.delete(s)) return;
+    this.byId.delete(s.id);
+    this.opts.world?.drop(s.id);
     const room = s.room;
     if (!room) return;
     s.room = null;
@@ -171,7 +209,8 @@ export class Lobby {
     s.team = asTeam(m.team);
     s.craft = m.craft;
     s.room = code;
-    this.send(s, { t: 'welcome', v: PROTOCOL_VERSION, id: s.id, room: code, players: [...members].map(info) });
+    const world = this.opts.world;
+    this.send(s, { t: 'welcome', v: PROTOCOL_VERSION, id: s.id, room: code, players: [...members].map(info), ...(world ? { world: { uptime: Math.round(world.uptime), lots: world.lots.size } } : {}) });
     members.add(s);
     // Subscribe first, then announce: Bun 1.2 (the relay's image) only publishes from a socket
     // that is subscribed to the topic, so announcing first never reached the room. publish()
@@ -181,7 +220,7 @@ export class Lobby {
     this.opts.log?.(`${s.name} (${s.id}) joined ${code} (${members.size}/${MAX_PLAYERS})`);
   }
 
-  private relay(s: Session, m: Exclude<ClientMessage, { t: 'hello' } | { t: 'ping' }>, now: number): void {
+  private relay(s: Session, m: Extract<ClientMessage, { t: 'state' | 'craft' | 'team' | 'event' }>, now: number): void {
     const room = topic(s.room!);
     let out: ServerMessage;
     if (m.t === 'state') {
