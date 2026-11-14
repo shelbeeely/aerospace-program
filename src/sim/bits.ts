@@ -28,8 +28,8 @@ export const BITS = {
   radius: 420,
   despawn: 500,
   /** People per block: 0..perBlock, fewer away from a downtown hub. */
-  perBlock: 6,
-  max: 220,
+  perBlock: 9,
+  max: 340,
   /** The kerb line: this far outside the block's edge (m), on the margin of the street. */
   kerb: 0.8,
   /** Walking pace range (m/s). */

@@ -12,8 +12,9 @@ import { Ocean } from './ocean.ts';
 import { CITY, COAST, isSea, LAYOUT, PLANET } from './layout.ts';
 import { terrainHeight } from './terrain.ts';
 import { BIT, BIT_LOOK } from '../people/bit.ts';
-import { RoadDamage } from './roadDamage.ts';
+import { RoadDamage, type RoadClosure } from './roadDamage.ts';
 import { Errands } from './errands.ts';
+import { programLight, Programs, PROGRAMS, PROGRAM_KINDS } from './programs.ts';
 import { BitPopulation, BitWalker, ON_FOOT, type BitThreat, type WalkInput } from './bits.ts';
 import { TrailSystem } from './trails.ts';
 import { TrailEmitter } from '../modules/TrailEmitter.ts';
@@ -115,7 +116,15 @@ export class Simulation {
   readonly craters: Array<{ x: number; y: number; z: number; radius: number; time: number; color: string }> = [];
   /** Roads broken by craters: slab fields, barriers and closed segments (src/sim/roadDamage.ts). */
   readonly roadDamage = new RoadDamage();
-  private roadRubble: RAPIER.RigidBody | null = null;
+  /** The rubble of each broken road (one fixed body per closure, so a mended road loses its slabs). */
+  private readonly roadRubble = new Map<RoadClosure, RAPIER.RigidBody>();
+  /** A broken road mended (by Amber tenders): its slabs go and the stretch opens again. */
+  mendRoad(c: RoadClosure): void {
+    if (!this.roadDamage.repair(c)) return;
+    const body = this.roadRubble.get(c);
+    if (body) { this.world.removeRigidBody(body); this.roadRubble.delete(c); }
+  }
+
   /** Scar the ground at (x, z) if the blast at height y is close enough to it. */
   crater(x: number, y: number, z: number, blast: number, color: string): void {
     const gy = isSea(x) ? null : terrainHeight(x, z);
@@ -125,9 +134,10 @@ export class Simulation {
     // A crater big enough breaks the road it is on: slabs across it, and the stretch closes.
     const closure = this.roadDamage.add(x, gy, z, radius);
     if (closure) {
-      this.roadRubble ??= this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+      const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+      this.roadRubble.set(closure, body);
       for (const s of closure.slabs) {
-        this.world.createCollider(RAPIER.ColliderDesc.cuboid(s.sx / 2, s.sy / 2, s.sz / 2).setTranslation(s.x, s.y, s.z).setFriction(0.9).setRestitution(0.05), this.roadRubble);
+        this.world.createCollider(RAPIER.ColliderDesc.cuboid(s.sx / 2, s.sy / 2, s.sz / 2).setTranslation(s.x, s.y, s.z).setFriction(0.9).setRestitution(0.05), body);
       }
     }
     if (this.craters.length > 256) this.craters.splice(0, this.craters.length - 256);
@@ -457,6 +467,27 @@ export class Simulation {
 
   /** Errands on foot: courier deliveries and escorts between the buildings' rooms. */
   readonly errands = new Errands();
+  /** The working programs of the streets, one kind per side (src/sim/programs.ts). */
+  readonly programs = new Programs();
+  /** Places that just blew up, for the scavengers (the craters, newest last). */
+  private readonly programSites: Array<{ x: number; z: number; time: number }> = [];
+
+  /**
+   * YES beside a broker: every hired mercenary's contract runs on for another couple of minutes,
+   * for a fee. Returns the word for the player.
+   */
+  private renewContracts(broker: { answer: 'yes' | 'no' | null }): string {
+    const B = PROGRAMS.broker;
+    const mercs = this.airTraffic.mercs();
+    if (!mercs.length) { broker.answer = 'no'; return "Broker: no contracts to renew (hire a mercenary in the ' panel first)"; }
+    if (this.credits < B.price) { broker.answer = 'no'; return `Broker: renewing costs ${B.price} credits`; }
+    this.credits -= B.price;
+    for (const f of mercs) f.mercUntil += B.renew;
+    broker.answer = 'yes';
+    const text = `Broker: ${mercs.length} contract${mercs.length > 1 ? 's' : ''} renewed for ${B.renew / 60} minutes (−${B.price} credits)`;
+    this.notice(text);
+    return text;
+  }
 
   /**
    * The player on foot says YES or NO: the Bits in earshot answer, and it may take up (YES beside
@@ -467,6 +498,8 @@ export class Simulation {
     if (!w.active || w.downAt !== null || !w.say(answer, this.time)) return null;
     const word = this.errands.say(answer, w, this.bits, this.time);
     this.bits.hear(w.x, w.z, this.time);
+    const broker = this.programs.hear(w.x, w.z, answer, this.team, this.time);
+    if (broker && answer === 'yes' && !word) return this.renewContracts(broker);
     return word;
   }
 
@@ -574,6 +607,7 @@ export class Simulation {
     }
     // People: inside the fireball they derez, the player on foot too.
     this.bits.strike(x, y, z, F, this.time);
+    this.programs.strike(x, y, z, F, this.time);
     if (this.walker.active && this.walker.downAt === null && Math.hypot(wrapDelta(x, this.walker.x), this.walker.y - y, wrapDelta(z, this.walker.z)) < F) this.walker.downAt = this.time;
     this.blasts.push({ kind: 'nuke', x, y, z, time: this.time, remote: !local });
     if (this.blasts.length > 16) this.blasts.splice(0, this.blasts.length - 16);
@@ -1148,7 +1182,9 @@ export class Simulation {
     this.explosions.length = 0;
     this.craters.length = 0;
     this.roadDamage.reset();
-    if (this.roadRubble) { this.world.removeRigidBody(this.roadRubble); this.roadRubble = null; }
+    for (const body of this.roadRubble.values()) this.world.removeRigidBody(body);
+    this.roadRubble.clear();
+    this.programs.reset();
     this.booms.length = 0;
     this.boomDamage = 0;
     this.lightning.reset(this.atmosphere.settings.seed);
@@ -1304,6 +1340,7 @@ export class Simulation {
     const w = this.walker;
     const strike = (x: number, y: number, z: number, r: number) => {
       this.bits.strike(x, y, z, r, this.time);
+      this.programs.strike(x, y, z, r, this.time);
       if (w.active && w.downAt === null && (w.x - x) ** 2 + (w.y + BIT.hover - y) ** 2 + (w.z - z) ** 2 < r * r) {
         w.downAt = this.time;
         this.chips.emit({ x: w.x, y: w.y + BIT.hover, z: w.z, radius: 0.6, vx: 0, vy: 2, vz: 0, speed: 6, count: 26, size: 0.14, color: BIT_LOOK.idle1.color });
@@ -1327,6 +1364,41 @@ export class Simulation {
       this.chips.emit({ x: d.x, y: d.y, z: d.z, radius: 0.6, vx: th.vx * 0.5, vy: 2, vz: th.vz * 0.5, speed: 6, count: 26, size: 0.14, color: BIT_LOOK.idle1.color });
     }
     this.bits.derezEvents.length = 0;
+    // The programs walk at the same rate; tenders mend roads, sentinels guard theirs.
+    if (this.bitTick % 4 === 0) {
+      const sites = this.programSites;
+      sites.length = 0;
+      for (let i = this.craters.length - 1; i >= 0 && sites.length < 12; i--) {
+        const c = this.craters[i];
+        if (this.time - c.time > PROGRAMS.scavenger.fresh) break;
+        sites.push({ x: c.x, z: c.z, time: c.time });
+      }
+      const territory = this.groundTurrets.territory;
+      const { shotPlayer } = this.programs.step(this.dt * 4, this.time, this.playerPoint, {
+        owner: (x, z) => territory.ownerAt(x, z),
+        closed: this.roadDamage.closed,
+        closures: this.roadDamage.closures,
+        repair: (c) => this.mendRoad(c),
+        sites,
+        walker: w,
+        team: this.team,
+        hostile: () => this.hostileToPlayer(1),
+        threats: this.exploded ? [] : [th],
+      });
+      if (shotPlayer && w.active && w.downAt === null) {
+        w.downAt = this.time;
+        this.chips.emit({ x: w.x, y: w.y + BIT.hover, z: w.z, radius: 0.6, vx: 0, vy: 2, vz: 0, speed: 6, count: 26, size: 0.14, color: BIT_LOOK.idle1.color });
+        this.notice('A Red Sentinel patrol derezzed you');
+      }
+      for (const d of this.programs.derezEvents) {
+        this.chips.emit({ x: d.x, y: d.y, z: d.z, radius: 0.9, vx: th.vx * 0.5, vy: 2, vz: th.vz * 0.5, speed: 6, count: 30, size: 0.16, color: programLight(d.side) });
+        if (!d.byPlayer || d.side === 'merc') continue;
+        // Another side's program run down: pay if they fight you, an incident if at peace.
+        if (this.hostileToPlayer(d.side)) { if (d.side !== this.team) this.earn(PROGRAMS.sentinel.reward, `${PROGRAM_KINDS[d.kind].name} derezzed`); }
+        else this.provoke(d.side, PROGRAM_KINDS[d.kind].name);
+      }
+      this.programs.derezEvents.length = 0;
+    }
     // Hostile aircraft hunt the craft only while it lives and carries weapons.
     this.airTarget.vel.copy(this.linvel);
     this.airTarget.alive = !this.exploded;

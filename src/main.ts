@@ -39,6 +39,7 @@ import { GLOBE_VIEW } from './render/cityGround.ts';
 import { TrailView } from './render/TrailView.ts';
 import { TrafficView } from './render/TrafficView.ts';
 import { BitsView } from './render/BitsView.ts';
+import { ProgramsView } from './render/ProgramsView.ts';
 import { BIT_STYLE_CHOICES, sanitizeBitStyle, STYLE_LIGHT } from './people/bitStyle.ts';
 import { ChargesView } from './render/ChargesView.ts';
 import { bearingOf } from './sim/errands.ts';
@@ -219,6 +220,7 @@ async function start() {
   const trailView = new TrailView(scene, sim.trails);
   const trafficView = new TrafficView(scene, sim.traffic);
   const bitsView = new BitsView(scene, sim.bits, sim.walker);
+  const programsView = new ProgramsView(scene, sim.programs);
   const chargesView = new ChargesView(scene);
   bitsView.setErrands(sim.errands);
   const chipsView = new ChipsView(scene, sim.chips);
@@ -1566,6 +1568,7 @@ async function start() {
     const v = sim.craft.body.linvel();
     velocity.set(v.x, v.y, v.z);
     bitsView.update(sim.time, alpha);
+    programsView.update(sim.time);
     chargesView.update(sim.time, sim.charges);
     // On foot the camera follows the Bit, not the parked vehicle.
     if (sim.walker.active) {

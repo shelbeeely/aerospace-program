@@ -326,6 +326,15 @@ universe, not a conventional open world decorated with neon.
   tried in turn until one passes the ten checks. A radial structure or tower none of them can
   open gets an entrance hall (`addHall`). The kit towers have their rooms cut in at import
   (`npm run import-towers`); do not edit `towerKit.json` or `towerKit.bin` by hand.
+- **Every side has its own program on the streets** (`src/sim/programs.ts`): Archivists
+  (Cyan), Sentinels (Red), Tenders (Amber), Scavengers (freelancers), Brokers (mercenaries).
+  Each kind belongs to exactly one side and stands only where that side holds the district (or,
+  for freelancers and mercenaries, anywhere). Programs are rigid polyhedra like the Bits:
+  dark bodies with selective light in their side's colour, and YES/NO in yellow and red. They
+  walk the road margins in file, never into a lot or along a closed road, and are seeded per
+  road corner. They follow diplomacy: Sentinels warn strangers at peace and fire only when Red
+  is hostile to the player (`hostileToPlayer`); running a program down at peace is an incident.
+  A new side gets a new kind. Check: `npm run programs`.
 - **The player on foot is a Bit** (`BitWalker`): it steps out of a stopped vehicle, walks, and
   gets back in beside it. The vehicle stays parked.
 - **Errands on foot** (`src/sim/errands.ts`): an escorted Bit walks the trail the player

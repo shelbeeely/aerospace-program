@@ -113,6 +113,19 @@ export class RoadDamage {
     return c;
   }
 
+  /** Mend one closure (Amber tenders): the stretch opens again. True if it was there. */
+  repair(c: RoadClosure): boolean {
+    const i = this.closures.indexOf(c);
+    if (i < 0) return false;
+    this.closures.splice(i, 1);
+    for (const b of c.barriers) { const k = this.barriers.indexOf(b); if (k >= 0) this.barriers.splice(k, 1); }
+    const k = key(c.alongX, c.i, c.j);
+    const n = (this.keys.get(k) ?? 1) - 1;
+    if (n > 0) this.keys.set(k, n); else this.keys.delete(k);
+    this.version++;
+    return true;
+  }
+
   /** Every road open again (world reset). */
   reset(): void {
     if (!this.closures.length) return;
