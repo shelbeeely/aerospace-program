@@ -26,7 +26,7 @@ export default defineConfig(({ mode }) => {
       ],
     },
     server: { host: true },
-    build: { target: 'es2022', chunkSizeWarningLimit: 6000, rollupOptions: { input: { main: 'index.html', explore: 'explore.html' } } },
+    build: { target: 'es2022', chunkSizeWarningLimit: 6000, rollupOptions: { input: { main: 'index.html', explore: 'explore.html', scenario: 'scenario.html' } } },
     // The proxy only exists on the dev/preview server. Static builds use bring-your-own-key.
     plugins: [openrouterProxy(env)],
   };

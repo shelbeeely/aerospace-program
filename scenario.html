@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#02050d" />
+    <title>Scenario Lab</title>
+    <link rel="stylesheet" href="/src/style.css" />
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #02050d; color: #cfe6ff; font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace; }
+      #sc-map { position: fixed; left: 0; top: 0; width: calc(100vw - 400px); height: 100vh; touch-action: none; cursor: pointer; }
+      #sc-panel { position: fixed; right: 0; top: 0; width: 400px; height: 100vh; overflow: auto; box-sizing: border-box; padding: 8px 12px 16px; background: rgba(3, 10, 30, 0.96); border-left: 1px solid rgba(54, 226, 255, 0.3); }
+      #sc-panel h3 { margin: 0; color: #36e2ff; letter-spacing: 0.08em; font-size: 13px; }
+      #sc-panel h4 { margin: 12px 0 4px; color: #36e2ff; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 11px; }
+      .sc-head { display: flex; justify-content: space-between; align-items: baseline; }
+      .sc-time { color: #8fb6e8; }
+      .sc-hint { color: #8fb6e8; margin: 6px 0; }
+      .sc-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; align-items: center; }
+      #sc-panel button, #sc-panel select, #sc-panel input[type=number] { background: #061230; color: #cfe6ff; border: 1px solid rgba(54, 226, 255, 0.35); padding: 3px 8px; font: inherit; cursor: pointer; }
+      #sc-panel button.on { background: #36e2ff; color: #02050d; }
+      #sc-panel button.danger { border-color: #ff2a12; color: #ffb3a8; }
+      #sc-panel .sc-seed { width: 64px; }
+      .sc-check { display: block; margin: 3px 0; }
+      .sc-check input { accent-color: #36e2ff; }
+      .sc-kv { width: 100%; border-collapse: collapse; }
+      .sc-kv td { vertical-align: top; padding: 1px 6px 1px 0; }
+      .sc-kv td:first-child { color: #6f8fbf; white-space: nowrap; }
+      .sc-cmp { font-size: 11px; }
+      .sc-cmp td { white-space: nowrap; padding-right: 5px; }
+      .sc-cmp tr:first-child td { color: #6f8fbf; }
+      .sc-vtitle { color: #cfe6ff; margin-bottom: 4px; }
+      .sc-why { color: #ffd9a0; margin: 4px 0; }
+      .sc-log { margin: 4px 0 0; padding-left: 18px; color: #8fb6e8; }
+      .sc-inspect { min-height: 40px; }
+      @media (max-width: 760px) {
+        #sc-map { width: 100vw; height: 55vh; }
+        #sc-panel { top: 55vh; width: 100vw; height: 45vh; border-left: 0; border-top: 1px solid rgba(54, 226, 255, 0.3); }
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="sc-map"></canvas>
+    <script type="module" src="/src/ui/scenarioMain.ts"></script>
+  </body>
+</html>

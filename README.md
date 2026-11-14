@@ -456,6 +456,52 @@ whoever holds their lot, fight only while that side is at war, and only through 
 - Check: `npm run sappers` (no draft at peace, charges only in hostile districts at war, sappers
   never in a wall, the rails, defusing, and a demolition taking a district).
 
+## Scenario Lab: NPC brains and roads with consequences
+
+`scenario.html` (Vite serves it beside the game; `?seed=`, `?driver=net`, `?layout=backup`) runs
+one district whose roads carry its work: commuters, freight from the depot to the clinic,
+ambulances answering calls, an evacuation from the east bank to the shelter, and a military
+convoy. A recessed data channel cuts the district in two; North Bridge and South Bridge cross
+it. The east bank evacuates at 1:00, **North Bridge closes at 1:30**, the convoy must cross at
+2:00, and the district keeps running to 20:00, so you see which services recover and which
+shortages linger.
+
+- **Run it, break it, order it.** Run at 1×, 4× or 16×; close or reopen either crossing; order
+  ambulances first at junctions, an evacuation contraflow on South Bridge, or trucks to hold
+  during the evacuation. The panel shows freight, ambulance calls, the evacuation, the convoy,
+  the clinic's stock and the traffic, with a chart over time.
+- **Ask why.** Click any vehicle for its job, its policy and its story, built only from what it
+  recorded: *Clinic via North Bridge (est 1.2 min) → saw North Bridge closed (1:30) → rerouted
+  via South Bridge (+0.8 min)*.
+- **Small neural networks drive** (`src/brain/`). Each role has one shared policy with declared
+  inputs (its speed, the gap ahead, the queue on its next road, whether it knows that road is
+  closed, an ambulance behind, its urgency, how much longer its route is than the best one…)
+  and actions (follow, yield, merge, reroute). The engine drives, judges lane changes, gives the
+  right of way and routes; a network can only ask. An ambulance on a call switches to its own
+  `respond` policy and back to `drive` afterwards. Vehicles near an incident run in full,
+  elsewhere road by road; same vehicles, same cargo.
+- **Trained from a scripted driver.** `npm run train-drive` records the scripted driver across
+  64 runs, adds hard cases (blocked lanes, competing merges, emergency traffic, closures) and
+  trains by imitation: 99.8% agreement with the teacher on held-out decisions. `--evolve N`
+  then refines it by evolution, after
+  [trekhleb/self-parking-car-evolution](https://github.com/trekhleb/self-parking-car-evolution)
+  (MIT; the approach, not its code). Deterministic: the same seed writes the same weights.
+- **Compare.** *Scripted vs networks* and *Street networks* run whole scenarios and tabulate
+  them. Three seeds, North Bridge closing:
+
+  | | late freight | ambulance | trip delay | clinic short |
+  | --- | --- | --- | --- | --- |
+  | scripted driver | 100 s | 162 s | 63 s | 553 s |
+  | neural networks | 99 s | 151 s | 64 s | 573 s |
+
+  And the design test, the same encounter on another street network: a backup crossing cuts the
+  evacuation from 8:44 to 7:14 and the trip delay from 63 s to 44 s; a depot on the clinic's
+  bank keeps the clinic supplied (18 s short instead of 553 s); an emergency lane on Market Road
+  helps the ambulances (140 s instead of 162 s) but not the freight.
+- Check: `npm run scenario` (determinism, no collisions, nobody on a closed crossing, rerouting,
+  the comparison within 25%, both levels of detail agree, shortages when shipments never come,
+  policy switches, the recorded stories, the design test).
+
 ## Programs: the working population of the streets
 
 Beside the Bits (who belong to everyone), the streets are walked by programs: one kind for each

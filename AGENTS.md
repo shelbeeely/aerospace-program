@@ -18,7 +18,7 @@ Rules for every agent and contributor working on this repo. Claude Code reads th
   scene objects and the DOM; rendering lives in `src/render`.
 - **Checks:** `npm run typecheck`, `npm run arch`, `npm run drive`, `npm run city`,
   `npm run ground` before pushing world or vehicle changes; `npm run bit`, `npm run evolution`
-  and `npm run sappers` for the people.
+  and `npm run sappers` for the people; `npm run scenario` for the NPC brains.
 
 ## Design rules
 
@@ -375,6 +375,39 @@ universe, not a conventional open world decorated with neon.
 - The figures are the imported "BIT" meshes (CC-BY 4.0, credited in the README). Do not
   replace them with humanoids.
 - Check: `npm run bit`.
+
+## 20. NPC brains (project)
+
+- **Small networks with declared inputs and outputs** (`src/brain/net.ts`, `src/brain/policy.ts`).
+  A policy names its inputs (with their scales) and its actions, and carries a scripted rule
+  that does the same job: the baseline it is measured against and the teacher it learns from.
+  Networks are tiny, plain TypeScript, seeded and deterministic (no dependencies, no
+  `Math.random`), so the browser, the checks and the relay run the same thing.
+- **The network decides, the engine carries it out.** A road vehicle's policy picks follow,
+  yield, merge or reroute; the engine drives (car-following), judges whether a lane change is
+  safe, gives the right of way at junctions, keeps everyone off closed roads and routes by
+  travel time. A policy can ask for something unsafe and simply not get it. New roles follow
+  the same split (squads: position and regroup, the engine moves and fights; aircraft:
+  waypoints and approach, the engine flies).
+- **One policy per role.** Every agent of a role shares its network; what makes each different
+  (urgency, cargo, profile, job) is in its inputs. An agent switches policy when its job changes
+  (an ambulance on a call drives by `respond`, afterwards by `drive`).
+- **Detail where it matters, the same objects everywhere** (`src/scenario/scenario.ts`). Agents
+  near an incident run in full; elsewhere they advance by road segments. It is the same agent
+  either way, with the same cargo, destination and place in the work, so a shipment that never
+  arrives still causes a shortage. The compact state `(edge, distance, speed, lane)` is what
+  traffic is networked as when it moves onto the relay.
+- **Explanations come from records.** Every route set and changed, closure seen or heard of,
+  wait and yield is logged as it happens; "why is this ambulance late" (`explain`) is built
+  only from those records.
+- **Train and compare.** `npm run train-drive` records the scripted driver (plus generated hard
+  cases), trains by imitation and optionally refines by evolution, and writes
+  `src/brain/weights/*.json` deterministically; regenerate it rather than editing it. A change
+  to a policy's inputs or actions retrains it. `npm run scenario` keeps the networks within a
+  stated margin of the scripted baseline, with no collisions and nobody on a closed road.
+- The Scenario Lab (`scenario.html`) is the proving ground: one district, two crossings over a
+  data channel, an evacuation and a closure; its layouts are the design test (does a different
+  street network change the plan?). Check: `npm run scenario`.
 
 ## 18. Destruction (project)
 

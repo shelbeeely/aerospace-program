@@ -42,7 +42,13 @@ abstract class TimeChart {
   private hoverX: number | null = null;
   protected readonly pad = { l: 30, r: 8, t: 8, b: 20 };
 
-  constructor(title: string, private readonly height = 150) {
+  /** The top of the value axis, and how values are written (the Scenario Lab charts its own units). */
+  protected readonly yMax: number;
+  protected readonly fmt: (v: number) => string;
+
+  constructor(title: string, private readonly height = 150, opts: { yMax?: number; fmt?: (v: number) => string } = {}) {
+    this.yMax = opts.yMax ?? 1;
+    this.fmt = opts.fmt ?? ((v) => v.toFixed(2));
     this.root = document.createElement('div');
     this.root.className = 'evo-chart';
     const h = document.createElement('div');
@@ -107,11 +113,12 @@ abstract class TimeChart {
     const n = this.times.length;
     const t0 = n ? this.times[0] : 0, t1 = n > 1 ? this.times[n - 1] : t0 + 1;
     const x = (i: number) => l + ((this.times[i] - t0) / (t1 - t0)) * pw;
-    const y = (v: number) => t + (1 - v) * ph;
+    const y = (v: number) => t + (1 - Math.max(0, Math.min(1, v / this.yMax))) * ph;
     // Recessive grid and axis labels.
     ctx.font = '10px ui-monospace, Menlo, Consolas, monospace';
     ctx.textBaseline = 'middle';
-    for (const v of [0, 0.25, 0.5, 0.75, 1]) {
+    for (const f of [0, 0.25, 0.5, 0.75, 1]) {
+      const v = f * this.yMax;
       ctx.strokeStyle = v === 0 ? CHART.axis : CHART.grid;
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -120,7 +127,7 @@ abstract class TimeChart {
       ctx.stroke();
       ctx.fillStyle = CHART.muted;
       ctx.textAlign = 'right';
-      ctx.fillText(v.toFixed(v === 0 || v === 1 ? 0 : 2), l - 4, y(v));
+      ctx.fillText(this.yMax === 1 ? v.toFixed(f === 0 || f === 1 ? 0 : 2) : this.fmt(v), l - 4, y(v));
     }
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
@@ -178,7 +185,7 @@ export class GeneChart extends TimeChart {
   }
 
   protected rows(i: number) {
-    return [...this.series].sort((a, b) => b.values[i] - a.values[i]).map((s) => ({ color: s.color, value: s.values[i].toFixed(2), label: s.label }));
+    return [...this.series].sort((a, b) => b.values[i] - a.values[i]).map((s) => ({ color: s.color, value: this.fmt(s.values[i]), label: s.label }));
   }
 }
 

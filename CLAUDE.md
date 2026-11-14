@@ -22,6 +22,9 @@ The full rules are in [AGENTS.md](AGENTS.md) (imported above). The essentials:
   lot, an Evolution Lab (`npm run evolution`); in wars the district's side drafts sappers who set
   defusable charges by hand (`npm run sappers`). Every side also has one street program of its own
   (Archivist, Sentinel, Tender, Scavenger, Broker; `npm run programs`).
+- **NPC brains:** small TypeScript networks with declared inputs and outputs, one policy per role,
+  the engine carrying decisions out, explanations only from recorded events; trained from a
+  scripted driver (`npm run train-drive`), proven in the Scenario Lab (`npm run scenario`).
 - **Roads:** every road is pathed so the Navigator can drive any ground vehicle anywhere;
   ground vehicles spawn on roads, never on airstrips.
 - **Code:** no `Math.random` in generation; sim/world/arch stay DOM- and scene-free; run
