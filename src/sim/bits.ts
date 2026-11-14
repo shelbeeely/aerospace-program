@@ -80,6 +80,8 @@ export interface BitHome {
 interface Waypoint {
   x: number;
   z: number;
+  /** Ground height there, when known (a trail walked by the player). */
+  y?: number;
 }
 
 export interface BitPerson {
@@ -88,7 +90,9 @@ export interface BitPerson {
   /** Which of the lot's people this is. */
   slot: number;
   /** Where it is: on the kerb, on its way through a door, or indoors. */
-  place: 'kerb' | 'way' | 'inside';
+  place: 'kerb' | 'way' | 'inside' | 'follow';
+  /** Following the player: the height of the ground it is on (from the trail it walks). */
+  footY: number;
   /** Distance along the kerb loop (m), walking direction and pace. */
   s: number;
   dir: 1 | -1;
@@ -279,7 +283,7 @@ export class BitPopulation {
         answer: null, answeredAt: -Infinity, pending: null, hurry: false,
         beat: rand() * 10,
         x: 0, y: 0, z: 0, yaw: 0,
-        rand, gx: Infinity, gz: Infinity, gh: 0,
+        rand, gx: Infinity, gz: Infinity, gh: 0, footY: 0,
       };
       const indoors = rand() < INDOORS;
       if (h.room && !h.ruined && indoors) {
@@ -312,6 +316,7 @@ export class BitPopulation {
   }
 
   private place(p: BitPerson): void {
+    if (p.place === 'follow') { p.y = p.footY + BIT.hover; return; }
     if (p.place === 'way' && p.door && p.door.rise > 0.3) {
       // On the steps outside a raised door: it glides up to the threshold as it nears the wall.
       const d = p.door;
@@ -393,7 +398,7 @@ export class BitPopulation {
       const lx = Math.max(h.x0, Math.min(h.x1, cx)), lz = Math.max(h.z0, Math.min(h.z1, cz));
       if (Math.hypot(lx - cx, lz - cz) < BITS.despawn) continue;
       this.homes.delete(key);
-      for (let i = this.people.length - 1; i >= 0; i--) if (this.people[i].home === h) this.people.splice(i, 1);
+      for (let i = this.people.length - 1; i >= 0; i--) if (this.people[i].home === h && this.people[i].place !== 'follow') this.people.splice(i, 1);
     }
   }
 
@@ -410,7 +415,7 @@ export class BitPopulation {
     let n = 0;
     for (const p of this.people) {
       const dx = p.x - x, dz = p.z - z;
-      if (dx * dx + dz * dz > BITS.earshot * BITS.earshot || p.mood === 'scared') continue;
+      if (dx * dx + dz * dz > BITS.earshot * BITS.earshot || p.mood === 'scared' || p.place === 'follow') continue;
       p.mood = 'talk';
       p.until = time + BITS.talkTime;
       p.quietUntil = p.until + 2;
@@ -460,6 +465,46 @@ export class BitPopulation {
     return n;
   }
 
+  /** A Bit starts to follow the player (the trail is fed by whoever leads it). */
+  lead(p: BitPerson, time: number): void {
+    p.place = 'follow';
+    p.path = [];
+    p.door = null;
+    p.pending = null;
+    p.footY = p.y - BIT.hover;
+    this.say(p, 'yes', time);
+  }
+
+  /** A followed Bit reaches the building it was taken to: it goes in by the door and lives there now. */
+  arrive(p: BitPerson, h: BitHome, time: number): boolean {
+    const r = h.room;
+    if (!r || !this.people.includes(p)) return false;
+    const d = r.doors.reduce((a, q) => (Math.hypot(q.x - p.x, q.z - p.z) < Math.hypot(a.x - p.x, a.z - p.z) ? q : a));
+    p.home = h;
+    p.slot = 1000 + p.id; // a newcomer: not one of the lot's own people
+    p.door = d;
+    p.doorS = doorKerb(h, d);
+    p.path = [{ x: d.x + d.nx * 1.6, z: d.z + d.nz * 1.6 }, { x: d.x - d.nx * 1.6, z: d.z - d.nz * 1.6 }, spotBehind(d, p.rand)];
+    p.then = 'inside';
+    p.place = 'way';
+    p.mood = 'walk';
+    this.say(p, 'yes', time);
+    return true;
+  }
+
+  /** A followed Bit is let go: it says NO and walks back the way it came to its own kerb (or, its lot gone, fades out). */
+  release(p: BitPerson, time: number, back: ReadonlyArray<{ x: number; z: number; y?: number }> = []): void {
+    const i = this.people.indexOf(p);
+    if (i < 0 || p.place !== 'follow') return;
+    this.say(p, 'no', time);
+    if (!this.homes.has(p.home.key) || this.homes.get(p.home.key) !== p.home) { this.people.splice(i, 1); return; }
+    kerbPoint(p.home, p.s, 0, _k);
+    p.path = [...back.map((w) => ({ x: w.x, z: w.z })), { x: _k.x, z: _k.z }]; // back the way it came
+    p.then = 'kerb';
+    p.place = 'way';
+    p.door = null;
+  }
+
   /** Something lands or goes off at (x, y, z): every Bit within `r` of it derezzes. Returns how many. */
   strike(x: number, y: number, z: number, r: number, time: number): number {
     let n = 0;
@@ -503,13 +548,13 @@ export class BitPopulation {
 
   /** Walk the current path; true when it is done. */
   private follow(p: BitPerson, dt: number): boolean {
-    let left = p.pace * (p.hurry ? 2.5 : 1) * dt;
+    let left = (p.place === 'follow' ? Math.max(p.pace, 7.5) : p.pace * (p.hurry ? 2.5 : 1)) * dt;
     while (left > 0 && p.path.length) {
       const w = p.path[0];
       const dx = w.x - p.x, dz = w.z - p.z;
       const d = Math.hypot(dx, dz);
       if (d > 1e-6) p.yaw = Math.atan2(dx, -dz);
-      if (d <= left) { p.x = w.x; p.z = w.z; left -= d; p.path.shift(); }
+      if (d <= left) { p.x = w.x; p.z = w.z; if (w.y !== undefined) p.footY = w.y; left -= d; p.path.shift(); }
       else { p.x += (dx / d) * left; p.z += (dz / d) * left; left = 0; }
     }
     return p.path.length === 0;
@@ -549,7 +594,11 @@ export class BitPopulation {
         this.say(p, p.pending.answer, time);
         p.pending = null;
       }
-      if (p.place === 'way') {
+      if (p.place === 'follow') {
+        // Following the player along the trail it walked, keeping a couple of metres back.
+        if (p.path.length) this.follow(p, dt);
+        p.mood = 'walk';
+      } else if (p.place === 'way') {
         // Through a door: it stops to talk or flinch, otherwise it keeps walking.
         if (p.mood !== 'walk' && (p.hurry || time >= p.until)) p.mood = 'walk';
         if (p.mood === 'walk' && this.follow(p, dt)) {
@@ -645,7 +694,7 @@ export class BitPopulation {
     // Meetings: two of a lot's people close together, both on the kerb or both indoors, stop to talk.
     for (let i = 0; i < people.length; i++) {
       const a = people[i];
-      if (a.place === 'way' || a.hurry || a.mood === 'talk' || a.mood === 'scared' || time < a.quietUntil) continue;
+      if (a.place === 'way' || a.place === 'follow' || a.hurry || a.mood === 'talk' || a.mood === 'scared' || time < a.quietUntil) continue;
       for (let j = i + 1; j < people.length; j++) {
         const b = people[j];
         if (b.home !== a.home || b.place !== a.place || b.mood === 'talk' || b.mood === 'scared' || time < b.quietUntil) continue;

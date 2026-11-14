@@ -127,6 +127,8 @@ body.emp #hud { animation: emp-flicker 0.18s steps(2) infinite; }
 .hostile-mark.friend small { display: none; }
 .lg-team { border-radius: 1px; opacity: 0.6; }
 .team-pick select { font-weight: bold; }
+.bit-pick { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.bit-pick select { flex: 1 1 40%; min-width: 0; }
 
 /* Target brackets over hostile aircraft: thin red, no fill (light is selective). */
 #hostile-marks { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }

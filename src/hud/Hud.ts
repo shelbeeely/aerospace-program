@@ -32,6 +32,9 @@ export class Hud {
     lockRow: $('h-lock-row'),
     mercRow: $('h-merc-row'),
     stratRow: $('h-strat-row'),
+    taskRow: $('h-task-row'),
+    task: $('h-task'),
+    taskT: $('h-task-t'),
     strat: $('h-strat'),
     stratT: $('h-strat-t'),
     merc: $('h-merc'),
@@ -162,15 +165,33 @@ export class Hud {
   }
 
   /** STRAT row: the strategic weapon carried, or in flight; and the EMP's hold on the engines. */
-  setStrategic(s: { carried: string | null; flight: string | null; emp: number }): void {
+  setStrategic(s: { carried: string | null; flight: string | null; emp: number; onFoot?: boolean; set?: { kind: string; left: number } | null }): void {
     const { stratRow: row, strat, stratT } = this.el;
     if (!row || !strat || !stratT) return;
-    const show = !!(s.carried || s.flight || s.emp > 0);
+    const show = !!(s.carried || s.flight || s.emp > 0 || s.set);
     row.style.display = show ? '' : 'none';
     document.body.classList.toggle('emp', s.emp > 0);
+    row.classList.toggle('under-fire', !!s.set && s.set.left < 10);
     if (!show) return;
+    if (s.set && !s.carried && s.emp <= 0) {
+      const t = Math.max(0, s.set.left);
+      this.set(strat, `${s.set.kind.toUpperCase()} SET`);
+      this.set(stratT, `${Math.floor(t / 60)}:${Math.floor(t % 60).toString().padStart(2, '0')}`);
+      return;
+    }
     this.set(strat, s.emp > 0 ? 'EMP HIT' : s.carried ? s.carried.toUpperCase() : (s.flight ?? '').toUpperCase());
-    this.set(stratT, s.emp > 0 ? `engines out ${s.emp.toFixed(0)} s` : s.carried ? '` launches' : 'in flight');
+    this.set(stratT, s.emp > 0 ? `engines out ${s.emp.toFixed(0)} s` : s.carried ? (s.onFoot ? '` sets it down' : '` launches') : 'in flight');
+  }
+
+  /** TASK row: the errand under way, how far and which way it goes, and what it pays. */
+  setTask(s: { kind: string; range: number; bearing: number; reward: number } | null): void {
+    const { taskRow: row, task, taskT } = this.el;
+    if (!row || !task || !taskT) return;
+    row.style.display = s ? '' : 'none';
+    if (!s) return;
+    const range = s.range >= 1000 ? `${(s.range / 1000).toFixed(1)}km` : `${Math.round(s.range / 10) * 10}m`;
+    this.set(task, `${s.kind.toUpperCase()} · ${range} ${String(Math.round(s.bearing) % 360).padStart(3, '0')}°`);
+    this.set(taskT, `${s.reward} cr`);
   }
 
   /** CREDITS row: credits held, and hired mercenaries with the soonest contract end. */

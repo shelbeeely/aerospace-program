@@ -17,6 +17,19 @@ export const STRATEGIC = {
   emp: { label: 'EMP', price: 800, radius: 800, aircraft: 8, turrets: 20, riders: 8, craft: 8 },
 } as const;
 
+/**
+ * Set down by hand: on foot, the strategic weapon carried can be placed on the ground with a
+ * fuse instead of launched. Long enough to get clear: a nuke's fireball reaches 400 m, about a
+ * minute on foot, or a few seconds in a vehicle.
+ */
+export const CHARGE = {
+  /** Fuse (s) from setting it down to the burst. */
+  fuse: { nuke: 60, emp: 15 } as Record<StrategicKind, number>,
+  /** Within this of a charge (m), ` picks it up again (no later than `lockout` s before it goes). */
+  reach: 3,
+  lockout: 5,
+} as const;
+
 export const strategicPrice = (k: StrategicKind): number => STRATEGIC[k].price;
 
 /** A strategic detonation (renderer, audio, the network), newest last. */
