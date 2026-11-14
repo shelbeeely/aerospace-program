@@ -861,3 +861,5 @@ body.touch-ui.profile-foot .tz-right .tz-hint { right: calc(var(--sr) + 92px); }
 #strike-panel .diplo, .diplo { margin-top: 4px; font-size: 12px; letter-spacing: 0.06em; }
 .diplo.peace { color: #9fe8c8; }
 .diplo.war { color: #ff6a4d; }
+.diplo.tension, .diplo.truce { color: #ffcf6e; }
+.diplo.mobilising { color: #ff8a1f; }

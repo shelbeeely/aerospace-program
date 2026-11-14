@@ -12,7 +12,7 @@ import { landingSites } from '../world/landingSites.ts';
 import { PLANET } from './layout.ts';
 import type { LockTarget } from './lock.ts';
 import type { Foe } from './aiTraffic.ts';
-import { hostile, sideLight, sideLivery, type Side, type Team } from './teams.ts';
+import { foeHostile, sideLight, sideLivery, type Side, type Team } from './teams.ts';
 import { Territory } from './territory.ts';
 import type { HackedTurret } from './hacking.ts';
 import type { CraftDef } from '../craft/types.ts';
@@ -437,7 +437,7 @@ export class GroundTurretSystem {
   private choose(t: GroundTurret, head: THREE.Vector3, foes: Foe[]): void {
     const near: Array<{ f: Foe; d: number }> = [];
     for (const f of foes) {
-      if (f.kind === 'turret' || !hostile(t.side, f.side) || !f.lock.alive()) continue;
+      if (f.kind === 'turret' || !foeHostile(t.side, f) || !f.lock.alive()) continue;
       f.lock.position(this._b);
       const d = Math.hypot(wrapDelta(head.x, this._b.x), this._b.y - head.y, wrapDelta(head.z, this._b.z));
       if (d < (t.site.kind === 'rail' ? RAIL_RANGE : RANGE)) near.push({ f, d });

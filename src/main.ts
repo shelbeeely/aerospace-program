@@ -75,6 +75,7 @@ import type { ControlSource } from './sim/controls.ts';
 import { FlightLog } from './sim/flightLog.ts';
 import { FlightAutopilot, MODE_LABELS, type AutopilotKind } from './sim/flightAutopilot.ts';
 import { FootNavigator } from './sim/footNav.ts';
+import { diplomacy } from './sim/diplomacy.ts';
 import { destinations } from './sim/nav.ts';
 import { uiProfile, type UiProfile } from './hud/profiles.ts';
 import { wallSegmentsNear } from './sim/lightWalls.ts';
@@ -1300,7 +1301,13 @@ async function start() {
       if (p.team !== sim.team) {
         sim.extraLockTargets.push(h);
         let foe = playerFoes.get(p.id);
-        if (!foe) playerFoes.set(p.id, (foe = { side: p.team, lock: h, kind: 'remote', engage: true, ground: false }));
+        if (!foe) {
+          const id = p.id;
+          const f: Foe = { side: p.team, lock: h, kind: 'remote', engage: true, ground: false };
+          // At war, their team's enemies; at peace, our side only if that player attacked us.
+          f.hostileTo = (side) => hostile(side, f.side) || (side === sim.team && sim.remoteIsWanted(id));
+          playerFoes.set(id, (foe = f));
+        }
         foe.side = p.team;
         sim.extraFoes.push(foe);
       }
@@ -1608,9 +1615,21 @@ async function start() {
 
     hud.update(telemetry, player.trim, telemetry.controls.brake > 0);
     hud.setAutopilot(autopilot.state.engaged ? autopilot.state : null);
+    {
+      // Diplomacy on the HUD: who hunts you, a renegade's time, a war coming.
+      const parts: string[] = [];
+      if (sim.time < sim.renegadeUntil) parts.push(`RENEGADE ${Math.ceil(sim.renegadeUntil - sim.time)}s`);
+      for (const t of TEAMS) {
+        if (t.id === sim.team) continue;
+        if (sim.time < sim.wanted[t.id]) parts.push(`WANTED: ${t.name.toUpperCase()}`);
+        const st = diplomacy.state(sim.team, t.id);
+        if (st.stance === 'mobilising') parts.push(`WAR WITH ${t.name.toUpperCase()} IN ${Math.max(0, Math.ceil(st.until - sim.time))}s`);
+      }
+      hud.setStanding(parts.join('  '));
+    }
     if (!peaceToldAt && mode === 'flight') {
       peaceToldAt = true;
-      toast('The Grid is at peace. Fire on another team, or declare war on the strike globe (Shift+Tab), to start a war.');
+      toast('The Grid is at peace. Attacks raise tension and make you wanted; war comes after a mobilisation, or by declaring it on the strike globe (Shift+Tab).');
     }
     // The screen follows the vehicle (or the Bit on foot): HUD readouts, controls, body class.
     player.onFoot = sim.walker.active;

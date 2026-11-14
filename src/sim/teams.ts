@@ -1,5 +1,6 @@
 import type { CraftDef } from '../craft/types.ts';
 import { LIGHTS, livery } from '../craft/style1982.ts';
+import { diplomacy } from './diplomacy.ts';
 
 /**
  * Sides in the war. Three teams hold the planet's territory: Cyan, Red and Amber. Freelancers
@@ -31,47 +32,33 @@ export const MERC_LIGHT = LIGHTS[1];
 export const isTeam = (v: unknown): v is Team => v === 0 || v === 1 || v === 2;
 
 /**
- * Diplomacy: which pairs of teams are at war. The world starts at peace (no pair at war); a war
- * starts when one side attacks another or declares it, and ends with a cease fire. One flag per
- * pair (Cyan-Red, Cyan-Amber, Red-Amber), shared by everything that asks `hostile()`.
+ * Diplomacy (src/sim/diplomacy.ts): tension, mobilisation, war, truce and peace per pair of
+ * teams. The world starts at peace. These are the short questions everything else asks.
  */
-let war = 0;
-/** Bumped on every change (the map, the panels and the network watch it). */
-export let diplomacyVersion = 0;
-
-const pairBit = (a: Team, b: Team): number => (a === b ? 0 : a + b === 1 ? 1 : a + b === 2 ? 2 : 4);
+export { diplomacy, DIPLOMACY, type Stance } from './diplomacy.ts';
 
 /** Are these two teams at war? */
 export function atWar(a: Team, b: Team): boolean {
-  return (war & pairBit(a, b)) !== 0;
+  return diplomacy.atWar(a, b);
 }
 
-/** Start (on) or end (off) the war between two teams. True if it changed. */
-export function setWar(a: Team, b: Team, on: boolean): boolean {
-  const bit = pairBit(a, b);
-  if (!bit || atWar(a, b) === on) return false;
-  war = on ? war | bit : war & ~bit;
-  diplomacyVersion++;
-  return true;
+/** Straight to war (on) or peace (off), skipping the ladder (the network, checks). */
+export function setWar(a: Team, b: Team, on: boolean, now = 0): boolean {
+  return diplomacy.setWar(a, b, on, now);
 }
 
 /** Is any pair of teams at war? (Freelancers only come out while one is.) */
-export const anyWar = (): boolean => war !== 0;
-/** The flags as 3 bits (Cyan-Red 1, Cyan-Amber 2, Red-Amber 4), for the network. */
-export const warMask = (): number => war;
-export function setWarMask(m: number): void {
-  const v = m & 7;
-  if (v === war) return;
-  war = v;
-  diplomacyVersion++;
-}
-/** Back to peace (a world reset). */
+export const anyWar = (): boolean => diplomacy.anyWar();
+/** The war flags as 3 bits (Cyan-Red 1, Cyan-Amber 2, Red-Amber 4), for the network. */
+export const warMask = (): number => diplomacy.mask();
+export const setWarMask = (m: number): void => diplomacy.setMask(m);
+/** Back to peace everywhere (a world reset). */
 export function resetDiplomacy(): void {
-  setWarMask(0);
+  diplomacy.reset();
 }
 /** Every team at war with every other (the old always-at-war world; checks use it). */
 export function allAtWar(): void {
-  setWarMask(7);
+  diplomacy.setMask(7);
 }
 
 /**
@@ -81,6 +68,11 @@ export function allAtWar(): void {
 export function hostile(a: Side, b: Side): boolean {
   if (a === FREELANCER || b === FREELANCER) return true;
   return a !== b && atWar(a, b);
+}
+
+/** Does `side` fight this target? A target may carry its own rule (a rogue player is hunted). */
+export function foeHostile(side: Side, foe: { side: Side; hostileTo?: (s: Side) => boolean }): boolean {
+  return foe.hostileTo ? foe.hostileTo(side) : hostile(side, foe.side);
 }
 
 export function sideName(s: Side): string {

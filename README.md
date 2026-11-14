@@ -404,19 +404,33 @@ with a third of the region cells, so territory comes in large contiguous patches
 
 **The world starts at peace.** No two teams are at war when you start or reset the world:
 their turrets and aircraft hold fire, other teams patrol peacefully, and no freelancers come
-out. Each pair of teams has its own war flag (Cyan-Red, Cyan-Amber, Red-Amber), and every
-system asks the same question (`hostile()`), so turrets, AI pilots, radar colours and hit
-rules all follow it.
+out. War and peace move in steps (`src/sim/diplomacy.ts`), one ladder per pair of teams
+(Cyan-Red, Cyan-Amber, Red-Amber):
 
-- **A war starts** when your fire (rounds, missiles, a blast, a nuke or EMP over their district)
-  strikes another team's aircraft or turret, when another team's player opens fire on you, or
-  when you declare it on the strike globe (pick a district: *Declare war on …*). It is a war
-  with that team only.
-- **A cease fire** (strike globe: *Cease fire*) is accepted once the two sides have gone 30 s
-  without trading fire. Backspace (world reset) restores peace everywhere.
-- You can lock another team's craft at peace; firing is what starts the war. Strikes and the
-  hacking beam need a war with the district's or the craft's team.
-- In multiplayer a declaration or a cease fire is sent to the room (protocol v4, event `war`).
+| Stance | What it means | How it moves on |
+|---|---|---|
+| Peace | nobody fires | incidents raise tension, which fades in quiet |
+| Tension | the victim protests (tension 40/100) | more incidents: it mobilises; quiet: back to peace |
+| Mobilising | war in 20 s (15 s after your own declaration) | the offender pays reparations (300 cr) to stand it down, or the declarer calls it off; otherwise war |
+| War | everything of the two sides fights | a cease fire, accepted after 30 s without shots |
+| Truce | 2 minutes of no fighting | any shot breaks it: war at once, and the third team distrusts the side that broke it; otherwise peace |
+
+- **Rogues.** Your fire on another team at peace is an *incident*, not a war: that team **hunts
+  you** for 90 s (WANTED on the HUD; its turrets and aircraft fire on you, not on your team),
+  and the two teams' tension rises (a hit 8, a turret 6, a kill 30, a turret kill 35, a nuke or
+  EMP over its district enough to mobilise at once). Rogue kills pay nothing and capture
+  nothing. A player of another team who fires on you at peace is a rogue the same way: your
+  side hunts that player, and the teams' tension rises.
+- **Friendly fire.** Your rounds now land on your own team's aircraft and turrets. A first
+  hit is a warning; keep at it and you are a **renegade** for 2 minutes (RENEGADE on the HUD):
+  your own turrets and wingmen turn on you. Shooting down one of your own costs 150 credits.
+- **On the strike globe** (pick a district) each stage has its action: *Declare war* (your
+  team mobilises; during a truce it is treachery and war comes at once), *Call it off*,
+  *Stand down (300 cr)*, *Cease fire*. The panel shows the stance, the tension and how long
+  you are hunted.
+- Backspace (world reset) restores peace and forgives everything.
+- In multiplayer, wars and truces are sent to the room (protocol v4, event `war`); rogue
+  hunts are kept by each player's game.
 
 - **Pick your team** in the hangar (TEAM, above SPAWN; remembered). Your craft is restyled in
   its livery (`teamLivery` / `sideLivery`: the team's light on its bodies, within the light
@@ -434,8 +448,8 @@ rules all follow it.
   fire destroyed it (yours if you did it) and its turrets rise again in the new colours 20 s
   later. AI teams capture too, so the front line moves on its own. A world reset (Backspace)
   restores the starting map.
-- **No friendly fire:** your rounds don't hurt your side's aircraft or turrets, and theirs
-  don't hurt you; the lock never picks a friend.
+- **Friendly fire** is possible (see above), but your side's rounds never hurt you unless you
+  are a renegade, and the lock never picks a friend.
 - **Freelancers** (F3, 0-4, default 1) belong to no one and fight everyone: white light on steel.
   They never capture.
 - **Mercenaries** are wingmen you hire with credits (`'`, or *Mercenaries* in the touch menu).

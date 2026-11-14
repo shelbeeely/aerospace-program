@@ -73,6 +73,12 @@ export class Hud {
   private readonly root = $('hud');
   private readonly nav = $<HTMLButtonElement>('nav-chip');
   private profile: UiProfile | null = null;
+  /** Diplomatic warnings in front of the flags (WANTED, RENEGADE, a mobilisation countdown). */
+  private standing = '';
+
+  setStanding(text: string): void {
+    this.standing = text;
+  }
 
   constructor() {
     // Each row is keyed by its value element (h-speed → speed; the bus row by its volts).
@@ -205,7 +211,7 @@ export class Hud {
     ]
       .filter(Boolean)
       .join('  ');
-    this.set(this.el.flags, flags);
+    this.set(this.el.flags, [this.standing, flags].filter(Boolean).join('  '));
     this.root.classList.toggle('grounded', t.onGround);
     this.el.stall.classList.toggle('hidden', !(t.stall > 0.35 && !t.onGround && t.airspeed > 5));
   }
