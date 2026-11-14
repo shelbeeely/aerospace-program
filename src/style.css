@@ -752,3 +752,107 @@ body.hacking .tfire-3 { display: block !important; }
 .adsb-tag b { font-weight: 500; }
 .adsb-tag span { color: #b9cfe0; }
 .adsb-tag.foe { opacity: 0.95; }
+
+/* ================================================================ mobile layout v2
+ * One reserved place for everything, so nothing overlaps:
+ *   landscape: HUD strip top-left, icon bar top-right, radar under the bar, NAV under the HUD,
+ *              weapons in a column at the right edge, lever bottom-left, stick bottom-right.
+ *   portrait:  icon bar across the top, HUD strip under it, NAV (left) and radar (right) under
+ *              the HUD, controls along the bottom.
+ * The HUD strip shows the vehicle's primary readouts (src/hud/profiles.ts); a tap opens the
+ * rest as a drawer. */
+:root { --st: max(8px, env(safe-area-inset-top)); --sl: max(8px, env(safe-area-inset-left)); --sr: max(8px, env(safe-area-inset-right)); --sb: max(8px, env(safe-area-inset-bottom)); }
+
+/* Readouts that mean nothing for this vehicle, anywhere. */
+#hud .row.na { display: none !important; }
+#hud.grounded .row[data-k="aoa"], #hud.grounded .row[data-k="g"] { display: none !important; }
+#hud .row b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* The Navigator chip: on screen in flight, everywhere. */
+#nav-chip {
+  position: absolute; left: 16px; top: 16px; z-index: 7; display: none; align-items: baseline; gap: 6px;
+  padding: 6px 10px; cursor: pointer; color: #9fd0ff; font: 600 12px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.06em; border: 1px solid rgba(0, 212, 255, 0.35); max-width: 46vw; text-align: left;
+}
+body.mode-flight #nav-chip { display: flex; }
+#nav-chip > span { color: #00d4ff; font-weight: 700; }
+#nav-chip b { color: #eaf2f8; white-space: nowrap; }
+#nav-chip small { color: #9fb2c2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#nav-chip.on { border-color: #00d4ff; box-shadow: 0 0 10px rgba(0, 212, 255, 0.45); }
+#nav-chip.on b { color: #00d4ff; }
+#nav-chip.unavailable { opacity: 0.55; }
+/* Desktop: the HUD's own NAV row says the same, and the chip sits top-left. */
+body:not(.touch-ui) #nav-chip { top: max(16px, env(safe-area-inset-top)); }
+
+/* ---- touch: HUD strip */
+body.touch-ui #hud {
+  pointer-events: auto; cursor: pointer; z-index: 8;
+  left: var(--sl); top: var(--st); bottom: auto; right: auto;
+  max-width: calc(100vw - 230px); padding: 4px 8px; gap: 0 10px;
+}
+body.touch-ui #hud:not(.open) { display: flex; flex-wrap: wrap; align-items: flex-end; grid-template-columns: none; }
+body.touch-ui #hud:not(.open) .row:not(.primary):not(.under-fire) { display: none !important; }
+body.touch-ui #hud:not(.open) #h-appr { display: none !important; }
+body.touch-ui #hud:not(.open) .row { flex-direction: column; align-items: flex-start; gap: 0; line-height: 1.1; }
+body.touch-ui #hud:not(.open) .row span { width: auto !important; font-size: 9px; }
+body.touch-ui #hud:not(.open) .row b { font-size: 17px; min-width: 0 !important; text-align: left; }
+body.touch-ui #hud:not(.open) .row.under-fire b { font-size: 13px; max-width: 34vw; }
+body.touch-ui #hud:not(.open) #h-flags { flex-basis: 100%; order: 99; font-size: 10px; min-height: 0; margin-top: 1px; }
+body.touch-ui #hud:not(.open)::after { order: 98; }
+body.touch-ui #hud:not(.open) #h-flags:empty { display: none; }
+body.touch-ui #hud:not(.open)::after { content: '▾'; color: #9fb2c2; font-size: 11px; align-self: center; margin-left: 2px; }
+/* Opened: everything, three columns, scrolls if it must. */
+body.touch-ui #hud.open { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); max-height: 62dvh; overflow-y: auto; z-index: 12; }
+body.touch-ui #hud.open .row b { font-size: 14px; min-width: 0 !important; }
+body.touch-ui #hud.open .row[data-k="lock"], body.touch-ui #hud.open .row[data-k="hostile"] { grid-column: span 2; }
+body.touch-ui.profile-foot #hud:not(.open) .row.primary { display: none !important; }
+body.touch-ui.profile-foot #hud:not(.open) { display: none; }
+
+/* ---- touch: icon bar, radar, NAV */
+body.touch-ui .tbar { top: var(--st); right: var(--sr); left: auto; max-width: none; flex-wrap: nowrap; gap: 6px; }
+body.touch-ui .tbar .tbtn { width: 44px; min-width: 44px; height: 40px; padding: 0; font-size: 18px; flex: none; }
+body.touch-ui #radar { top: calc(var(--st) + 50px); right: var(--sr); bottom: auto; width: 96px; }
+body.touch-ui #radar-scope { width: 96px; height: 96px; }
+body.touch-ui #nav-chip { left: var(--sl); top: calc(var(--hud-bottom, 70px) + 6px); max-width: calc(100vw - 140px); padding: 8px 10px; font-size: 12px; min-height: 36px; }
+body.touch-ui.profile-foot #nav-chip { top: var(--st); }
+
+/* ---- touch: lever, stick, buttons */
+.lever-knob { display: flex; flex-direction: column; align-items: center; justify-content: center; color: #1a1400; }
+.lever-label { position: static; transform: none; font-size: 8px; letter-spacing: 0.06em; color: #3a2e00; line-height: 1; }
+.lever-value { font: 700 15px/1 ui-monospace, monospace; color: #1a1400; }
+body.touch-ui .tz-hint { opacity: 0; transition: opacity 0.6s; white-space: pre; line-height: 1.35; }
+body.touch-ui .touch.hints-on .tz-hint { opacity: 1; }
+/* Weapons: one column at the right edge, clear of the stick and the radar. */
+body.touch-ui .tfire { right: var(--sr); min-width: 64px; height: 48px; padding: 0 10px; }
+body.touch-ui .tfire-2 { bottom: calc(var(--sb) + 12px); }
+body.touch-ui .tfire-1 { bottom: calc(var(--sb) + 68px); height: 52px; }
+body.touch-ui .tfire-3 { bottom: calc(var(--sb) + 128px); }
+body.touch-ui.armed .stick-base:not(.active), body.touch-ui.hacking .stick-base:not(.active), body.touch-ui.profile-foot .stick-base:not(.active) { right: calc(var(--sr) + 92px); }
+/* Per vehicle. */
+.tbtn-board { display: none; position: absolute; left: calc(var(--sl) + 10px); bottom: calc(var(--sb) + 24px); padding: 0 18px; height: 52px; font-size: 14px; letter-spacing: 0.08em; border-color: rgba(0, 212, 255, 0.6); }
+body.touch-ui.profile-foot .tbtn-board { display: block; }
+body.touch-ui.profile-foot .tz-left .lever, body.touch-ui.profile-foot .tbtn-brake, body.touch-ui.profile-foot .tfire-3 { display: none !important; }
+body.touch-ui.profile-foot .tfire-1, body.touch-ui.profile-foot .tfire-2 { display: block; }
+body.touch-ui.profile-foot .tz-left { pointer-events: none; }
+
+/* ---- portrait */
+body.touch-ui.portrait #hud { left: var(--sl); right: var(--sr); top: calc(var(--st) + 48px); max-width: none; }
+body.touch-ui.portrait #hud:not(.open) { justify-content: space-between; }
+body.touch-ui.portrait .tbar { left: var(--sl); right: var(--sr); justify-content: flex-end; }
+body.touch-ui.portrait .tbar .tbtn { max-width: none; width: 48px; flex: none; height: 40px; font-size: 18px; }
+body.touch-ui.portrait #radar { top: calc(var(--hud-bottom, 120px) + 6px); }
+body.touch-ui.portrait #nav-chip { top: calc(var(--hud-bottom, 120px) + 6px); max-width: calc(100vw - 130px); }
+body.touch-ui.portrait.profile-foot #nav-chip, body.touch-ui.portrait.profile-foot #radar { top: calc(var(--st) + 50px); }
+
+/* ---- short landscape phones */
+@media (max-height: 430px) {
+  body.touch-ui:not(.portrait) #hud:not(.open) .row b { font-size: 15px; }
+  body.touch-ui:not(.portrait) .lever { --lever-h: min(46vh, 180px); }
+  body.touch-ui:not(.portrait) .tfire { height: 44px; }
+  body.touch-ui:not(.portrait) .tfire-1 { bottom: calc(var(--sb) + 60px); height: 46px; }
+  body.touch-ui:not(.portrait) .tfire-3 { bottom: calc(var(--sb) + 112px); }
+}
+body.touch-ui:not(.portrait) #hud { max-width: calc(100vw - 230px - var(--sl) - var(--sr)); }
+body.touch-ui:not(.portrait) .tbar { width: auto; }
+body.touch-ui #hud:not(.open) { width: fit-content; }
+body.touch-ui.profile-foot .tz-right .tz-hint { right: calc(var(--sr) + 92px); }

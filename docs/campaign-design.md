@@ -474,7 +474,7 @@ Stages, each ending with passing checks and a commit:
    for the home planet.
 4. **City building:** road and zoning overlays, facilities, ground refresh. `npm run drive`,
    `traffic`, `ground`, `city`, `arch`, `buildings` plus new cases: no island after any edit,
-   the flight computer can drive to every new terminal.
+   the Navigator can drive to every new terminal.
 5. **Client:** `campaign.html`, the three views, the feed.
 6. **Portal and second planet:** activation, manifest generation and validation, transfer,
    return. `npm run portals`: two sessions activating the same portal get the same planet; a

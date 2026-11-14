@@ -20,13 +20,13 @@ const KEYBOARD: Array<[string, string]> = [
   ['Tab', 'planet map: every vehicle in the world (or click the radar)'],
   ['← → ↑ ↓', 'turret: traverse and elevate (tank); left alone, it aims at the lock'],
   ['/', 'turret back to the nose'],
-  ['Enter', 'chase the locked vehicle (flight computer; again or the stick ends it)'],
+  ['Enter', 'chase the locked vehicle (the Navigator; again or the stick ends it)'],
   ['=', 'on foot: step out of a stopped vehicle as a Bit, or get back in beside it (W/S walk, A/D turn, Q/E sidestep, V says YES, O says NO)'],
   ["'", 'mercenaries and armory: hire wingmen, buy a nuke or an EMP with credits'],
   ['`', 'launch the nuke or EMP carried (homes on the lock)'],
   ['\\', 'radar range: 2 / 5 / 12 km'],
   ['U', 'autopilot on / off (then W/S altitude, A/D heading, Shift/Ctrl speed)'],
-  ['J', 'flight computer: hold, takeoff, land, go to, orbit, level (a firm stick input takes over)'],
+  ['J', 'Navigator: hold, takeoff, land, go to, orbit, level; on foot, walk to a place or back to the vehicle (a firm stick input takes over)'],
   ['C', 'chase / orbit camera'],
   ['[ / ]', 'previous / next craft'],
   ['N', 'Hangar / flight'],
@@ -41,7 +41,7 @@ const TOUCH: Array<[string, string]> = [
   ['BRAKE', 'hold to brake'],
   ['Hangar', 'choose a craft or open Create / Studio'],
   ['Camera', 'switch chase / orbit view'],
-  ['More', 'new plane, reset world, craft selection, autopilot, flight computer (land, go to, orbit), weather, flaps, sound and photos'],
+  ['More', 'new plane, reset world, craft selection, Navigator (go to, land, orbit, walk), weather, flaps, sound and photos'],
 ];
 
 const PROFILE_TIPS: Record<string, string> = {

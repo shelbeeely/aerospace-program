@@ -15,7 +15,7 @@ npm run sim            # headless physics regression (takeoff, turn, stalls, CoM
 npm run weather        # weather impact checks (rain, icing, ground effect, vortex ring, wet runway)
 npm run ground         # ground vehicles: flat ground, skid steering, Outlands highways and rubble, spawn sites
 npm run arch           # digital world: five families vs the ten checks, districts, interiors, Outlands
-npm run drive          # road network: one graph, every destination by road, the flight computer driving
+npm run drive          # road network: one graph, every destination by road, the Navigator driving
 npm run weapons        # weapons: fitted multiples, cannon cratering, tank bulldozer, bombs, missiles, laser, discs, armour
 npm run craft          # vehicle rules: connected parts, the 1982 palette, the vehicle grammar, ground-vehicle design loop (offline)
 npm run engines        # fast flight: compressibility, ramjet/scramjet/solid/turbojet, thrust vectoring, airbrake, chute, cone/capsule parts, weight floors
@@ -30,7 +30,7 @@ npm run adsb           # ADS-B: callsigns, speeds, squawk codes, track history; 
 npm run hacking        # the hacking beam: charges, the 3 s hold, takeovers of aircraft, turrets and light cycles, reverting
 npm run netdamage      # networked damage: hit tests, the shooter's scanner, the victim's checks, kills
 npm run enemies        # enemy aircraft: red-team colours, patrol vs hunt, gunnery, hit points, kills, determinism
-npm run orbit          # the flight computer's "To orbit" mode flies the Orbiter to a stable orbit
+npm run orbit          # the Navigator's "To orbit" mode flies the Orbiter to a stable orbit
 npm run build          # typecheck + production build
 ```
 
@@ -208,7 +208,7 @@ stick expo, haptics, and touch controls auto/on/off.
 | ; (hold) | hacking beam on the locked target (needs a hacking charge from the Armory) |
 | ← → ↑ ↓ | turret traverse and elevation (tank, or any craft with a turret part); gamepad: LB + right stick |
 | / | turret back to the nose |
-| Enter | chase the locked vehicle (flight computer *Chase lock*; Enter again, or the stick, ends it) |
+| Enter | chase the locked vehicle (Navigator *Chase lock*; Enter again, or the stick, ends it) |
 | \\ | radar range: 2 / 5 / 12 km |
 
 > Browsers don't let pages block Ctrl+W, so tapping Ctrl for throttle-down next to W can
@@ -232,19 +232,36 @@ stall onset, and a toast announces connect/disconnect.
 
 **Touch** (phones and tablets, portrait or landscape)
 
-- **Left thumb:** a throttle lever. Drag up or down and it **stays** where you leave it; on
-  rotorcraft the middle is hover. Drag sideways for yaw, which springs back.
-- **Right thumb:** a floating stick that centres where you touch. Drag down for nose up, sideways
-  to roll. It springs back.
-- **BRAKE** (hold). The top bar has **Hangar**, **Camera**, **Controls**, and **More**.
-  **More** contains New plane, Reset world, craft selection, weather, flaps, sound, photos and fullscreen.
+The screen changes with what you are driving (`src/hud/profiles.ts`): the HUD's readouts, the
+lever's name, the hints and the buttons follow the vehicle.
+
+| Vehicle | HUD strip | Left thumb | Right thumb |
+|---|---|---|---|
+| Airplane | airspeed, altitude, V/S, heading, power | power lever (stays put); sideways = rudder | stick: drag down = nose up, sideways = bank |
+| Helicopter | speed, altitude, V/S, heading, lift | lift lever, middle hovers; sideways = turn | stick: tilt and fly that way |
+| Blimp | speed, altitude, V/S, heading, power | power lever; sideways = turn | stick: nose up / down, turn |
+| Ground vehicle | speed, heading, cruise, fuel | cruise-power lever; sideways = steer | stick: up = go, down = brake (and reverse from a stop), sideways = steer |
+| On foot (your Bit) | none | BOARD gets back in | stick: drag up = walk, sideways = turn; FIRE / DROP become YES / NO |
+
+- **The HUD strip** shows only those readouts, in large type; tap it to open everything else
+  (weather, fuel, battery, credits, lock, hostiles), tap again to close. Readouts that mean
+  nothing for the vehicle are hidden (no AOA or flaps on a light cycle; no AOA or G on the
+  ground).
+- **NAV chip** under the HUD: the Navigator's mode and where it is taking you. Tap it to set a
+  course.
+- **Top bar** (icons): ✦ hangar and Studio, ◉ camera, ? controls (and the hints again),
+  ☰ more: Navigator, Nav hold, new plane, reset world, craft selection, weather and credits,
+  flaps, weapons, map, globe, on foot, mercenaries, strategic, sound, photo, fullscreen.
+- **BRAKE** (hold) beside the lever; **weapons** (FIRE, DROP, HACK) in one column at the right
+  edge when armed, with the stick moved clear of them. The radar sits in its own corner.
+- **Hints** under each thumb show the first three times you use a kind of vehicle, then fade;
+  **?** brings them back.
 - **Create / Studio:** in the hangar, tap **Create**, type in **Describe your aircraft**, then
   tap **Generate aircraft**. GitHub Pages requires your OpenRouter key under **Key & spend**.
   Model choices are under **Models & generation settings**. Studio stays closed on mobile
   until opened; its ✕ closes it. Controls and weather panels have labeled close buttons.
-- The layout adapts to orientation and notches (safe areas). Portrait gets a compact HUD strip
-  and the Studio as a bottom sheet; landscape gets a corner HUD and the Studio as a side
-  drawer. Phones render at capped resolution with smaller shadow maps to hold the frame
+- The layout adapts to orientation and notches (safe areas); nothing overlaps in either
+  orientation. Phones render at capped resolution with smaller shadow maps to hold the frame
   rate, and vibrate on crashes.
 
 To fly: press Z, roll down the runway, and pull back gently (S) at about 60 kt. Lift-off comes
@@ -614,7 +631,7 @@ points. Left alone for a moment with a lock held, the turret lays the gun on the
 itself, allowing for the shell's flight time, its drop and the target's motion (`AUTO` on the
 TURRET row). The swing is visual and ballistic: the colliders stay where they are.
 
-**Chase lock** (flight computer, `Enter` or the J panel): the aircraft chases the locked vehicle
+**Chase lock** (Navigator, `Enter` or the J panel): the aircraft chases the locked vehicle
 on its own. An aeroplane flies lead pursuit, banking up to 75° and pulling the g that holds its
 height in the bank, faster than the target while far and bleeding off speed on the way in, then
 holds station a couple of hundred metres behind it, never below the terrain and structures
@@ -643,7 +660,7 @@ the blocks bear load.
   fallen. Rooftop pads and tower turrets already went with their tower.
 - **Roads.** A crater of 5 m radius or more on a road throws up a field of solid slabs and
   closes that stretch (`src/sim/roadDamage.ts`). Red bars mark each rim. Riders turn away or
-  swing round, the flight computer re-routes, and new routes avoid it. Up to 24 closures at
+  swing round, the Navigator re-routes, and new routes avoid it. Up to 24 closures at
   once; a world reset reopens them.
 - **Outlands landforms.** A mesa, pillar, dome or orb struck hard or caught in a blast is
   fractured like a building: the terrain forgets it and blocks fill its exact shape, so an
@@ -917,7 +934,7 @@ wind, surge, rain, scheduler lifecycle and actual Rapier ground motion.
     - Every planet has its own id, seed, generator version and surface configuration; cities,
       provinces and structures carry planet-scoped ids.
     - A portal terminal is a structure of the radial/communication family (§2E) at the end of a
-      pathed road, so the flight computer can route any ground vehicle to it. A closed terminal
+      pathed road, so the Navigator can route any ground vehicle to it. A closed terminal
       is a closed road (§14).
     - Crossing is server-confirmed: the server checks access, reserves the transfer and moves
       the player and vehicle once to a safe arrival point. The client reloads into the
@@ -1029,7 +1046,7 @@ with the debug panel and the archetype lab; in the game, **K** opens the inspect
 - **Light is architecture:** selective edges and emissive faces by role (structure, data,
   energy, entrance, process, warning) and per-structure activity states (active, idle, damaged,
   inactive). Painted skies and haze follow the region below.
-- **Roads:** every road is on one network. The flight computer's **Go to** drives ground
+- **Roads:** every road is on one network. The Navigator's **Go to** drives ground
   vehicles there (J): right lane, corner speeds, re-routing. Ground vehicles start on a road.
 
 ## The Grid (city, airport, autopilot)
@@ -1099,15 +1116,20 @@ with the debug panel and the archetype lab; in the game, **K** opens the inspect
 - **Autopilot (U / gamepad R3 / touch "Autopilot"):** holds heading, altitude and speed (hover,
   heading and forward speed on rotorcraft), takes off by itself from the runway, and climbs to
   clear buildings ahead. While engaged, stick pitch/roll and the throttle adjust its targets.
-- **Flight computer (J / touch More → "Flight computer"):** MechJeb-style modes on top of the
-  autopilot (`src/sim/flightAutopilot.ts`, navigation in `src/sim/nav.ts`): Hold (or a V/S
-  hold), Takeoff, Land (airplanes: join → initial fix → 3° glideslope and localizer → flare →
-  rollout on a runway long enough, at 1.3 × the design's stall speed; rotorcraft: any helipad,
-  rooftops included), Go to (every landing site, the hubs and the Grid Spire, clearing
-  buildings and terrain, then Orbit), Orbit and Level. The HUD shows approach guidance while
-  landing; a firm stick input takes over. The airplane test card ends with an autoland.
+- **The Navigator** (J, the **NAV** chip on screen, or touch More → *Navigator*; it used to be
+  called the flight computer): one computer for every way of getting about, always on screen as
+  the NAV chip, which shows what it is doing and where it is taking you. MechJeb-style modes on
+  top of the autopilot (`src/sim/flightAutopilot.ts`, navigation in `src/sim/nav.ts`): Hold (or
+  a V/S hold), Takeoff, Land (airplanes: join → initial fix → 3° glideslope and localizer →
+  flare → rollout on a runway long enough, at 1.3 × the design's stall speed; rotorcraft: any
+  helipad, rooftops included), Go to (every landing site, the hubs and the Grid Spire, clearing
+  buildings and terrain, then Orbit), Orbit and Level. Ground vehicles: Go to drives the road
+  network. **On foot** (`src/sim/footNav.ts`): *Walk to* takes your Bit to a destination along
+  the roads, on the kerb, and *Back to vehicle* (also U on foot) walks it back and gets in. The
+  HUD shows approach guidance while landing; a firm stick input (or walking yourself) takes
+  over. Blimps are not flown by it yet. The airplane test card ends with an autoland.
 
-Checks: `npm run city`, `npm run autopilot`, `npm run destruction`, `npm run design-pipeline`.
+Checks: `npm run city`, `npm run autopilot`, `npm run navigator`, `npm run destruction`, `npm run design-pipeline`.
 
 ### Credits
 

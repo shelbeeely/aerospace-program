@@ -1,5 +1,6 @@
 import type { Telemetry } from '../sim/telemetry.ts';
 import { TUNING } from '../tuning.ts';
+import { PROFILE_UI, type UiProfile } from './profiles.ts';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const MS_TO_KT = 1.943844;
@@ -66,6 +67,72 @@ export class Hud {
     apprUnit: $('h-appr-unit'),
   };
   private readonly cache = new Map<HTMLElement, string>();
+  private readonly root = $('hud');
+  private readonly nav = $<HTMLButtonElement>('nav-chip');
+  private profile: UiProfile | null = null;
+
+  constructor() {
+    // Each row is keyed by its value element (h-speed → speed; the bus row by its volts).
+    for (const row of this.root.querySelectorAll<HTMLElement>('.row')) {
+      const b = row.querySelector<HTMLElement>('b[id^="h-"]');
+      if (!b) continue;
+      const k = b.id.slice(2);
+      row.dataset.k = k === 'volts' ? 'bus' : k;
+    }
+    // What sits under the HUD (the NAV chip, the radar in portrait) follows its real height.
+    if (typeof ResizeObserver !== 'undefined') {
+      const place = () => {
+        if (this.root.classList.contains('open')) return;
+        const r = this.root.getBoundingClientRect();
+        if (r.height) document.body.style.setProperty('--hud-bottom', `${Math.round(r.bottom)}px`);
+      };
+      new ResizeObserver(place).observe(this.root);
+      window.addEventListener('resize', place);
+    }
+    // Touch: the compact strip opens into the full readout (and closes again) with a tap.
+    this.root.addEventListener('click', () => {
+      if (document.body.classList.contains('touch-ui')) this.root.classList.toggle('open');
+    });
+  }
+
+  /**
+   * Show what matters for this vehicle (or for the Bit on foot): the primary readouts lead, in
+   * order, and readouts that mean nothing for it are hidden.
+   */
+  setProfile(p: UiProfile): void {
+    if (p === this.profile) return;
+    this.profile = p;
+    const ui = PROFILE_UI[p];
+    this.root.dataset.profile = p;
+    for (const row of this.root.querySelectorAll<HTMLElement>('.row[data-k]')) {
+      const k = row.dataset.k!;
+      const at = ui.primary.indexOf(k as never);
+      row.classList.toggle('primary', at >= 0);
+      row.style.order = at >= 0 ? String(at) : '';
+      row.classList.toggle('na', ui.hide.includes(k));
+    }
+    const label = (k: string, text: string) => {
+      const span = this.root.querySelector<HTMLElement>(`.row[data-k="${k}"] > span`);
+      if (span) span.textContent = text;
+    };
+    label('speed', ui.speedLabel);
+    label('thr', ui.lever ?? 'THR');
+    this.root.classList.remove('open');
+  }
+
+  /**
+   * The Navigator chip: always on screen in flight, so the computer that can take you anywhere
+   * is one tap away. `mode` null = off.
+   */
+  setNav(s: { mode: string | null; detail: string; available: boolean }): void {
+    if (!this.nav) return;
+    const b = this.nav.querySelector('b') as HTMLElement | null;
+    const small = this.nav.querySelector('small') as HTMLElement | null;
+    this.nav.classList.toggle('on', s.mode !== null);
+    this.nav.classList.toggle('unavailable', !s.available);
+    if (b) this.set(b, s.mode ?? (s.available ? 'SET COURSE' : 'N/A'));
+    if (small) this.set(small, s.detail);
+  }
 
   private set(el: HTMLElement, text: string): void {
     if (this.cache.get(el) === text) return;
@@ -136,6 +203,7 @@ export class Hud {
       .filter(Boolean)
       .join('  ');
     this.set(this.el.flags, flags);
+    this.root.classList.toggle('grounded', t.onGround);
     this.el.stall.classList.toggle('hidden', !(t.stall > 0.35 && !t.onGround && t.airspeed > 5));
   }
 

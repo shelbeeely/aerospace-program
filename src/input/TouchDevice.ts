@@ -1,3 +1,4 @@
+import { PROFILE_UI, type UiProfile } from '../hud/profiles.ts';
 import { applyExpo, type Action, type InputContext, type InputDevice, type RawInput } from './types.ts';
 
 type Child = Node | string;
@@ -27,15 +28,25 @@ interface Drag {
  * - Right thumb: floating stick (centres where you touch). Drag down = nose up (stick back),
  *   sideways = roll. Springs back.
  * - Buttons: brake (hold), reset, camera, hangar (Studio), debug, help, fullscreen.
+ * - Per vehicle (src/hud/profiles.ts): the lever's name, the hints and the buttons follow the
+ *   vehicle; on foot the lever goes, the stick walks, FIRE / DROP become YES / NO and BOARD
+ *   gets back in. Hints show for the first few times a profile is used, then fade.
  */
 export class TouchDevice implements InputDevice {
   readonly root: HTMLElement;
   private readonly lever: HTMLElement;
   private readonly leverKnob: HTMLElement;
   private readonly leverLabel: HTMLElement;
+  private readonly leverValue: HTMLElement;
   private readonly stickZone: HTMLElement;
   private readonly stickBase: HTMLElement;
   private readonly stickKnob: HTMLElement;
+  private readonly leftHint: HTMLElement;
+  private readonly rightHint: HTMLElement;
+  private readonly fireBtn: HTMLElement;
+  private readonly fireAltBtn: HTMLElement;
+  private profile: UiProfile | null = null;
+  private hintTimer: ReturnType<typeof setTimeout> | null = null;
   private left: Drag | null = null;
   private right: Drag | null = null;
   private brake = false;
@@ -50,13 +61,17 @@ export class TouchDevice implements InputDevice {
   private readonly coarse = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
 
   constructor() {
-    this.leverKnob = el('div', 'lever-knob');
-    this.leverLabel = el('span', 'lever-label', 'THR');
-    this.lever = el('div', 'lever', el('div', 'lever-track'), this.leverKnob, this.leverLabel);
+    // The lever's name and setting ride on its knob, so they never spill over the HUD.
+    this.leverLabel = el('span', 'lever-label', 'POWER');
+    this.leverValue = el('b', 'lever-value', '0');
+    this.leverKnob = el('div', 'lever-knob', this.leverLabel, this.leverValue);
+    this.lever = el('div', 'lever', el('div', 'lever-track'), this.leverKnob);
     this.stickKnob = el('div', 'stick-knob');
     this.stickBase = el('div', 'stick-base', this.stickKnob);
-    this.stickZone = el('div', 'tz tz-right', this.stickBase, el('span', 'tz-hint', 'Drag down: nose up\nSideways: bank'));
-    const leftZone = el('div', 'tz tz-left', this.lever, el('span', 'tz-hint', 'Up: more power\nSideways: steer'));
+    this.rightHint = el('span', 'tz-hint', '');
+    this.leftHint = el('span', 'tz-hint', '');
+    this.stickZone = el('div', 'tz tz-right', this.stickBase, this.rightHint);
+    const leftZone = el('div', 'tz tz-left', this.lever, this.leftHint);
 
     const brake = el('button', 'tbtn tbtn-brake', 'BRAKE');
     brake.addEventListener('pointerdown', (e) => {
@@ -80,11 +95,13 @@ export class TouchDevice implements InputDevice {
     };
     const fire = hold('FIRE', 'tfire-1', (v) => (this.fire = v));
     const fireAlt = hold('DROP', 'tfire-2', (v) => (this.fireAlt = v));
+    this.fireBtn = fire;
+    this.fireAltBtn = fireAlt;
     const hackBtn = hold('HACK', 'tfire-3', (v) => (this.hack = v));
 
     let closeMenu = () => {};
-    const button = (label: string, title: string, action: Action | (() => void)) => {
-      const b = el('button', 'tbtn', label);
+    const button = (label: string, title: string, action: Action | (() => void), cls = 'tbtn') => {
+      const b = el('button', cls, label);
       b.title = title;
       b.setAttribute('aria-label', title);
       b.addEventListener('pointerdown', (e) => {
@@ -103,8 +120,8 @@ export class TouchDevice implements InputDevice {
       button('Reset world', 'Reset the whole world', 'resetWorld'),
       button('Previous craft', 'Previous craft', 'prevVehicle'),
       button('Next craft', 'Next craft', 'nextVehicle'),
-      button('Autopilot', 'Autopilot on / off', 'autopilot'),
-      button('Flight computer', 'Flight computer: land, go to, orbit', 'apPanel'),
+      button('Navigator', 'Navigator: set a course (go to, land, orbit, chase; on foot, walk there)', 'apPanel'),
+      button('Nav hold', 'Navigator: hold what you are doing now, on / off (on foot: walk back to the vehicle)', 'autopilot'),
       button('Debug & credits', 'Debug, weather and credits (give yourself credits here)', 'debug'),
       button('Flaps', 'Flaps: next detent', () => (this.flapCycle = true)),
       button('Weapons', 'Weapons loadout: next', 'loadout'),
@@ -125,13 +142,17 @@ export class TouchDevice implements InputDevice {
       const open = menu.classList.contains('hidden');
       menu.classList.toggle('hidden', !open); more.setAttribute('aria-expanded', String(open));
     });
+    more.textContent = '☰';
+    more.title = 'More';
+    more.setAttribute('aria-label', 'More controls');
     const bar = el('div', 'tbar',
-      button('Hangar', 'Hangar & Studio', 'studio'),
-      button('Camera', 'Camera: chase / orbit', 'camera'),
-      button('Controls', 'Controls', 'help'), more,
+      button('✦', 'Hangar & Studio', 'studio'),
+      button('◉', 'Camera: chase / orbit', 'camera'),
+      button('?', 'Controls and help', () => { this.actions.push('help'); this.showHints(); }), more,
     );
+    const board = button('BOARD', 'Get back in your vehicle', 'foot', 'tbtn tbtn-board');
 
-    this.root = el('div', 'touch hidden', leftZone, this.stickZone, brake, fire, fireAlt, hackBtn, bar, menu);
+    this.root = el('div', 'touch hidden', leftZone, this.stickZone, brake, fire, fireAlt, hackBtn, board, bar, menu);
     document.body.append(this.root);
 
     this.bindLever(leftZone);
@@ -203,7 +224,8 @@ export class TouchDevice implements InputDevice {
   read(raw: RawInput, ctx: InputContext): void {
     this.updateVisibility(ctx);
     this.lastThrottle = ctx.throttle;
-    this.leverLabel.textContent = `${ctx.profile === 'rotorcraft' ? 'LIFT' : 'POWER'} ${Math.round(ctx.throttle * 100)}%`;
+    this.setProfile(ctx.onFoot ? 'foot' : ctx.profile);
+    this.leverValue.textContent = `${Math.round(ctx.throttle * 100)}`;
     if (!this.visible) return;
     const expo = ctx.settings.expo;
 
@@ -216,7 +238,7 @@ export class TouchDevice implements InputDevice {
     const shownYaw = this.left ? Math.max(-1, Math.min(1, (this.left.x - this.left.x0) / 60)) : 0;
     this.leverKnob.style.bottom = `calc(${(this.lastThrottle * 100).toFixed(1)}% - 22px)`;
     this.leverKnob.style.transform = `translateX(calc(-50% + ${(shownYaw * 30).toFixed(0)}px))`;
-    if (this.left) raw.yaw += applyExpo(shownYaw, expo);
+    if (this.left && !ctx.onFoot) raw.yaw += applyExpo(shownYaw, expo);
 
     if (this.right) {
       const R = this.stickRadius();
@@ -240,6 +262,37 @@ export class TouchDevice implements InputDevice {
       raw.flapCycle = true;
       this.flapCycle = false;
     }
+  }
+
+  /** Relabel the controls for this vehicle (or for walking), and show its hints for a while. */
+  private setProfile(p: UiProfile): void {
+    if (p === this.profile) return;
+    this.profile = p;
+    const ui = PROFILE_UI[p];
+    this.leverLabel.textContent = ui.lever ?? '';
+    this.leftHint.textContent = ui.leftHint;
+    this.rightHint.textContent = ui.rightHint;
+    const foot = p === 'foot';
+    this.fireBtn.textContent = foot ? 'YES' : 'FIRE';
+    this.fireAltBtn.textContent = foot ? 'NO' : 'DROP';
+    if (foot) this.left = null;
+    // Hints: the first three times this profile comes up, for eight seconds.
+    const key = `aerospace.hints.${p}`;
+    let seen = 0;
+    try { seen = Number(localStorage.getItem(key) ?? 0) || 0; } catch { /* storage blocked */ }
+    if (this.hintTimer) clearTimeout(this.hintTimer);
+    this.root.classList.toggle('hints-on', seen < 3);
+    if (seen < 3) {
+      try { localStorage.setItem(key, String(seen + 1)); } catch { /* storage blocked */ }
+      this.hintTimer = setTimeout(() => this.root.classList.remove('hints-on'), 8000);
+    }
+  }
+
+  /** Show the hints again (the help button). */
+  showHints(): void {
+    if (this.hintTimer) clearTimeout(this.hintTimer);
+    this.root.classList.add('hints-on');
+    this.hintTimer = setTimeout(() => this.root.classList.remove('hints-on'), 8000);
   }
 
   private updateVisibility(ctx: InputContext): void {

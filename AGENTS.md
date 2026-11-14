@@ -277,7 +277,7 @@ universe, not a conventional open world decorated with neon.
 ## 14. Movement rules (project)
 
 - **Every road is pathed.** Streets, data highways and Outlands highways form one road graph.
-  The flight computer is general-purpose for all vehicles: a ground vehicle can be sent to any
+  The Navigator is general-purpose for all vehicles: a ground vehicle can be sent to any
   destination and drives there automatically along the network. Anything that adds, removes or
   blocks a road must keep the graph and the drawn ground in agreement. Islands of streets are
   linked to the network by connector roads (or removed if they cannot be), so there are none.
@@ -288,11 +288,23 @@ universe, not a conventional open world decorated with neon.
   fields and pads, one to a runway, and go around rather than land on an occupied one. Checks:
   `npm run traffic`, `npm run air`.
 - **A broken road is a closed road.** A crater that closes a road segment (`src/sim/roadDamage.ts`)
-  is a wall across the road to riders and to the flight computer, is left out of new routes, and
+  is a wall across the road to riders and to the Navigator, is left out of new routes, and
   is marked on the ground with a red bar at each rim. Anything else that blocks a road must do
   the same three things.
 - **A vehicle never runs into its own light wall** (Rapier collision groups,
   `src/sim/collisionGroups.ts`); its walls stay deadly to everyone else. Ground vehicles reverse.
+
+## 19. Screen and controls (project)
+
+- **The screen follows the vehicle.** `src/hud/profiles.ts` says, per profile (airplane,
+  rotorcraft, lighter-than-air, ground, on foot), which readouts lead the HUD, what the lever is
+  called, the thumb hints and which buttons show. A new kind of vehicle gets a profile there,
+  not special cases in the HUD or the touch code.
+- **Nothing overlaps on a phone.** HUD strip, icon bar, radar, NAV chip, lever, stick and
+  buttons each keep their own place in portrait and landscape.
+- **The Navigator** (once called the flight computer) is one computer for every vehicle and for
+  the player's Bit on foot (`src/sim/flightAutopilot.ts`, `src/sim/footNav.ts`), always on
+  screen as the NAV chip. Check: `npm run navigator`.
 
 ## 17. People (project)
 

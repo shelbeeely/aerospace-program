@@ -592,13 +592,15 @@ export class Simulation {
   }
 
   /** Get back in. Returns why not, or null when aboard. */
+  /** How close (m, from the vehicle's centre) the Bit must be to get back in. */
+  boardingReach(): number {
+    const b = craftBounds(this.craft.def);
+    return ON_FOOT.reach + Math.max(b.max.x - b.min.x, b.max.z - b.min.z) / 2;
+  }
+
   boardVehicle(): string | null {
     if (!this.walker.active) return 'Already aboard';
-    if (!this.exploded) {
-      const b = craftBounds(this.craft.def);
-      const reach = ON_FOOT.reach + Math.max(b.max.x - b.min.x, b.max.z - b.min.z) / 2;
-      if (Math.hypot(this.walker.x - this.position.x, this.walker.z - this.position.z) > reach) return 'Too far from your vehicle';
-    }
+    if (!this.exploded && Math.hypot(this.walker.x - this.position.x, this.walker.z - this.position.z) > this.boardingReach()) return 'Too far from your vehicle';
     this.walker.board();
     return null;
   }
