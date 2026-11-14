@@ -23,6 +23,7 @@ npm run air            # AI air traffic: flights between fields and pads, cleara
 npm run radar          # radar and planet map: contacts, heading-up scope, wrap-aware geometry
 npm run lock           # target lock, homing missiles, turret traverse/elevation and auto-aim, chase mode
 npm run turrets        # tower turrets: placement, streaming, armed-only fire, line of sight, kills, fracture
+npm run programs       # programs: one street kind per side, posts by territory, walking the road margins, sentinels, tenders mending roads, scavengers, brokers
 npm run teams          # teams: liveries, territory, the AI war, friendly fire, capture, freelancers, mercenaries
 npm run wmd            # railgun, nuke and EMP: buying, the dropped nuke (chute, airburst, drop marker), the fireball and shock ring, the EMP's effects
 npm run strikes        # called-in strikes and orders: focus points, barrage, EMP strike, nuke bomber, interception, attack orders
@@ -359,6 +360,31 @@ by which of four figures they show (`src/people/bit.ts`).
   checks.
 - Not yet: other players do not see you on foot; and the world still streams around your
   parked vehicle, so stay within a few hundred metres of it.
+
+## Programs: the working population of the streets
+
+Beside the Bits (who belong to everyone), the streets are walked by programs: one kind for each
+side in the war, and only that side's (`src/sim/programs.ts`, drawn by
+`src/render/ProgramsView.ts`). Every road corner is a post or not by a hash of its indices, and
+what stands there depends on who holds the district: capture a district and, as it streams back
+in, its streets fill with your side's programs. They walk the margins of the road network in
+file, from corner to corner, never into a lot and never along a closed road, and keep mostly to
+their own territory.
+
+| Side | Program | Looks like | What it does |
+|---|---|---|---|
+| Cyan | **Archivist** | a tall hexagonal bipyramid, a lit data cube riding over it | wanders Cyan districts and stops at block corners to upload into the buildings (a thin beam) |
+| Red | **Sentinel** | an inverted square column under a red halo, a slit of light for an eye | patrols in threes. A player on foot who is not Red is warned (NO, halo flashing) within 16 m, and derezzed after 2.5 s inside 9 m. Keep your distance and the patrol goes back to its beat. Red players get a YES salute |
+| Amber | **Tender** | a squat octagonal drum with an amber band | walks (hurrying) to a broken road within 700 m and mends it in 24 s: the closure lifts, the barriers and rubble go, and traffic and the flight computer can use the road again |
+| Freelancers | **Scavenger** | a low tetrahedron, fragments circling it | bands of 2 to 4 that hurry to any fresh crater within 800 m and pick it over |
+| Mercenaries | **Broker** | a cube stood on its corner over a disc ringed in light | keeps its corner. Say YES beside one to renew every hired mercenary's contract for 2 more minutes (150 credits) |
+
+Each program answers you in the Bits' colours (YES yellow, NO red). Archivists answer only
+Cyan players with YES and Sentinels only Red players. Run over or caught in a blast, a program
+derezzes into chips of its light, and its post fills again after 3 minutes. Running down a
+program that isn't on your side pays 25 credits. About 40 to 50 programs walk the streets
+round you at once (180 at most), alongside up to 340 Bits (9 per block, up from 6).
+Check: `npm run programs`.
 
 ## Light-cycle traffic
 
