@@ -204,7 +204,7 @@ stick expo, haptics, and touch controls auto/on/off.
 | I | weapons loadout: fitted (when the craft has weapon parts), unarmed, guns, cannon, guns + bombs, guns + missiles, tank, laser + discs, pulse + missiles, full |
 | Tab | planet map: every vehicle in the world (or click the radar) |
 | Shift+Tab | the strike globe: pick a spot, send aircraft, call in strikes, zoom in to the buildings (or the map's Globe button) |
-| ` | drop the nuke or launch the EMP carried (bought in the ' panel's Armory) |
+| ` | drop the nuke or launch the EMP carried (bought in the ' panel's Armory); on foot, set it down on a fuse (or pick a set one back up) |
 | ; (hold) | hacking beam on the locked target (needs a hacking charge from the Armory) |
 | ← → ↑ ↓ | turret traverse and elevation (tank, or any craft with a turret part); gamepad: LB + right stick |
 | / | turret back to the nose |
@@ -333,6 +333,21 @@ by which of four figures they show (`src/people/bit.ts`).
   W/S walk, A/D turn, Q/E sidestep; V says YES and O says NO, and the Bits in earshot turn and
   answer. Walls stop you, kerbs and low steps don't. The vehicle stays parked where you left
   it; `=` beside it gets back in. A new vehicle (R) starts with you aboard.
+- **Style your Bit.** The BIT row in the hangar card picks its idle light (bright blue, cyan or
+  white), its size, which idle figure it shows (pulsing between the two, compound only or
+  triambic only) and how fast it spins (`src/people/bitStyle.ts`, remembered in the browser).
+  YES is always yellow and NO always red: those colours are words.
+- **Errands on foot** (`src/sim/errands.ts`), the first of the roadmap's deliveries. Some
+  Bits have work for you, redrawn every 90 s: a small lit cube over one indoors means a packet
+  to deliver, a small lit ring over one on the kerb means it wants to be shown the way to a new
+  home. Walk up and say YES (V). The TASK row in the HUD gives the distance, bearing and pay,
+  and a thin beam of light stands at the destination's door. A packet is delivered when you
+  walk into the destination room; an escorted Bit follows you a few metres behind, on the
+  trail you walk (so never through a wall), and goes in when you reach the door. Pay is 40
+  credits plus 1 for every 6 m. NO (O) drops the errand and the Bit walks home.
+- **Charges by hand.** On foot, `` ` `` sets the carried nuke or EMP down where you stand on a
+  fuse (nuke 60 s, EMP 15 s); the HUD counts it down. `` ` `` beside a set charge picks it back
+  up, except in its last 5 s. Get clear: the fireball derezzes Bits and you on foot.
 - Drawn by `src/render/BitsView.ts` (one instanced mesh per figure, so a crowd costs four draw
   calls) and `src/render/BitFigure.ts` (your own). Check: `npm run bit`.
 - **Destruction reaches them.** When a building is wrecked its people say NO and run out by
@@ -408,7 +423,9 @@ with a third of the region cells, so territory comes in large contiguous patches
   structure pieces), six hit points each; 0.4 shots a second, 20 rounds, a hard kick. Its streak
   lingers white-hot for half a second.
 - **Nuke and EMP** (`src/sim/strategic.ts`) are bought with credits in the Armory (the `'`
-  panel): nuke 1500, EMP 800, one carried at a time (remembered). **`** releases it.
+  panel): nuke 1500, EMP 800, one carried at a time (remembered). **`** releases it. On foot
+  as a Bit, **`** sets it down on a fuse instead (nuke 60 s, EMP 15 s; see *Bits*): it goes
+  off where it stands, as if it had burst at ground level.
   - **Nuke:** a free-fall bomb dropped from the bomb bay with your craft's speed; it never homes.
     A drogue of light opens after 1.5 s and slows its fall toward 45 m/s; it arms after 4 s and
     bursts 300 m above the ground (an impact before it arms is a dud). While you carry one in the
@@ -900,7 +917,7 @@ wind, surge, rain, scheduler lifecycle and actual Rapier ground motion.
 2. Hangar: snap-together parts, craft saved as JSON part graphs
 3. Procedural world: noise terrain, chunk loading in workers, floating origin
 4. Rotor module: multirotor drones (blade element rotors + PID flight controllers) ✅
-5. Missions: deliveries between generated points of interest
+5. Missions: deliveries between generated points of interest (begun: packet and escort errands on foot)
 6. Helicopters ✅, blimps ✅, VTOL (next: tilt-rotors from the same Rotor module)
 7. **The Grid as a planet** (in progress): R 8 km, wraps around, real orbits ✅, curved
    rendering ✅; next: dense procedural city over the whole globe (streamed in chunks),

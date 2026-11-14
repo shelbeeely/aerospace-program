@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { BIT, BIT_LOOK, BIT_SHAPES, type BitState } from '../people/bit.ts';
+import { DEFAULT_BIT_STYLE, STYLE_LIGHT, STYLE_SIZE, STYLE_SPIN, styledState, type BitStyle } from '../people/bitStyle.ts';
 import { neonFillMaterial, neonTint, neonize } from './neon.ts';
 
 export const BIT_STATES: BitState[] = ['idle1', 'idle2', 'yes', 'no'];
@@ -44,36 +45,62 @@ export class BitFigure {
   /** 0..1: how badly hurt (flickers the light). */
   damage = 0;
 
-  constructor() {
+  /** How it looks (the player's own Bit can be styled; the people keep the default). */
+  private style: BitStyle = DEFAULT_BIT_STYLE;
+
+  constructor(style: BitStyle = DEFAULT_BIT_STYLE) {
     this.spinner.position.y = BIT.hover;
     this.root.add(this.spinner);
-    for (const s of BIT_STATES) {
-      const look = BIT_LOOK[s];
-      const fill = neonFillMaterial(neonTint(look.color).multiplyScalar(0.3), { flatShading: true });
-      fill.emissive = new THREE.Color(look.color);
-      fill.emissiveIntensity = 0.5;
-      const mesh = new THREE.Mesh(bitGeometry(s), fill);
-      const edges = neonize(bitGeometry(s), neonTint(look.color), { thresholdAngle: 8 });
-      mesh.add(edges);
-      mesh.scale.setScalar(look.radius);
-      mesh.visible = false;
-      this.spinner.add(mesh);
-      this.figures.set(s, mesh);
-      this.fills.set(s, fill);
-      this.lines.push(edges);
-    }
+    this.style = style;
+    for (const s of BIT_STATES) this.build(s);
     // The ground link: a soft disc of the figure's light under it, so it reads as standing there.
     this.poolMat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.25 });
     this.pool = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.5, 24).rotateX(-Math.PI / 2), this.poolMat);
     this.pool.position.y = 0.04;
     this.root.add(this.pool);
+    this.setStyle(style);
     this.show('idle1');
+  }
+
+  /** The colour a figure shows in this style: the idle figures take the style's light. */
+  private colorOf(s: BitState): string {
+    return s === 'idle1' || s === 'idle2' ? STYLE_LIGHT[this.style.light] : BIT_LOOK[s].color;
+  }
+
+  private build(s: BitState): void {
+    const old = this.figures.get(s);
+    if (old) { old.removeFromParent(); this.fills.get(s)!.dispose(); }
+    const color = this.colorOf(s);
+    const fill = neonFillMaterial(neonTint(color).multiplyScalar(0.3), { flatShading: true });
+    fill.emissive = new THREE.Color(color);
+    fill.emissiveIntensity = 0.5;
+    const mesh = new THREE.Mesh(bitGeometry(s), fill);
+    const edges = neonize(bitGeometry(s), neonTint(color), { thresholdAngle: 8 });
+    mesh.add(edges);
+    mesh.scale.setScalar(BIT_LOOK[s].radius);
+    mesh.visible = s === this.state;
+    this.spinner.add(mesh);
+    this.figures.set(s, mesh);
+    this.fills.set(s, fill);
+    this.lines.push(edges);
+  }
+
+  /** Restyle it (the player's own Bit): the idle figures in the new light, its size and turn. */
+  setStyle(style: BitStyle): void {
+    const relight = style.light !== this.style.light;
+    this.style = style;
+    if (relight) { this.build('idle1'); this.build('idle2'); }
+    const k = STYLE_SIZE[style.size];
+    this.spinner.scale.setScalar(k);
+    this.spinner.position.y = BIT.hover * (0.6 + 0.4 * k);
+    this.pool.scale.setScalar(k);
+    this.show(this.state);
   }
 
   private show(state: BitState): void {
     this.state = state;
     for (const [s, m] of this.figures) m.visible = s === state;
-    this.poolMat.color.copy(neonTint(BIT_LOOK[state].color));
+    this.poolMat.color.copy(neonTint(this.colorOf(state)));
   }
 
   /** Show `next` at `time` (s): the root sits on the ground under the figure. */
@@ -85,9 +112,10 @@ export class BitFigure {
       this.pool.visible = false;
       return;
     }
+    next = styledState(next, this.style);
     if (next !== this.state) this.show(next);
     const answering = next === 'yes' || next === 'no';
-    this.angle += dt * Math.PI * 2 * (answering ? BIT.answerSpin : BIT.spin);
+    this.angle += dt * Math.PI * 2 * (answering ? BIT.answerSpin : BIT.spin * STYLE_SPIN[this.style.spin]);
     this.spinner.rotation.set(0.3, this.angle, 0);
     // Light state: idle dim, answering bright, damaged flickering.
     const flicker = this.damage > 0.05 && Math.sin(time * 37) * Math.sin(time * 11.3) > 1 - this.damage * 1.6 ? 0.25 : 1;
