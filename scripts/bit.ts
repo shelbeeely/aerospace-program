@@ -14,7 +14,10 @@
  */
 import { BIT, BIT_LOOK, BIT_SHAPES, bitState, type BitState } from '../src/people/bit.ts';
 import { LIGHT_CAR } from '../src/craft/lightCar.ts';
-import { BITS, BitPopulation, lotPopulation, type BitHome, type BitPerson } from '../src/sim/bits.ts';
+import { BITS, BitPopulation, BitWalker, lotPopulation, type BitHome, type BitPerson } from '../src/sim/bits.ts';
+import { Errands, ERRANDS } from '../src/sim/errands.ts';
+import { CHARGE, STRATEGIC } from '../src/sim/strategic.ts';
+import { DEFAULT_BIT_STYLE, sanitizeBitStyle, styledState } from '../src/people/bitStyle.ts';
 import { KIT, kitSolid } from '../src/world/kit.ts';
 import { kitRoomId } from '../src/world/structures.ts';
 import type { RoomDoor } from '../src/arch/InteriorGenerator.ts';
@@ -388,6 +391,99 @@ console.log('\n--- destruction');
   check(Math.hypot(sim.walker.x - at[0], sim.walker.z - at[1]) < 0.01, 'down, they cannot walk');
   for (let i = 0; i < (TUNING.respawnDelay + 1) * 120; i++) sim.step(neutral);
   check(!sim.walker.active, 'and a moment later they are back in their vehicle');
+}
+
+console.log('\n--- charges set down by hand');
+{
+  const sim = new Simulation(LIGHT_CAR);
+  sim.traffic.enabled = false;
+  for (let i = 0; i < 600; i++) sim.step(neutral);
+  sim.strategic = 'nuke';
+  check(sim.placeStrategic() === 'Set charges down on foot' && sim.strategic === 'nuke', 'in a vehicle, ` does not set a charge down');
+  check(sim.exitVehicle() === null, 'the player steps out');
+  check(sim.placeStrategic() === null && sim.strategic === null && sim.charges.length === 1 && sim.charges[0].fuse === CHARGE.fuse.nuke, 'on foot, the nuke carried is set down with its fuse running', `${CHARGE.fuse.nuke} s`);
+  check(sim.placeStrategic() === null && sim.strategic === 'nuke' && sim.charges.length === 0, 'standing over it, ` picks it up again (disarmed)');
+  check(sim.placeStrategic() === null, 'set down again');
+  const c = sim.charges[0];
+  // Run the fuse down to its last seconds: too late to pick it up.
+  for (let i = 0; i < (CHARGE.fuse.nuke - CHARGE.lockout + 1) * 120; i++) sim.step(neutral);
+  check(sim.placeStrategic() === 'Too late to pick it up: run' && sim.charges.length === 1, 'in its last seconds it cannot be picked up');
+  const blasts = sim.blasts.length;
+  for (let i = 0; i < (CHARGE.lockout + 1) * 120; i++) sim.step(neutral);
+  const b = sim.blasts[sim.blasts.length - 1];
+  check(sim.charges.length === 0 && sim.blasts.length === blasts + 1 && b.kind === 'nuke' && Math.hypot(b.x - c.x, b.z - c.z) < 1, 'when the fuse runs out it goes off where it was set');
+  check(sim.walker.downAt !== null && sim.exploded, 'standing beside it, the player and the vehicle are caught in the fireball');
+  check(sim.bits.people.every((p) => Math.hypot(p.x - c.x, p.z - c.z) > STRATEGIC.nuke.fireball), 'nobody is left inside the fireball');
+}
+
+console.log('\n--- your Bit\'s style');
+{
+  const bad = sanitizeBitStyle({ light: 'red', size: 'huge', idle: 'compound', spin: 42 });
+  check(bad.light === DEFAULT_BIT_STYLE.light && bad.size === DEFAULT_BIT_STYLE.size && bad.idle === 'compound' && bad.spin === DEFAULT_BIT_STYLE.spin, 'a style read back keeps what is valid and drops the rest (no red or yellow idle light)');
+  let answers = true;
+  for (const idle of ['pulse', 'compound', 'triambic'] as const) for (const st of ['yes', 'no'] as const) if (styledState(st, { ...DEFAULT_BIT_STYLE, idle }) !== st) answers = false;
+  check(answers && styledState('idle1', { ...DEFAULT_BIT_STYLE, idle: 'triambic' }) === 'idle2' && styledState('idle2', { ...DEFAULT_BIT_STYLE, idle: 'pulse' }) === 'idle2', 'a style can hold the idle figure but never changes YES or NO');
+}
+
+console.log('\n--- errands on foot');
+{
+  const c = { x: -2600, z: -1500 };
+  const pop = new BitPopulation();
+  pop.step(1 / 30, 0, c);
+  const er = new Errands();
+  const offers = (t: number) => pop.people.map((p) => er.offerOf(p, t)).join(',');
+  check(offers(10) === offers(20) && offers(10) !== offers(10 + ERRANDS.epoch * 3), 'what the people ask for holds for a while, then changes');
+  const asking = (kind: 'courier' | 'escort') => pop.people.find((p) => er.offerOf(p, 30) === kind);
+  const walker = new BitWalker();
+  // Courier: YES beside a Bit with a packet, then walk into the room it goes to.
+  const giver = asking('courier');
+  check(!!giver, 'test setup: a Bit indoors with a packet to send');
+  if (giver) {
+    walker.exit(giver.x + 2, giver.y - BIT.hover, giver.z, 0);
+    const word = er.say('yes', walker, pop, 30);
+    const e = er.active;
+    check(!!e && e.kind === 'courier' && !!word && e.to.id !== giver.home.room!.id && e.to.distance >= 40, 'YES beside it takes the delivery to another building', word ?? 'nothing');
+    if (e) {
+      check(er.step(31, walker, pop) === null, 'not done yet');
+      walker.x = (e.to.x0 + e.to.x1) / 2; walker.z = (e.to.z0 + e.to.z1) / 2; walker.y = e.to.y;
+      const done = er.step(32, walker, pop);
+      check(!!done && 'reward' in done && done.reward === e.reward && !er.active && er.completed === 1, 'walking into that room delivers it and pays', done && 'reward' in done ? `${done.reward} credits` : 'not delivered');
+    }
+  }
+  // Escort: the Bit follows the player's trail to its new building and goes in.
+  const lost = asking('escort');
+  check(!!lost, 'test setup: a Bit on the kerb that wants to move');
+  if (lost) {
+    walker.exit(lost.x + 2, 0, lost.z, 0);
+    er.say('yes', walker, pop, 40);
+    const e = er.active;
+    check(!!e && e.kind === 'escort' && lost.place === 'follow', 'YES beside it: it follows');
+    if (e) {
+      // Walk there: along the kerb line out of the lot, then straight to the door (the test's path stands for the player's).
+      const to = e.to.door;
+      const steps = Math.ceil(Math.hypot(to.x - walker.x, to.z - walker.z) / 0.25);
+      const x0 = walker.x, z0 = walker.z;
+      let t = 40, done: ReturnType<Errands['step']> = null, maxGap = 0;
+      for (let k = 1; k <= steps && !done; k++) {
+        walker.x = x0 + ((to.x - x0) * k) / steps; walker.z = z0 + ((to.z - z0) * k) / steps;
+        t += 1 / 30;
+        pop.step(1 / 30, t, walker);
+        done = er.step(t, walker, pop);
+        if (lost.place === 'follow') maxGap = Math.max(maxGap, Math.hypot(lost.x - walker.x, lost.z - walker.z));
+      }
+      for (let k = 0; k < 30 * 20 && !done; k++) { t += 1 / 30; pop.step(1 / 30, t, walker); done = er.step(t, walker, pop); }
+      check(maxGap < 12, 'it keeps up, a few metres behind', `${maxGap.toFixed(1)} m at most`);
+      check(!!done && 'reward' in done && lost.place === 'way' && lost.home.room?.id === e.to.id, 'at the door it goes into its new building, and the player is paid', done && 'reward' in done ? `${done.reward} credits` : JSON.stringify(done));
+    }
+  }
+  // NO drops an errand: an escorted Bit walks home the way it came.
+  const another = pop.people.find((p) => er.offerOf(p, 200) === 'escort');
+  if (another) {
+    walker.exit(another.x + 2, 0, another.z, 0);
+    er.say('yes', walker, pop, 200);
+    const word = er.say('no', walker, pop, 201);
+    check(!er.active && another.place === 'way' && another.then === 'kerb' && !!word, 'NO drops the errand; the Bit says NO and walks back to its kerb', word ?? '');
+  }
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nAll Bit checks passed');

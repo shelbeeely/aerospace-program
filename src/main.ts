@@ -39,6 +39,9 @@ import { GLOBE_VIEW } from './render/cityGround.ts';
 import { TrailView } from './render/TrailView.ts';
 import { TrafficView } from './render/TrafficView.ts';
 import { BitsView } from './render/BitsView.ts';
+import { BIT_STYLE_CHOICES, sanitizeBitStyle, STYLE_LIGHT } from './people/bitStyle.ts';
+import { ChargesView } from './render/ChargesView.ts';
+import { bearingOf } from './sim/errands.ts';
 import { ExplosionView } from './render/ExplosionView.ts';
 import { applyCurvature, curveOn, curveOrigin } from './render/curvature.ts';
 import { updateSkyPlanet } from './render/neon.ts';
@@ -215,6 +218,8 @@ async function start() {
   const trailView = new TrailView(scene, sim.trails);
   const trafficView = new TrafficView(scene, sim.traffic);
   const bitsView = new BitsView(scene, sim.bits, sim.walker);
+  const chargesView = new ChargesView(scene);
+  bitsView.setErrands(sim.errands);
   const chipsView = new ChipsView(scene, sim.chips);
   const explosionView = new ExplosionView(scene);
   const weaponsView = new WeaponsView(scene, () => sim.allWeapons());
@@ -622,7 +627,7 @@ async function start() {
         row('SPAN', `${(span * 2).toFixed(1)} m`) +
         row('T/W', tw),
     );
-    craftCard.append(teamPicker(), spawnPicker(), loadoutPicker(), reinforcePanel());
+    craftCard.append(teamPicker(), bitPicker(), spawnPicker(), loadoutPicker(), reinforcePanel());
   };
   /**
    * Choose the craft on the main (hangar) screen: every built-in and saved design in one list,
@@ -732,6 +737,40 @@ async function start() {
   // The street search reads the city's obstacle height map: build it while idle, not mid-respawn.
   setTimeout(() => obstacleTop(0, 0), 4000);
   /** TEAM: which side you fly for (your livery, your turrets, your wingmen). */
+  // The player's own Bit: its style, chosen in the hangar and remembered.
+  const BIT_STYLE_STORAGE = 'bitStyle';
+  let bitStyle = sanitizeBitStyle((() => { try { return JSON.parse(localStorage.getItem(BIT_STYLE_STORAGE) ?? 'null'); } catch { return null; } })());
+  bitsView.setStyle(bitStyle);
+  const bitPicker = () => {
+    const wrap = document.createElement('div');
+    wrap.className = 'spawn-pick bit-pick';
+    const name = document.createElement('span');
+    name.textContent = 'BIT';
+    name.title = 'Your Bit on foot (= steps out of a stopped vehicle)';
+    wrap.append(name);
+    for (const key of ['light', 'size', 'idle', 'spin'] as const) {
+      const sel = document.createElement('select');
+      sel.setAttribute('aria-label', `Bit ${key}`);
+      for (const [v, label] of BIT_STYLE_CHOICES[key]) {
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = label;
+        if (key === 'light') o.style.color = STYLE_LIGHT[v as keyof typeof STYLE_LIGHT];
+        sel.append(o);
+      }
+      sel.value = bitStyle[key];
+      if (key === 'light') sel.style.color = STYLE_LIGHT[bitStyle.light];
+      sel.addEventListener('change', () => {
+        bitStyle = sanitizeBitStyle({ ...bitStyle, [key]: sel.value });
+        bitsView.setStyle(bitStyle);
+        if (key === 'light') sel.style.color = STYLE_LIGHT[bitStyle.light];
+        try { localStorage.setItem(BIT_STYLE_STORAGE, JSON.stringify(bitStyle)); } catch { /* not remembered */ }
+        sel.blur();
+      });
+      wrap.append(sel);
+    }
+    return wrap;
+  };
   const teamPicker = () => {
     const label = document.createElement('label');
     label.className = 'spawn-pick team-pick';
@@ -1194,7 +1233,7 @@ async function start() {
         else if (sim.walker.active) { autopilot.disengage(); toast('On foot · W/S walk, A/D turn, Q/E sidestep · V says YES, O says NO · = gets back in'); }
         else { player.reset(); toast('Aboard'); }
       }
-      else if (a === 'strategic') toast(sim.launchStrategic() ?? 'Launched');
+      else if (a === 'strategic') { if (sim.walker.active) { const why = sim.placeStrategic(); if (why) toast(why); } else toast(sim.launchStrategic() ?? 'Launched'); }
       else if (a === 'help') {
         controlsPanel.render(); // reflect the current profile / devices
         hud.toggleHelp();
@@ -1226,8 +1265,9 @@ async function start() {
     sim.hackHeld = trig.hack && !onFoot;
     document.body.classList.toggle('hacking', sim.hackCharges > 0);
     // On foot the triggers are the Bit's two answers; the people in earshot answer back.
-    if (onFoot && (trig.primary || trig.secondary) && sim.walker.say(trig.primary ? 'yes' : 'no', sim.time)) {
-      sim.bits.hear(sim.walker.x, sim.walker.z, sim.time);
+    if (onFoot && (trig.primary || trig.secondary)) {
+      const word = sim.speak(trig.primary ? 'yes' : 'no');
+      if (word) toast(word);
     }
     if (onFoot !== wasOnFoot) {
       wasOnFoot = onFoot;
@@ -1519,6 +1559,7 @@ async function start() {
     const v = sim.craft.body.linvel();
     velocity.set(v.x, v.y, v.z);
     bitsView.update(sim.time, alpha);
+    chargesView.update(sim.time, sim.charges);
     // On foot the camera follows the Bit, not the parked vehicle.
     if (sim.walker.active) {
       const w = sim.walker;
@@ -1609,7 +1650,8 @@ async function start() {
     const mercs = sim.airTraffic.mercs();
     {
       const inFlight = sim.weapons.projectiles.find((p) => p.kind === 'nuke' || p.kind === 'emp');
-      hud.setStrategic({ carried: sim.strategic, flight: inFlight ? inFlight.kind : null, emp: Math.max(0, sim.empUntil - sim.time) });
+      const set = sim.charges[0];
+      hud.setStrategic({ carried: sim.strategic, flight: inFlight ? inFlight.kind : null, emp: Math.max(0, sim.empUntil - sim.time), onFoot: sim.walker.active, set: set ? { kind: set.kind, left: set.setAt + set.fuse - sim.time } : null });
     }
     if (sim.hackCharges !== savedHacks) {
       savedHacks = sim.hackCharges;
@@ -1620,6 +1662,11 @@ async function start() {
       try {
         localStorage.setItem(STRATEGIC_STORAGE, sim.strategic ?? '');
       } catch { /* not remembered */ }
+    }
+    {
+      const t = sim.errands.target();
+      const from = sim.walker.active ? sim.walker : sim.position;
+      hud.setTask(t ? { kind: t.kind, range: Math.hypot(t.x - from.x, t.z - from.z), bearing: bearingOf(t.x - from.x, t.z - from.z), reward: t.reward } : null);
     }
     hud.setMercs(sim.credits > 0 || mercs.length ? { credits: sim.credits, hired: mercs.length, soonest: Math.min(...mercs.map((f) => f.mercUntil - sim.time)) } : null);
     fpsFrames++;

@@ -13,6 +13,7 @@ import { CITY, COAST, isSea, LAYOUT, PLANET } from './layout.ts';
 import { terrainHeight } from './terrain.ts';
 import { BIT, BIT_LOOK } from '../people/bit.ts';
 import { RoadDamage } from './roadDamage.ts';
+import { Errands } from './errands.ts';
 import { BitPopulation, BitWalker, ON_FOOT, type BitThreat, type WalkInput } from './bits.ts';
 import { TrailSystem } from './trails.ts';
 import { TrailEmitter } from '../modules/TrailEmitter.ts';
@@ -27,7 +28,7 @@ import { craftBounds, WEAPON_DAMAGE, WEAPONS, WeaponSystem, type Mount, type Str
 import { AiAirTraffic, type AiFlyer, type AirTarget, type Foe } from './aiTraffic.ts';
 import { atWar, hostile, isTeam, resetDiplomacy, setWar, sideLight, sideLivery, sideName, TEAMS, type Side, type Team } from './teams.ts';
 import { CREDITS, mercPrice } from './mercenaries.ts';
-import { STRATEGIC, strategicPrice, type StrategicBlast } from './strategic.ts';
+import { CHARGE, STRATEGIC, strategicPrice, type StrategicBlast } from './strategic.ts';
 import { GroundTurretSystem, lineOfSight, runwayDistance, TURRET_HEAD_Y, type GroundTurret } from './groundTurrets.ts';
 import { HACK, HackBeam, type HackCandidate } from './hacking.ts';
 import { circuitOf } from '../craft/style1982.ts';
@@ -364,6 +365,62 @@ export class Simulation {
     return null;
   }
 
+  /** Errands on foot: courier deliveries and escorts between the buildings' rooms. */
+  readonly errands = new Errands();
+
+  /**
+   * The player on foot says YES or NO: the Bits in earshot answer, and it may take up (YES beside
+   * a Bit that is asking) or drop (NO) an errand. Returns a word for the player, if any.
+   */
+  speak(answer: 'yes' | 'no'): string | null {
+    const w = this.walker;
+    if (!w.active || w.downAt !== null || !w.say(answer, this.time)) return null;
+    const word = this.errands.say(answer, w, this.bits, this.time);
+    this.bits.hear(w.x, w.z, this.time);
+    return word;
+  }
+
+  /** Strategic charges set down by hand (on foot), oldest first. */
+  readonly charges: Array<{ kind: StrategicKind; x: number; y: number; z: number; setAt: number; fuse: number }> = [];
+
+  /**
+   * On foot: set the strategic weapon carried down on the ground just ahead, its fuse running;
+   * or, standing over one already set, pick it up again. Returns why not, or null.
+   */
+  placeStrategic(): string | null {
+    const w = this.walker;
+    if (!w.active || w.downAt !== null) return 'Set charges down on foot';
+    const i = this.charges.findIndex((c) => Math.hypot(c.x - w.x, c.z - w.z) < CHARGE.reach);
+    if (i >= 0) {
+      const c = this.charges[i];
+      if (c.setAt + c.fuse - this.time < CHARGE.lockout) return 'Too late to pick it up: run';
+      if (this.strategic) return 'Already carrying one';
+      this.charges.splice(i, 1);
+      this.strategic = c.kind;
+      this.notice(`${STRATEGIC[c.kind].label} picked up: disarmed`);
+      return null;
+    }
+    if (!this.strategic) return 'No strategic weapon: buy one with credits (\')';
+    const kind = this.strategic;
+    const x = w.x - Math.sin(w.yaw) * 1.5, z = w.z - Math.cos(w.yaw) * 1.5;
+    this.charges.push({ kind, x, y: w.y, z, setAt: this.time, fuse: CHARGE.fuse[kind] });
+    this.strategic = null;
+    this.bits.scare(x, z, 40, this.time);
+    this.notice(`${STRATEGIC[kind].label} set: ${CHARGE.fuse[kind]} s · \` beside it picks it up again`);
+    return null;
+  }
+
+  /** Charges whose fuse has run out go off. */
+  private fuseCharges(): void {
+    for (let i = this.charges.length - 1; i >= 0; i--) {
+      const c = this.charges[i];
+      if (this.time < c.setAt + c.fuse) continue;
+      this.charges.splice(i, 1);
+      if (c.kind === 'nuke') this.detonateNuke(c.x, c.y + 1, c.z, this.team, true);
+      else this.detonateEmp(c.x, c.y + 1, c.z, true);
+    }
+  }
+
   /** Launch the strategic weapon carried. Returns why not, or null on success. */
   launchStrategic(): string | null {
     if (!this.strategic) return 'No strategic weapon: buy one with credits (\')';
@@ -425,6 +482,9 @@ export class Simulation {
         } else for (const p of [...this.craft.parts]) this.hazardDamage(p.id, (this.damage.maxHp.get(p.id) ?? 0) * k, 'weapon');
       }
     }
+    // People: inside the fireball they derez, the player on foot too.
+    this.bits.strike(x, y, z, F, this.time);
+    if (this.walker.active && this.walker.downAt === null && Math.hypot(wrapDelta(x, this.walker.x), this.walker.y - y, wrapDelta(z, this.walker.z)) < F) this.walker.downAt = this.time;
     this.blasts.push({ kind: 'nuke', x, y, z, time: this.time, remote: !local });
     if (this.blasts.length > 16) this.blasts.splice(0, this.blasts.length - 16);
     this.version++;
@@ -968,6 +1028,8 @@ export class Simulation {
     this.lastClash.fill(-Infinity);
     this.trails.clear();
     this.traffic.clear();
+    this.charges.length = 0;
+    this.errands.reset();
     this.bits.reset();
     this.walker.board();
     this.lastScare = -Infinity;
@@ -1152,6 +1214,10 @@ export class Simulation {
     if (latest) this.blastsSeen = Math.max(this.blastsSeen, latest.time);
     // Down on foot: a moment later the player is back in their vehicle.
     if (w.active && w.downAt !== null && this.time - w.downAt > TUNING.respawnDelay) w.board();
+    this.fuseCharges();
+    const done = this.errands.step(this.time, this.walker, this.bits);
+    if (done && 'reward' in done) this.earn(done.reward, done.text);
+    else if (done) this.notice(done.failed);
     // The people think at a quarter of the physics rate: plenty for walkers, and cheap.
     if (++this.bitTick % 4 === 0) this.bits.step(this.dt * 4, this.time, this.playerPoint, this.exploded ? [] : [th]);
     // A Bit run over derezzes into chips of its own light.

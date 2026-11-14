@@ -3,6 +3,8 @@ import { BIT, BIT_LOOK, type BitState } from '../people/bit.ts';
 import { BITS, type BitPopulation, type BitWalker } from '../sim/bits.ts';
 import { BIT_STATES, BitFigure, bitGeometry } from './BitFigure.ts';
 import { neonTint } from './neon.ts';
+import type { BitStyle } from '../people/bitStyle.ts';
+import type { Errands } from '../sim/errands.ts';
 
 /** A figure's geometry with its facets shaded into vertex colours, so a crowd needs no lights. */
 function shadedGeometry(state: BitState): THREE.BufferGeometry {
@@ -36,6 +38,13 @@ export class BitsView {
   private readonly _s = new THREE.Vector3();
   private readonly _c = new THREE.Color();
   private readonly tones = new Map<BitState, THREE.Color>();
+  /** Errand markers: a lit cube over Bits with a packet to send, a lit ring over Bits wanting an
+   *  escort, the packet riding over the player's Bit, and a beam at the doorway it goes to. */
+  private readonly offerCubes: THREE.InstancedMesh;
+  private readonly offerRings: THREE.InstancedMesh;
+  private readonly packet: THREE.Mesh;
+  private readonly beam: THREE.Mesh;
+  private errands: Errands | null = null;
 
   constructor(scene: THREE.Scene, private readonly bits: BitPopulation, private readonly walker: BitWalker) {
     for (const s of BIT_STATES) {
@@ -58,9 +67,30 @@ export class BitsView {
     this.pools.frustumCulled = false;
     this.pools.name = 'bits.pools';
     scene.add(this.pools);
+    const white = new THREE.MeshBasicNodeMaterial({ color: neonTint('#dff6ff').multiplyScalar(1.8) });
+    this.offerCubes = new THREE.InstancedMesh(new THREE.BoxGeometry(0.32, 0.32, 0.32), white, BITS.max);
+    this.offerRings = new THREE.InstancedMesh(new THREE.TorusGeometry(0.42, 0.05, 6, 20).rotateX(Math.PI / 2), white, BITS.max);
+    for (const m of [this.offerCubes, this.offerRings]) { m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.count = 0; m.frustumCulled = false; scene.add(m); }
+    this.packet = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), white);
+    this.packet.visible = false;
+    scene.add(this.packet);
+    this.beam = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 120, 8, 1, true).translate(0, 60, 0), new THREE.MeshBasicNodeMaterial({ color: neonTint('#dff6ff').multiplyScalar(0.9), transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+    this.beam.visible = false;
+    this.beam.name = 'errand-beam';
+    scene.add(this.beam);
     this.player.root.visible = false;
     this.player.root.name = 'bit.player';
     scene.add(this.player.root);
+  }
+
+  /** Show what the people are asking for, and where the errand under way is going. */
+  setErrands(e: Errands): void {
+    this.errands = e;
+  }
+
+  /** Style the player's own Bit. */
+  setStyle(style: BitStyle): void {
+    this.player.setStyle(style);
   }
 
   /** People drawn last frame. */
@@ -108,5 +138,24 @@ export class BitsView {
       this.player.root.position.set(w.prevX + (w.x - w.prevX) * alpha, w.prevY + (w.y - w.prevY) * alpha, w.prevZ + (w.z - w.prevZ) * alpha);
       this.player.update(time, w.state(time));
     }
+    // Errands: who is asking, what is being carried, where it goes.
+    const e = this.errands;
+    let nc = 0, nr = 0;
+    if (e) for (const p of this.bits.people) {
+      const offer = e.offerOf(p, time);
+      if (!offer) continue;
+      this._p.set(p.x, p.y + 1.25, p.z);
+      this._q.setFromAxisAngle(this._p.clone().set(0, 1, 0), time * 1.5 + p.beat);
+      this._s.setScalar(1);
+      if (offer === 'courier') this.offerCubes.setMatrixAt(nc++, this._m.compose(this._p, this._q, this._s));
+      else this.offerRings.setMatrixAt(nr++, this._m.compose(this._p, this._q, this._s));
+    }
+    this.offerCubes.count = nc; this.offerRings.count = nr;
+    this.offerCubes.instanceMatrix.needsUpdate = true; this.offerRings.instanceMatrix.needsUpdate = true;
+    const t = e?.target();
+    this.packet.visible = !!t && t.kind === 'courier' && this.player.root.visible;
+    if (this.packet.visible) { this.packet.position.copy(this.player.root.position).add(this._p.set(0, 2.6, 0)); this.packet.rotation.y = time * 2; }
+    this.beam.visible = !!t;
+    if (t) this.beam.position.set(t.x, 0, t.z);
   }
 }

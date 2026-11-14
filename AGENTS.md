@@ -328,6 +328,10 @@ universe, not a conventional open world decorated with neon.
   (`npm run import-towers`); do not edit `towerKit.json` or `towerKit.bin` by hand.
 - **The player on foot is a Bit** (`BitWalker`): it steps out of a stopped vehicle, walks, and
   gets back in beside it. The vehicle stays parked.
+- **Errands on foot** (`src/sim/errands.ts`): an escorted Bit walks the trail the player
+  walked, so it is never inside a wall, and goes into its new building by the door. The player's
+  Bit can be styled (`src/people/bitStyle.ts`) in its idle light, size, idle figure and spin;
+  YES stays yellow and NO red for everyone.
 - The figures are the imported "BIT" meshes (CC-BY 4.0, credited in the README). Do not
   replace them with humanoids.
 - Check: `npm run bit`.
