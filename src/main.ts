@@ -96,6 +96,7 @@ import { flightShapes, hangarShapes } from './render/raytrace/sceneShapes.ts';
 import { PostFX, QUALITIES, type Quality } from './render/postfx.ts';
 import { NetClient } from './net/NetClient.ts';
 import { MultiplayerPanel } from './ui/MultiplayerPanel.ts';
+import { keepBitPools } from './app/bitPools.ts';
 
 async function start() {
   await initPhysics();
@@ -220,6 +221,8 @@ async function start() {
   const trailView = new TrailView(scene, sim.trails);
   const trafficView = new TrafficView(scene, sim.traffic);
   const bitsView = new BitsView(scene, sim.bits, sim.walker);
+  // The Bits evolve across sessions: this browser keeps their gene pools (src/app/bitPools.ts).
+  keepBitPools(sim.bits);
   const programsView = new ProgramsView(scene, sim.programs);
   const chargesView = new ChargesView(scene);
   bitsView.setErrands(sim.errands);

@@ -1,5 +1,8 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { BIT, bitState, type BitAnswer, type BitState } from '../people/bit.ts';
+import { STYLE_LIGHT } from '../people/bitStyle.ts';
+import { express, founderGenome, yesChance, type BitGenome, type Phenotype } from '../people/genome.ts';
+import { hash32 } from '../arch/rng.ts';
 import { mulberry32 } from '../world/City.ts';
 import { GRID } from '../world/planetCity.ts';
 import { CITY, hash01, isSea, PLANET, wrapCoord } from './layout.ts';
@@ -9,6 +12,10 @@ import { districtPlan, lotAt, type Lot } from '../arch/DistrictGenerator.ts';
 import { structureRoom, type Room, type RoomDoor } from '../arch/InteriorGenerator.ts';
 import { kitRoomAt } from '../world/kit.ts';
 import { kitRoomId } from '../world/structures.ts';
+import {
+  advancePool, census, CHILD_SLOT, childGenome, childRand, DEATH_CAUSES, DEFAULT_EVOLUTION, EVOLUTION, isGrown, lifespanOf, lotCapacity, walkDrain,
+  canBreed, type Census, type DeathCause, type EvolutionOptions, type StoredBit, type StoredLot,
+} from './evolution.ts';
 
 /**
  * Bits are the people of the digital world, not vehicles. They live on a lot: in its building
@@ -19,9 +26,18 @@ import { kitRoomId } from '../world/structures.ts';
  * road and say NO when a vehicle comes past fast, they answer the player's Bit when it speaks
  * to them, and one that is run over derezzes.
  *
- * Kinematic and deterministic: who lives on a block is a pure function of the block, and each
- * Bit carries its own seeded stream. Streamed in a disc around whoever the player is (on foot
- * or in a vehicle), wrap-aware like the traffic. No three.js scene objects, no DOM.
+ * They evolve (sim/evolution.ts, people/genome.ts). Each carries genes that set its pace, its
+ * nerve near traffic, how sociable, agreeable and home-loving it is, how picky about looks, and
+ * its look itself (idle light, size, idle figure, spin). It ages, lives on its energy (walking
+ * drains it, its room recharges it) and fades out when old or spent. Two grown Bits of a lot who
+ * meet and both say YES, with energy to spare, compile a child beside them with genes from both.
+ * When a lot streams out its people are kept (its gene pool) and carried forward while away, so
+ * coming back finds them older, fewer or more, and changed.
+ *
+ * Kinematic and deterministic: who lives on a block the first time it is seen is a pure function
+ * of the block, and each Bit carries its own seeded stream. Streamed in a disc around whoever the
+ * player is (on foot or in a vehicle), wrap-aware like the traffic. No three.js scene objects,
+ * no DOM.
  */
 export const BITS = {
   /** Streamed disc around the player (m) and the distance a block's people are dropped at. */
@@ -32,7 +48,7 @@ export const BITS = {
   max: 340,
   /** The kerb line: this far outside the block's edge (m), on the margin of the street. */
   kerb: 0.8,
-  /** Walking pace range (m/s). */
+  /** Walking pace range (m/s) of the founders (genes can take it further). */
   pace: [1.4, 3.4] as const,
   /** Two Bits this close along the kerb stop to talk (m), for this long (s). */
   talkRange: 2.6,
@@ -52,8 +68,6 @@ const P = CITY.block + CITY.street;
 const N = GRID.blocks;
 const C = PLANET.circumference;
 const mod = (a: number, n: number) => ((a % n) + n) % n;
-/** Share of a building's people who are indoors when its lot streams in. */
-const INDOORS = 0.6;
 
 export type BitMood = 'walk' | 'stand' | 'talk' | 'scared';
 
@@ -73,8 +87,12 @@ export interface BitHome {
   room: Room | null;
   /** The building has been wrecked: its room is no longer a place to go. */
   ruined: boolean;
-  /** People of this lot who have derezzed (they stay gone while the lot is in view). */
-  gone: Set<number>;
+  /** People it started with, the most it can hold, and the children compiled on it so far. */
+  founders: number;
+  capacity: number;
+  births: number;
+  /** Times the lot has streamed in (seeds the streams of people brought back from its pool). */
+  visit: number;
 }
 
 interface Waypoint {
@@ -87,7 +105,7 @@ interface Waypoint {
 export interface BitPerson {
   id: number;
   home: BitHome;
-  /** Which of the lot's people this is. */
+  /** Which of the lot's people this is (founders 0..; children and newcomers CHILD_SLOT..). */
   slot: number;
   /** Where it is: on the kerb, on its way through a door, or indoors. */
   place: 'kerb' | 'way' | 'inside' | 'follow';
@@ -135,6 +153,19 @@ export interface BitPerson {
   gx: number;
   gz: number;
   gh: number;
+  /** Moving house: the lot it is off to, and where on its own kerb it crosses over. */
+  bound: BitHome | null;
+  boundS: number;
+  /** Its genes, and what they make of it. */
+  genome: BitGenome;
+  ph: Phenotype;
+  /** Age and lifespan (s), energy (0..size), generation, founder line, standing (0..1). */
+  age: number;
+  life: number;
+  energy: number;
+  gen: number;
+  lineage: number;
+  prestige: number;
 }
 
 /** A vehicle the people watch out for. */
@@ -144,6 +175,22 @@ export interface BitThreat {
   z: number;
   vx: number;
   vz: number;
+}
+
+/** A lot's people while it is out of view, and when (on the population's clock) they were left. */
+interface Pool extends StoredLot {
+  at: number;
+}
+
+export interface BitPopulationOptions {
+  /** Births, ageing and energy (false: a fixed population, as before Bits evolved). */
+  evolve: boolean;
+  /** Streamed disc (m) and the distance a lot's people are dropped at. */
+  radius: number;
+  despawn: number;
+  evolution: EvolutionOptions;
+  /** Mixed into every stream (founders, children, people): 0 is the world's own (the lab varies it). */
+  seed: number;
 }
 
 const blockKey = (gi: number, gj: number) => mod(gi, N) * N + mod(gj, N);
@@ -161,7 +208,7 @@ export function blockPopulation(gi: number, gj: number): number {
   return Math.floor(hash01(mod(gi, N), mod(gj, N), 71) * (BITS.perBlock + 1) * Math.min(1, urban + 0.15));
 }
 
-/** How many Bits live on a lot: what its blocks add up to. */
+/** How many Bits live on a lot when it is first seen (its founders): what its blocks add up to. */
 export function lotPopulation(lot: Lot): number {
   let n = 0;
   for (let a = 0; a < lot.wb; a++) for (let b = 0; b < lot.db; b++) n += blockPopulation(lot.gi + a, lot.gj + b);
@@ -190,12 +237,17 @@ export function lotRoom(lot: Lot): Room | null {
   return i < 0 ? null : structureRoom(plan.structures[i]);
 }
 
+/** A district's hash (0..1): the variant look a minority of its founders wear. */
+export function districtLook(gi: number, gj: number): number {
+  return hash01(Math.floor(mod(gi, N) / GRID.chunkBlocks), Math.floor(mod(gj, N) / GRID.chunkBlocks), 97);
+}
+
 function wrapDelta(d: number): number {
   return d - Math.round(d / C) * C;
 }
 
 /** Point on a home's kerb loop at distance s, stepped `back` toward the lot; and the way along it. */
-function kerbPoint(h: BitHome, s: number, back: number, out: { x: number; z: number; tx: number; tz: number }): void {
+export function kerbPoint(h: BitHome, s: number, back: number, out: { x: number; z: number; tx: number; tz: number }): void {
   const wx = h.x1 - h.x0, wz = h.z1 - h.z0;
   // Clockwise seen from above (+X east, +Z south): north side eastward, east side southward, ...
   if (s < wx) { out.x = h.x0 + s; out.z = h.z0 + back; out.tx = 1; out.tz = 0; }
@@ -214,43 +266,94 @@ function doorKerb(h: BitHome, d: RoomDoor): number {
   return 2 * wx + wz + (h.z1 - cz);
 }
 
-/** A place to stand down the aisle behind a door. */
+/** Distance along a home's kerb loop of a point on it (the inverse of kerbPoint at back 0). */
+function kerbS(h: BitHome, x: number, z: number): number {
+  const wx = h.x1 - h.x0, wz = h.z1 - h.z0;
+  const dN = Math.abs(z - h.z0), dE = Math.abs(x - h.x1), dS = Math.abs(z - h.z1), dW = Math.abs(x - h.x0);
+  const m = Math.min(dN, dE, dS, dW);
+  if (m === dN) return Math.max(0, Math.min(wx, x - h.x0));
+  if (m === dE) return wx + Math.max(0, Math.min(wz, z - h.z0));
+  if (m === dS) return wx + wz + Math.max(0, Math.min(wx, h.x1 - x));
+  return 2 * wx + wz + Math.max(0, Math.min(wz, h.z1 - z));
+}
+
+/** A place to stand down the aisle behind a door: mostly in the first few tens of metres, where people gather. */
 function spotBehind(d: RoomDoor, rand: () => number): Waypoint {
   const t0 = d.inset + 1.5;
-  const t = t0 + rand() * Math.max(0, d.depth - t0);
+  const t = t0 + Math.min(Math.max(0, d.depth - t0), -Math.log(1 - rand() * 0.999) * 10);
   const side = (rand() - 0.5) * Math.max(0, d.width - 2.6);
   return { x: d.x - d.nx * t - d.nz * side, z: d.z - d.nz * t + d.nx * side };
 }
 
 const _k = { x: 0, z: 0, tx: 0, tz: 0 };
+/** A vehicle whose path passes farther off than this (m) does not frighten a Bit. */
+const PASS_CLOSE = 8;
+
+/** How many of a lot's people its room holds at once (the rest keep to the kerb). */
+export const roomPlaces = (capacity: number): number => Math.max(2, Math.ceil(capacity * EVOLUTION.roomShare));
+
+/** A Bit's own stream: a pure function of its lot, its slot and which visit brought it into view. */
+const personRand = (key: number, slot: number, visit: number, seed = 0) => mulberry32(visit === 0 && seed === 0 ? ((key * 32 + slot) * 2654435761) | 0 : hash32(key, slot, visit, 0xb17 ^ seed));
 
 export class BitPopulation {
   readonly people: BitPerson[] = [];
   /** Stream and step the people at all (tests and tools can switch it off). */
   enabled = true;
-  /** Bits run over so far. */
+  readonly opts: BitPopulationOptions;
+  /** Bits derezzed so far, all causes (run over, blasts, age, spent). */
   derezzed = 0;
-  /** Where each Bit derezzed this step: drained by the simulation (chips). */
-  readonly derezEvents: Array<{ x: number; y: number; z: number; time: number }> = [];
-  /** Conversations held so far, and times a Bit has gone in or come out by a door. */
+  /** Deaths by cause, and children compiled, since the population was made. */
+  readonly deaths: Record<DeathCause, number> = Object.fromEntries(DEATH_CAUSES.map((c) => [c, 0])) as Record<DeathCause, number>;
+  births = 0;
+  /** Where each Bit derezzed this step, why, and its light: drained by the simulation (chips). */
+  readonly derezEvents: Array<{ x: number; y: number; z: number; time: number; cause: DeathCause; color: string }> = [];
+  /** Conversations held so far, times a Bit has gone in or come out by a door, and moved house. */
+  moves = 0;
   talks = 0;
   entries = 0;
   exits = 0;
   private nextId = 1;
   readonly homes = new Map<number, BitHome>();
+  /** The people of lots out of view (gene pools), by lot key. Survives a world reset. */
+  readonly pools = new Map<number, Pool>();
+  /** Times each lot has streamed in. */
+  private readonly visits = new Map<number, number>();
+  /** The population's own clock (s): it keeps running across world resets. */
+  clock = 0;
   private lastManage: { x: number; z: number } | null = null;
   private manageAt = -Infinity;
+  /** Two Bits who both said YES: their child appears when the second answer shows. */
+  private readonly pendingBirths: Array<{ a: BitPerson; b: BitPerson; at: number }> = [];
 
+  constructor(opts: Partial<BitPopulationOptions> = {}) {
+    this.opts = { evolve: true, radius: BITS.radius, despawn: BITS.despawn, seed: 0, ...opts, evolution: { ...DEFAULT_EVOLUTION, ...opts.evolution } };
+  }
+
+  /**
+   * Back to an empty street (a world reset): the lots in view keep their people as gene pools,
+   * so evolution carries on. `clearEvolution` forgets them as well.
+   */
   reset(): void {
+    for (const h of this.homes.values()) this.store(h);
     this.people.length = 0;
     this.homes.clear();
     this.derezEvents.length = 0;
+    this.pendingBirths.length = 0;
     this.lastManage = null;
     this.manageAt = -Infinity;
     this.derezzed = 0;
     this.talks = 0;
     this.entries = 0;
     this.exits = 0;
+  }
+
+  /** Forget every gene pool too: the world's Bits start again from their founders. */
+  clearEvolution(): void {
+    this.reset();
+    this.pools.clear();
+    this.visits.clear();
+    this.births = 0;
+    for (const c of DEATH_CAUSES) this.deaths[c] = 0;
   }
 
   /** The figure a Bit shows at `time`. */
@@ -265,43 +368,133 @@ export class BitPopulation {
     return n;
   }
 
-  /** Put the people of one lot in its building and on its kerb (deterministic for the lot). */
+  /** The census of the people in view now. */
+  census(): Census {
+    return census(this.people);
+  }
+
+  /** A Bit's idle light (its look; YES and NO keep their own colours). */
+  static light(p: BitPerson): string {
+    return STYLE_LIGHT[p.genome.style.light];
+  }
+
+  /**
+   * Every lot's people as they stand now: the pools of lots out of view and a snapshot of the
+   * lots in view (for saving, and for the relay). `away` is how long ago (s) each was last seen.
+   */
+  exportPools(): Array<StoredLot & { away: number }> {
+    const out: Array<StoredLot & { away: number }> = [];
+    for (const p of this.pools.values()) out.push({ key: p.key, births: p.births, capacity: p.capacity, people: p.people, away: this.clock - p.at });
+    for (const h of this.homes.values()) out.push({ ...this.snapshot(h), away: 0 });
+    return out;
+  }
+
+  /**
+   * Take in lots' people from elsewhere (saved from an earlier visit, or from the relay). A lot
+   * in view now keeps its own people. `away` (s) is carried forward when the lot next streams in.
+   */
+  importPools(lots: ReadonlyArray<StoredLot & { away?: number }>): number {
+    let n = 0;
+    for (const l of lots) {
+      if (this.homes.has(l.key)) continue;
+      this.pools.set(l.key, { key: l.key, births: l.births, capacity: l.capacity, people: l.people.map((p) => ({ ...p })), at: this.clock - Math.max(0, l.away ?? 0) });
+      n++;
+    }
+    return n;
+  }
+
+  /** The lot's people as records (followers belong to whoever they follow, not to the lot). */
+  private snapshot(h: BitHome): StoredLot {
+    const people: StoredBit[] = [];
+    for (const p of this.people) {
+      if (p.home !== h || p.place === 'follow') continue;
+      people.push({ genome: p.genome, age: p.age, life: p.life, energy: p.energy, gen: p.gen, slot: p.slot, lineage: p.lineage, prestige: p.prestige });
+    }
+    return { key: h.key, births: h.births, capacity: h.capacity, people };
+  }
+
+  /** Keep a lot's people as its gene pool (it is streaming out). */
+  private store(h: BitHome): void {
+    this.pools.set(h.key, { ...this.snapshot(h), at: this.clock });
+  }
+
+  /** A new Bit on a home, placed on its kerb or (by its homebody share) indoors. */
+  private spawn(h: BitHome, slot: number, rec: StoredBit, rand: () => number, time: number, paceDraw?: number): BitPerson {
+    const ph = express(rec.genome);
+    const p: BitPerson = {
+      id: this.nextId++, home: h, slot, place: 'kerb',
+      s: rand() * h.loop,
+      dir: rand() < 0.5 ? 1 : -1,
+      pace: ph.pace,
+      back: 0, backTo: 0,
+      mood: 'walk', until: 0, quietUntil: 0,
+      door: null, doorS: 0, path: [], then: 'kerb', shiftAt: 0, stayUntil: 0,
+      answer: null, answeredAt: -Infinity, pending: null, hurry: false,
+      beat: 0,
+      x: 0, y: 0, z: 0, yaw: 0,
+      rand, gx: Infinity, gz: Infinity, gh: 0, footY: 0, bound: null, boundS: 0,
+      genome: rec.genome, ph, age: rec.age, life: rec.life, energy: rec.energy, gen: rec.gen, lineage: rec.lineage, prestige: rec.prestige,
+    };
+    if (paceDraw === undefined) rand(); // the draw a founder's pace takes, so streams line up
+    p.until = time + 4 + rand() * 20;
+    p.quietUntil = time + rand() * 4;
+    p.beat = rand() * 10;
+    const indoors = rand() < ph.indoors;
+    if (h.room && !h.ruined && indoors && !this.roomFull(h)) {
+      // At home when the lot streams in: standing at its place down an aisle.
+      const d = h.room.doors[Math.floor(rand() * h.room.doors.length)];
+      const spot = spotBehind(d, rand);
+      p.place = 'inside';
+      p.mood = 'stand';
+      p.door = d;
+      p.doorS = doorKerb(h, d);
+      p.x = spot.x;
+      p.z = spot.z;
+      p.yaw = rand() * Math.PI * 2;
+      p.stayUntil = p.until = time + (20 + rand() * 160) * ph.stay;
+      p.shiftAt = time + 3 + rand() * 12;
+    }
+    this.place(p);
+    this.people.push(p);
+    return p;
+  }
+
+  /**
+   * Put a lot's people in its building and on its kerb: its founders the first time it is seen
+   * (deterministic for the lot), afterwards its pool, carried forward for the time it was away.
+   */
   private populate(h: BitHome, lot: Lot, time: number): void {
-    const n = lotPopulation(lot);
-    for (let slot = 0; slot < n && this.people.length < BITS.max; slot++) {
-      if (h.gone.has(slot)) continue;
-      const seed = (h.key * 32 + slot) * 2654435761;
-      const rand = mulberry32(seed | 0);
-      const p: BitPerson = {
-        id: this.nextId++, home: h, slot, place: 'kerb',
-        s: rand() * h.loop,
-        dir: rand() < 0.5 ? 1 : -1,
-        pace: BITS.pace[0] + rand() * (BITS.pace[1] - BITS.pace[0]),
-        back: 0, backTo: 0,
-        mood: 'walk', until: time + 4 + rand() * 20, quietUntil: time + rand() * 4,
-        door: null, doorS: 0, path: [], then: 'kerb', shiftAt: 0, stayUntil: 0,
-        answer: null, answeredAt: -Infinity, pending: null, hurry: false,
-        beat: rand() * 10,
-        x: 0, y: 0, z: 0, yaw: 0,
-        rand, gx: Infinity, gz: Infinity, gh: 0, footY: 0,
-      };
-      const indoors = rand() < INDOORS;
-      if (h.room && !h.ruined && indoors) {
-        // At home when the lot streams in: standing at its place down an aisle.
-        const d = h.room.doors[Math.floor(rand() * h.room.doors.length)];
-        const spot = spotBehind(d, rand);
-        p.place = 'inside';
-        p.mood = 'stand';
-        p.door = d;
-        p.doorS = doorKerb(h, d);
-        p.x = spot.x;
-        p.z = spot.z;
-        p.yaw = rand() * Math.PI * 2;
-        p.stayUntil = p.until = time + 20 + rand() * 160;
-        p.shiftAt = time + 3 + rand() * 12;
+    const pool = this.pools.get(h.key);
+    if (pool) {
+      this.pools.delete(h.key);
+      h.births = pool.births;
+      h.capacity = Math.max(h.capacity, pool.capacity);
+      const store: StoredLot = { key: h.key, births: pool.births, capacity: h.capacity, people: pool.people };
+      if (this.opts.evolve) {
+        const away = advancePool(store, this.clock - pool.at, mulberry32(hash32(h.key, h.visit, 0xa11 ^ this.opts.seed)), this.opts.evolution, undefined, this.opts.seed);
+        this.births += away.births;
+        for (const c of DEATH_CAUSES) this.deaths[c] += away.deaths[c] ?? 0;
+        h.births = store.births;
       }
-      this.place(p);
-      this.people.push(p);
+      for (const rec of store.people) {
+        if (this.people.length >= BITS.max) break;
+        this.spawn(h, rec.slot, rec, personRand(h.key, rec.slot, h.visit, this.opts.seed), time);
+      }
+      return;
+    }
+    const look = districtLook(lot.gi, lot.gj);
+    for (let slot = 0; slot < h.founders && this.people.length < BITS.max; slot++) {
+      const rand = personRand(h.key, slot, 0, this.opts.seed);
+      const s = rand(), dir = rand(), paceDraw = rand();
+      const grand = mulberry32(hash32(h.key, slot, 0x9e7 ^ this.opts.seed));
+      const genome = founderGenome(grand, paceDraw, look);
+      const life = lifespanOf(grand(), this.opts.evolution);
+      const size = express(genome).size;
+      const rec: StoredBit = { genome, age: grand() * life * 0.85, life, energy: (0.6 + 0.4 * grand()) * size, gen: 0, slot, lineage: h.key * 32 + slot, prestige: 0 };
+      // Founders take the draws Bits always took (kerb place, direction, pace), in order.
+      const replay = [s, dir];
+      const p = this.spawn(h, slot, rec, () => (replay.length ? replay.shift()! : rand()), time, paceDraw);
+      p.rand = rand;
     }
   }
 
@@ -341,7 +534,9 @@ export class BitPopulation {
 
   /** Make the home for the lot whose origin block is (gi, gj) in this image, or null if nobody lives there. */
   private home(gi: number, gj: number, lot: Lot): BitHome | null {
-    if (lotPopulation(lot) === 0) return null;
+    const founders = lotPopulation(lot);
+    const key = blockKey(gi, gj);
+    if (founders === 0 && !this.pools.get(key)?.people.length) return null;
     // The lot's rectangle is canonical: carry it into the image this block is in.
     const sx = Math.floor(gi / N) * C, sz = Math.floor(gj / N) * C;
     const k = BITS.kerb;
@@ -352,13 +547,18 @@ export class BitPopulation {
       doors: canon.doors.map((d) => ({ ...d, x: d.x + sx, z: d.z + sz })),
       ...(canon.round ? { round: { ...canon.round, x: canon.round.x + sx, z: canon.round.z + sz } } : {}),
     };
-    return { key: blockKey(gi, gj), gi, gj, x0, x1, z0, z1, loop: 2 * (x1 - x0 + z1 - z0), room, ruined: false, gone: new Set() };
+    const visit = this.visits.get(key) ?? 0;
+    this.visits.set(key, visit + 1);
+    return {
+      key, gi, gj, x0, x1, z0, z1, loop: 2 * (x1 - x0 + z1 - z0), room, ruined: false,
+      founders, capacity: lotCapacity(founders), births: 0, visit,
+    };
   }
 
   /** Fill the lots near the player and drop the far ones. */
   private manage(cx: number, cz: number, time: number): void {
     const gi0 = Math.floor((cx - GRID.x0) / P), gj0 = Math.floor((cz - GRID.z0) / P);
-    const ring = Math.ceil(BITS.radius / P) + 3; // a lot spans up to four blocks: reach its origin
+    const ring = Math.ceil(this.opts.radius / P) + 3; // a lot spans up to four blocks: reach its origin
     const seen = new Set<number>();
     for (let dj = -ring; dj <= ring; dj++) for (let di = -ring; di <= ring; di++) {
       const gi = gi0 + di, gj = gj0 + dj;
@@ -367,7 +567,7 @@ export class BitPopulation {
       if (!lot || mod(lot.gi, N) !== mod(gi, N) || mod(lot.gj, N) !== mod(gj, N)) continue;
       const sx = Math.floor(gi / N) * C, sz = Math.floor(gj / N) * C;
       const lx = Math.max(lot.rect.x0 + sx, Math.min(lot.rect.x1 + sx, cx)), lz = Math.max(lot.rect.z0 + sz, Math.min(lot.rect.z1 + sz, cz));
-      if (Math.hypot(lx - cx, lz - cz) > BITS.radius) continue;
+      if (Math.hypot(lx - cx, lz - cz) > this.opts.radius) continue;
       const key = blockKey(gi, gj);
       seen.add(key);
       const old = this.homes.get(key);
@@ -396,7 +596,8 @@ export class BitPopulation {
     for (const [key, h] of this.homes) {
       if (seen.has(key)) continue;
       const lx = Math.max(h.x0, Math.min(h.x1, cx)), lz = Math.max(h.z0, Math.min(h.z1, cz));
-      if (Math.hypot(lx - cx, lz - cz) < BITS.despawn) continue;
+      if (Math.hypot(lx - cx, lz - cz) < this.opts.despawn) continue;
+      this.store(h);
       this.homes.delete(key);
       for (let i = this.people.length - 1; i >= 0; i--) if (this.people[i].home === h && this.people[i].place !== 'follow') this.people.splice(i, 1);
     }
@@ -420,7 +621,7 @@ export class BitPopulation {
       p.until = time + BITS.talkTime;
       p.quietUntil = p.until + 2;
       p.yaw = Math.atan2(-dx, dz);
-      p.pending = { answer: p.rand() < 0.5 ? 'yes' : 'no', at: time + 0.5 + p.rand() * 0.7 };
+      p.pending = { answer: p.rand() < p.ph.yes ? 'yes' : 'no', at: time + 0.5 + p.rand() * 0.7 };
       n++;
     }
     return n;
@@ -449,6 +650,7 @@ export class BitPopulation {
         this.say(p, 'no', time);
         if (p.place === 'kerb') { if (p.door) p.door = null; this.frighten(p, time); continue; }
         if (p.place === 'way' && p.then === 'kerb') { p.hurry = true; continue; }
+        if (p.place === 'follow') continue;
         const d = p.door!;
         n++;
         kerbPoint(h, p.doorS, 0, _k);
@@ -468,6 +670,7 @@ export class BitPopulation {
   /** A Bit starts to follow the player (the trail is fed by whoever leads it). */
   lead(p: BitPerson, time: number): void {
     p.place = 'follow';
+    p.bound = null;
     p.path = [];
     p.door = null;
     p.pending = null;
@@ -481,7 +684,7 @@ export class BitPopulation {
     if (!r || !this.people.includes(p)) return false;
     const d = r.doors.reduce((a, q) => (Math.hypot(q.x - p.x, q.z - p.z) < Math.hypot(a.x - p.x, a.z - p.z) ? q : a));
     p.home = h;
-    p.slot = 1000 + p.id; // a newcomer: not one of the lot's own people
+    p.slot = CHILD_SLOT + h.births++; // a newcomer: not one of the lot's own people (its genes come with it)
     p.door = d;
     p.doorS = doorKerb(h, d);
     p.path = [{ x: d.x + d.nx * 1.6, z: d.z + d.nz * 1.6 }, { x: d.x - d.nx * 1.6, z: d.z - d.nz * 1.6 }, spotBehind(d, p.rand)];
@@ -497,7 +700,12 @@ export class BitPopulation {
     const i = this.people.indexOf(p);
     if (i < 0 || p.place !== 'follow') return;
     this.say(p, 'no', time);
-    if (!this.homes.has(p.home.key) || this.homes.get(p.home.key) !== p.home) { this.people.splice(i, 1); return; }
+    if (!this.homes.has(p.home.key) || this.homes.get(p.home.key) !== p.home) {
+      // Its lot is out of view: it goes home to the lot's pool.
+      this.pools.get(p.home.key)?.people.push({ genome: p.genome, age: p.age, life: p.life, energy: p.energy, gen: p.gen, slot: p.slot, lineage: p.lineage, prestige: p.prestige });
+      this.people.splice(i, 1);
+      return;
+    }
     kerbPoint(p.home, p.s, 0, _k);
     p.path = [...back.map((w) => ({ x: w.x, z: w.z })), { x: _k.x, z: _k.z }]; // back the way it came
     p.then = 'kerb';
@@ -512,17 +720,20 @@ export class BitPopulation {
       const p = this.people[i];
       const dx = p.x - x, dy = p.y - y, dz = p.z - z;
       if (dx * dx + dy * dy + dz * dz > r * r) continue;
-      this.derez(p, i, time);
+      this.derez(p, i, time, 'blast');
       n++;
     }
     return n;
   }
 
-  private derez(p: BitPerson, i: number, time: number): void {
+  /** A Bit leaves the world (`cause`: run over, a blast, old age, energy spent, shot). */
+  derez(p: BitPerson, i: number, time: number, cause: DeathCause): void {
+    if (this.people[i] !== p) i = this.people.indexOf(p);
+    if (i < 0) return;
     this.derezzed++;
-    this.derezEvents.push({ x: p.x, y: p.y, z: p.z, time });
+    this.deaths[cause]++;
+    this.derezEvents.push({ x: p.x, y: p.y, z: p.z, time, cause, color: BitPopulation.light(p) });
     if (this.derezEvents.length > 32) this.derezEvents.shift();
-    p.home.gone.add(p.slot);
     this.people.splice(i, 1);
   }
 
@@ -535,11 +746,12 @@ export class BitPopulation {
     p.pending = null;
   }
 
-  /** Head for a door of its building: round the kerb the short way to where the door lets out. */
+  /** Head for a door of its building (the nearest, more often than not): round the kerb the short way to where it lets out. */
   private seekDoor(p: BitPerson, time: number): void {
     const h = p.home;
     const doors = h.room!.doors;
-    p.door = doors[Math.floor(p.rand() * doors.length)];
+    const along = (d: RoomDoor) => { const a = mod(doorKerb(h, d) - p.s, h.loop); return Math.min(a, h.loop - a); };
+    p.door = p.rand() < 0.7 ? doors.reduce((a, d) => (along(d) < along(a) ? d : a)) : doors[Math.floor(p.rand() * doors.length)];
     p.doorS = doorKerb(h, p.door);
     const ahead = mod(p.doorS - p.s, h.loop);
     p.dir = ahead <= h.loop / 2 ? 1 : -1;
@@ -560,12 +772,153 @@ export class BitPopulation {
     return p.path.length === 0;
   }
 
+  /** The chance a grown Bit at a loose end moves house: now and then, and often from a crowded lot. */
+  private moveChance(h: BitHome): number {
+    return this.headcount(h) >= h.capacity - 1 ? 0.25 : 0.015;
+  }
+
+  /**
+   * Move house: across the street to a neighbouring lot with room (the emptier the likelier),
+   * straight over from its kerb to the nearest point of the new kerb, never through a lot. It
+   * belongs to the new lot from the moment it sets off. False if no neighbour has room.
+   */
+  private move(p: BitPerson, time: number): boolean {
+    const from = p.home;
+    let best: BitHome | null = null, bestScore = 0;
+    for (const h of this.homes.values()) {
+      if (h === from || h.ruined) continue;
+      // Across one street (or one crossing): the gap between the two kerb rectangles is all road.
+      const gx = Math.max(0, h.x0 - from.x1, from.x0 - h.x1), gz = Math.max(0, h.z0 - from.z1, from.z0 - h.z1);
+      if (Math.hypot(gx, gz) > CITY.street + 4 * BITS.kerb) continue;
+      const room = h.capacity - this.headcount(h);
+      if (room <= 0) continue;
+      const score = (room / h.capacity) * (0.5 + p.rand());
+      if (score > bestScore) { bestScore = score; best = h; }
+    }
+    if (!best) return false;
+    // It walks round its own kerb to the point facing the new lot, and crosses there.
+    const cx = Math.max(from.x0, Math.min(from.x1, (best.x0 + best.x1) / 2)), cz = Math.max(from.z0, Math.min(from.z1, (best.z0 + best.z1) / 2));
+    p.bound = best;
+    p.boundS = kerbS(from, cx, cz);
+    const ahead = mod(p.boundS - p.s, from.loop);
+    p.dir = ahead <= from.loop / 2 ? 1 : -1;
+    p.until = time + Math.min(ahead, from.loop - ahead) / p.pace + 30;
+    return true;
+  }
+
+  /** At its crossing point: straight over the street to the nearest point of the new lot's kerb. */
+  private cross(p: BitPerson): boolean {
+    const to = p.bound!;
+    p.bound = null;
+    if (!this.homes.has(to.key) || this.homes.get(to.key) !== to || to.ruined || this.headcount(to) >= to.capacity) return false;
+    const nx = Math.max(to.x0, Math.min(to.x1, p.x)), nz = Math.max(to.z0, Math.min(to.z1, p.z));
+    // Onto the kerb line itself: snap the nearer edge.
+    const ex = Math.min(Math.abs(nx - to.x0), Math.abs(nx - to.x1)), ez = Math.min(Math.abs(nz - to.z0), Math.abs(nz - to.z1));
+    const tx = ex <= ez ? (Math.abs(nx - to.x0) < Math.abs(nx - to.x1) ? to.x0 : to.x1) : nx;
+    const tz = ex <= ez ? nz : (Math.abs(nz - to.z0) < Math.abs(nz - to.z1) ? to.z0 : to.z1);
+    // Only straight over the street: a line that would cut through a lot (its own, from the far
+    // side) waits for a better moment.
+    for (const h of this.homes.values()) {
+      for (let k = 1; k < 8; k++) {
+        const x = p.x + (tx - p.x) * (k / 8), z = p.z + (tz - p.z) * (k / 8);
+        if (x > h.x0 + 0.5 && x < h.x1 - 0.5 && z > h.z0 + 0.5 && z < h.z1 - 0.5) return false;
+      }
+    }
+    p.home = to;
+    p.slot = CHILD_SLOT + to.births++;
+    p.door = null;
+    p.doorS = kerbS(to, tx, tz);
+    p.path = [{ x: tx, z: tz }];
+    p.then = 'kerb';
+    p.place = 'way';
+    p.mood = 'walk';
+    p.back = p.backTo = 0;
+    this.moves++;
+    return true;
+  }
+
+  /** Is the lot's room as full as it gets (indoors, or on the way in)? */
+  private roomFull(h: BitHome): boolean {
+    let n = 0;
+    for (const p of this.people) if (p.home === h && (p.place === 'inside' || (p.place === 'way' && p.then !== 'kerb'))) n++;
+    return n >= roomPlaces(h.capacity);
+  }
+
+  /** People on a lot now (in view), followers included. */
+  private headcount(h: BitHome): number {
+    let n = 0;
+    for (const p of this.people) if (p.home === h) n++;
+    return n;
+  }
+
+  /** Two Bits who both said YES compile a child beside them, if the lot has room. */
+  private birth(a: BitPerson, b: BitPerson, time: number): BitPerson | null {
+    const h = a.home;
+    if (b.home !== h || !this.people.includes(a) || !this.people.includes(b)) return null;
+    if (!canBreed(a, b) || this.headcount(h) >= h.capacity || this.people.length >= BITS.max) return null;
+    const n = h.births++;
+    const rand = childRand(h.key, n, this.opts.seed);
+    const genome = childGenome(a.genome, b.genome, rand, this.opts.evolution.mutation);
+    const ph = express(genome);
+    a.energy -= EVOLUTION.birthCost * a.ph.size;
+    b.energy -= EVOLUTION.birthCost * b.ph.size;
+    const slot = CHILD_SLOT + n;
+    const rec: StoredBit = { genome, age: 0, life: lifespanOf(rand(), this.opts.evolution), energy: EVOLUTION.childEnergy * ph.size, gen: Math.max(a.gen, b.gen) + 1, slot, lineage: a.lineage, prestige: 0 };
+    const c = this.spawn(h, slot, rec, personRand(h.key, slot, h.visit, this.opts.seed), time);
+    // Beside its parents: on the kerb between them, or down the aisle they stand in.
+    if (a.place === 'kerb') {
+      const gap = mod(b.s - a.s, h.loop);
+      const mid = gap <= h.loop / 2 ? a.s + gap / 2 : a.s - (h.loop - gap) / 2;
+      c.place = 'kerb';
+      c.door = null;
+      c.s = mod(mid, h.loop);
+    } else if (a.place === 'inside' && a.door) {
+      const spot = spotBehind(a.door, c.rand);
+      c.place = 'inside';
+      c.door = a.door;
+      c.doorS = a.doorS;
+      c.x = spot.x;
+      c.z = spot.z;
+      c.stayUntil = time + (30 + c.rand() * 120) * ph.stay;
+      c.shiftAt = time + 4 + c.rand() * 10;
+    }
+    c.mood = 'stand';
+    c.until = time + 3;
+    c.quietUntil = time + 3 + BITS.cooldown * ph.cooldown;
+    c.yaw = Math.atan2(a.x - c.x, -(a.z - c.z));
+    this.say(c, 'yes', time);
+    this.place(c);
+    this.births++;
+    return c;
+  }
+
+  /** Age and energy for dt: walking drains, indoors recharges; old or spent, it fades out. True if it died. */
+  private live(p: BitPerson, i: number, dt: number, time: number): boolean {
+    const evo = this.opts.evolution;
+    p.age += dt;
+    const h = p.home;
+    let rate = -EVOLUTION.idleDrain * evo.energyScale;
+    if (p.place === 'inside' && h.room && !h.ruined) rate += EVOLUTION.recharge;
+    else if ((p.mood === 'walk' && p.place !== 'inside') || p.place === 'follow') rate -= walkDrain(p.pace, evo) * (p.hurry ? 2.5 : 1);
+    // Its own building feeds it a little on the kerb round it; a lot with no room, a little more.
+    if (p.place === 'kerb') rate += h.room && !h.ruined ? EVOLUTION.kerbRecharge * 0.5 : EVOLUTION.kerbRecharge;
+    p.energy = Math.min(p.ph.size, p.energy + rate * dt);
+    if (p.prestige > 0) p.prestige = Math.max(0, p.prestige - dt / (EVOLUTION.lifespan * evo.lifespanScale));
+    if (p.place === 'follow') return false; // escorted: it lives through the errand
+    const cause: DeathCause | null = p.age >= p.life ? 'old-age' : p.energy <= 0 ? 'spent' : null;
+    if (!cause) return false;
+    this.derez(p, i, time, cause);
+    return true;
+  }
+
   /**
    * Advance the people by dt. `centre` is whoever the player is; `threats` are the vehicles they
    * watch for (the player's craft, when it is down among them).
    */
   step(dt: number, time: number, centre: { x: number; z: number }, threats: readonly BitThreat[] = []): void {
     if (!this.enabled) return;
+    this.clock += dt;
+    const evolve = this.opts.evolve;
     const lm = this.lastManage;
     if (!lm || time - this.manageAt > 1 || Math.hypot(centre.x - lm.x, centre.z - lm.z) > 40) {
       this.manage(centre.x, centre.z, time);
@@ -576,20 +929,29 @@ export class BitPopulation {
     for (let i = people.length - 1; i >= 0; i--) {
       const p = people[i];
       const h = p.home;
-      // Vehicles: run over, or frightened off the kerb.
+      // Vehicles: run over, or frightened off the kerb (how soon depends on its nerve).
       let hit = false;
+      const hitR = BITS.hitRange * p.ph.size, scareR = BITS.scareRange * p.ph.scareRange, scareV = BITS.scareSpeed * p.ph.scareSpeed;
       for (const t of threats) {
         const dx = p.x - t.x, dz = p.z - t.z;
         const d2 = dx * dx + dz * dz, speed = Math.hypot(t.vx, t.vz);
         if (Math.abs(t.y - p.y) > 6) continue;
-        if (d2 < BITS.hitRange * BITS.hitRange && speed > 2) { hit = true; break; }
-        // Coming this way, fast: closing speed along the line to the Bit.
-        if (d2 < BITS.scareRange * BITS.scareRange && speed > BITS.scareSpeed && t.vx * dx + t.vz * dz > 0) this.frighten(p, time);
+        // Over the stretch it covered since the last step, so a fast vehicle cannot skip past.
+        if (speed > 2) {
+          const sx = t.vx * dt, sz = t.vz * dt, l2 = sx * sx + sz * sz;
+          const k = l2 > 0 ? Math.max(0, Math.min(1, (dx * sx + dz * sz) / l2 + 1)) : 1;
+          const ex = p.x - (t.x - sx + sx * k), ez = p.z - (t.z - sz + sz * k);
+          if (ex * ex + ez * ez < hitR * hitR) { hit = true; break; }
+        }
+        // Coming this way, fast, on a line that passes close: closing along the line to the
+        // Bit, and its path within PASS_CLOSE of it (one in the far lane goes by).
+        if (d2 < scareR * scareR && speed > scareV && t.vx * dx + t.vz * dz > 0 && Math.abs(t.vx * dz - t.vz * dx) < PASS_CLOSE * speed) this.frighten(p, time);
       }
       if (hit) {
-        this.derez(p, i, time);
+        this.derez(p, i, time, 'run-over');
         continue;
       }
+      if (evolve && this.live(p, i, dt, time)) continue;
       if (p.pending && time >= p.pending.at) {
         this.say(p, p.pending.answer, time);
         p.pending = null;
@@ -605,7 +967,7 @@ export class BitPopulation {
           if (p.then === 'inside') {
             p.place = 'inside';
             p.mood = 'stand';
-            p.stayUntil = p.until = time + 40 + p.rand() * 160;
+            p.stayUntil = p.until = time + (40 + p.rand() * 160) * p.ph.stay;
             p.shiftAt = time + 4 + p.rand() * 14;
             this.entries++;
           } else if (p.then === 'spot') {
@@ -614,16 +976,18 @@ export class BitPopulation {
             p.until = Math.max(p.stayUntil, time + 2);
             p.shiftAt = time + 6 + p.rand() * 18;
           } else {
+            if (p.door) this.exits++;
             p.place = 'kerb';
             p.hurry = false;
             p.s = p.doorS;
             p.door = null;
             p.dir = p.rand() < 0.5 ? 1 : -1;
             p.until = time + 8 + p.rand() * 24;
-            this.exits++;
           }
         }
       } else if (p.place === 'inside') {
+        // Low on energy, it stays in to recharge.
+        if (evolve && time >= p.stayUntil - 4 && p.energy < 0.6 * p.ph.size && h.room && !h.ruined) p.stayUntil = p.until = Math.max(p.until, time + 20);
         if (p.mood === 'stand' && p.door && time >= p.shiftAt && time < p.stayUntil - 4) {
           // Move to another place down the aisle: beside a housemate on the same aisle, if there is one.
           const d = p.door;
@@ -654,11 +1018,25 @@ export class BitPopulation {
       } else if (p.mood === 'walk') {
         const before = p.s;
         p.s = mod(p.s + p.dir * p.pace * dt, h.loop);
-        if (p.door) {
+        if (p.bound) {
+          // Moving house: has it reached its crossing point?
+          const was = mod((p.boundS - before) * p.dir, h.loop), now = mod((p.boundS - p.s) * p.dir, h.loop);
+          if (was < 1 || now > was) {
+            p.s = p.boundS;
+            this.place(p);
+            this.cross(p);
+          } else if (time >= p.until) p.bound = null; // never got there: it stays
+        } else if (p.door) {
           // Heading for a door: has it reached (or just passed) where the door lets out?
           const was = mod((p.doorS - before) * p.dir, h.loop), now = mod((p.doorS - p.s) * p.dir, h.loop);
-          if (was < 1 || now > was) {
-            const d = p.door;
+          if ((was < 1 || now > was) && this.roomFull(h)) {
+            // The room is full: it stands by the door a moment and walks on.
+            p.s = p.doorS;
+            p.door = null;
+            p.mood = 'stand';
+            p.until = time + 2 + p.rand() * 4;
+          } else if (was < 1 || now > was) {
+            const d = p.door!;
             p.s = p.doorS;
             this.place(p);
             const spot = spotBehind(d, p.rand);
@@ -666,12 +1044,18 @@ export class BitPopulation {
             p.then = 'inside';
             p.place = 'way';
           } else if (time >= p.until) p.door = null; // never got there: give up
+        } else if (evolve && p.energy < EVOLUTION.low * p.ph.size && h.room && !h.ruined) {
+          this.seekDoor(p, time); // running low: home to recharge
         } else if (time >= p.until) {
           // Stand a while, turn back the way it came, go home indoors, or go and find a neighbour.
+          // A grown Bit with energy to spare is out for company: it goes looking more often.
           const r = p.rand();
-          if (r < 0.2) { p.mood = 'stand'; p.until = time + 1.5 + p.rand() * 5; }
+          const courting = evolve && isGrown(p.age, p.life) && p.energy >= EVOLUTION.breed * p.ph.size;
+          const home = Math.min(0.68, 0.55 * p.ph.homeWeight) * (courting ? 0.6 : 1);
+          if (evolve && isGrown(p.age, p.life) && p.rand() < this.moveChance(h) && this.move(p, time)) { /* moving next door */ }
+          else if (r < 0.2) { p.mood = 'stand'; p.until = time + 1.5 + p.rand() * 5; }
           else if (r < 0.3) { p.dir = -p.dir as 1 | -1; p.until = time + 6 + p.rand() * 20; }
-          else if (r < 0.85 && h.room && !h.ruined) this.seekDoor(p, time);
+          else if (r < 0.3 + home && h.room && !h.ruined) this.seekDoor(p, time);
           else {
             let gap = Infinity;
             for (const q of people) {
@@ -688,7 +1072,8 @@ export class BitPopulation {
         p.backTo = 0;
         p.until = time + 6 + p.rand() * 24;
       }
-      p.back += (p.backTo - p.back) * Math.min(1, dt * 5);
+      // Stepping back (or in again) takes a moment, however often the people think.
+      p.back += (p.backTo - p.back) * (1 - Math.exp(-dt * 5));
       this.place(p);
     }
     // Meetings: two of a lot's people close together, both on the kerb or both indoors, stop to talk.
@@ -699,19 +1084,35 @@ export class BitPopulation {
         const b = people[j];
         if (b.home !== a.home || b.place !== a.place || b.mood === 'talk' || b.mood === 'scared' || time < b.quietUntil) continue;
         const dx = a.x - b.x, dz = a.z - b.z;
-        if (dx * dx + dz * dz > BITS.talkRange * BITS.talkRange) continue;
+        const range = BITS.talkRange * (a.ph.talkRange + b.ph.talkRange) / 2;
+        if (dx * dx + dz * dz > range * range) continue;
         this.talks++;
         for (const [p, q] of [[a, b], [b, a]] as const) {
           p.mood = 'talk';
           p.until = time + BITS.talkTime;
-          p.quietUntil = p.until + BITS.cooldown;
+          p.quietUntil = p.until + BITS.cooldown * p.ph.cooldown;
           p.yaw = Math.atan2(q.x - p.x, -(q.z - p.z));
+          if (evolve) p.energy -= EVOLUTION.talkCost;
         }
-        // b answers a's question; sometimes a has something to say back.
-        b.pending = { answer: b.rand() < 0.5 ? 'yes' : 'no', at: time + 0.8 };
-        if (a.rand() < 0.5) a.pending = { answer: a.rand() < 0.5 ? 'yes' : 'no', at: time + 1.9 };
+        // b answers a's question; when b says YES, a answers back (and two YESes between grown
+        // Bits with energy to spare compile a child); otherwise a sometimes has a word to say.
+        const bYes = b.rand() < yesChance(b.genome, a.genome, a.prestige);
+        b.pending = { answer: bYes ? 'yes' : 'no', at: time + 0.8 };
+        if (bYes || a.rand() < 0.5) {
+          // A YES is easier to answer with a YES.
+          const c = yesChance(a.genome, b.genome, b.prestige);
+          const aYes = a.rand() < (bYes ? 1 - (1 - c) * (1 - c) : c);
+          a.pending = { answer: aYes ? 'yes' : 'no', at: time + 1.9 };
+          if (evolve && bYes && aYes && isGrown(a.age, a.life) && isGrown(b.age, b.life)) this.pendingBirths.push({ a, b, at: time + 1.9 });
+        }
         break;
       }
+    }
+    for (let i = this.pendingBirths.length - 1; i >= 0; i--) {
+      const pb = this.pendingBirths[i];
+      if (time < pb.at) continue;
+      this.pendingBirths.splice(i, 1);
+      this.birth(pb.a, pb.b, time);
     }
   }
 }

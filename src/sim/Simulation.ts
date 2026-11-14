@@ -1359,9 +1359,11 @@ export class Simulation {
     else if (done) this.notice(done.failed);
     // The people think at a quarter of the physics rate: plenty for walkers, and cheap.
     if (++this.bitTick % 4 === 0) this.bits.step(this.dt * 4, this.time, this.playerPoint, this.exploded ? [] : [th]);
-    // A Bit run over derezzes into chips of its own light.
+    // A Bit run over derezzes into chips of its own light; one that dies of age or runs dry
+    // fades quietly (a few slow chips rising).
     for (const d of this.bits.derezEvents) {
-      this.chips.emit({ x: d.x, y: d.y, z: d.z, radius: 0.6, vx: th.vx * 0.5, vy: 2, vz: th.vz * 0.5, speed: 6, count: 26, size: 0.14, color: BIT_LOOK.idle1.color });
+      if (d.cause === 'old-age' || d.cause === 'spent') this.chips.emit({ x: d.x, y: d.y, z: d.z, radius: 0.4, vx: 0, vy: 0.8, vz: 0, speed: 1.2, count: 8, size: 0.1, color: d.color });
+      else this.chips.emit({ x: d.x, y: d.y, z: d.z, radius: 0.6, vx: th.vx * 0.5, vy: 2, vz: th.vz * 0.5, speed: 6, count: 26, size: 0.14, color: d.color });
     }
     this.bits.derezEvents.length = 0;
     // The programs walk at the same rate; tenders mend roads, sentinels guard theirs.

@@ -119,7 +119,7 @@ const inRoom = (p: BitPerson) => { const r = p.home.room; return !!r && p.x > r.
   check(moods.has('walk') && moods.has('stand'), 'they stop and stand a while', [...moods].join(', '));
   check(sim.bits.talks > 0 && moods.has('talk') && said.has('yes') && said.has('no'), 'two that meet stop to talk: YES and NO are said', `${sim.bits.talks} conversations in 3 min`);
   check(said.has('idle1') && said.has('idle2'), 'left alone they idle between the two blue figures');
-  check(sim.bits.derezzed === 0 && Math.hypot(sim.position.x - street.x, sim.position.z - street.z) < 5, 'a parked vehicle hurts nobody');
+  check(sim.bits.deaths['run-over'] === 0 && sim.bits.deaths.blast === 0 && Math.hypot(sim.position.x - street.x, sim.position.z - street.z) < 5, 'a parked vehicle hurts nobody', `${sim.bits.deaths['old-age']} died of age, ${sim.bits.births} born meanwhile`);
 }
 {
   console.log('\n--- interiors');
