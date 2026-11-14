@@ -35,7 +35,9 @@ import {
 } from './nav.ts';
 import type { Telemetry } from './telemetry.ts';
 import { terrainHeight } from './terrain.ts';
-import { GroundDriver } from './groundPilot.ts';
+import { GroundDriver, type DriveStatus } from './groundPilot.ts';
+import { NavAdvisor, type BrainDecision, type BrainOption } from './navBrain.ts';
+import { airDecision, groundDecision, landingDecision, type AdvisorWorld, type BuiltDecision } from './navDecisions.ts';
 
 export type AutopilotKind = 'airplane' | 'rotorcraft' | 'ground';
 export type AutopilotMode = 'hold' | 'takeoff' | 'land' | 'goto' | 'orbit' | 'level' | 'ascent' | 'chase';
@@ -138,6 +140,12 @@ export const runwayNumber = (h: number) => (r0(wrap360(h) / 10) || 36).toString(
  * - Orbit: a right-hand circle; Level: wings level, V/S 0, the human keeps the throttle.
  * It looks ahead along its track and climbs to clear the tallest obstacle there. Braking on
  * the ground disengages it; outside Hold, so does a firm stick input.
+ *
+ * It can take an outside brain (`advisor`, src/sim/navBrain.ts: an OpenRouter model) for the
+ * navigation choices: route and pace on the road, cruise height and speed on a Go to, which
+ * runway or helipad to land on. The brain picks among options this computer has checked and
+ * this computer still does all the flying; its picks are overrides on top of the player's
+ * settings (touching a knob hands that knob back to the player).
  */
 export class FlightAutopilot implements ControlSource {
   readonly state: AutopilotState = {
@@ -178,6 +186,22 @@ export class FlightAutopilot implements ControlSource {
   private readonly _own = new THREE.Vector3();
   /** Called when the autopilot disengages itself (to sync the human throttle lever). */
   onDisengage: ((throttle: number) => void) | null = null;
+  /** The outside brain's scheduler (no brain: the built-in computer decides alone). */
+  readonly advisor = new NavAdvisor();
+  /** Territory and diplomacy for the brain's situation report (set by the host). */
+  world: AdvisorWorld | null = null;
+  /** Bumped by every engage: an answer to an earlier engagement is never applied. */
+  private engageSeq = 0;
+  /** The brain's picks, on top of the player's settings (null: the player's setting stands). */
+  private brainAltitude: number | null = null;
+  private brainSpeed: number | null = null;
+  private brainPace: number | null = null;
+  private built: BuiltDecision | null = null;
+  private seenPlanSeq = 0;
+  private lastDrive: DriveStatus | null = null;
+  private routeAskedAt = -Infinity;
+  private blockedSeen = false;
+  private stuckSeen = false;
 
   constructor(private readonly human: ControlSource & { throttle?: number }) {}
 
@@ -200,6 +224,9 @@ export class FlightAutopilot implements ControlSource {
     const wasEngaged = s.engaged;
     s.engaged = true;
     s.kind = kind;
+    this.engageSeq++;
+    this.brainAltitude = this.brainSpeed = this.brainPace = null;
+    this.routeAskedAt = -Infinity;
     if (perf && Number.isFinite(perf.stallSpeed) && perf.stallSpeed > 0) {
       this.stallSpeed = perf.stallSpeed;
       this.perfKnown = true;
@@ -238,6 +265,8 @@ export class FlightAutopilot implements ControlSource {
           s.notice = `No road reaches ${d.name}`;
         } else this.dest = d;
       }
+      this.seenPlanSeq = this.driver.planSeq;
+      this.lastDrive = null;
       s.phase = s.mode === 'goto' ? 'drive' : 'parked';
       s.status = s.mode === 'goto' && this.dest ? `Driving to ${this.dest.name}: ${km(this.driver.length)} by road` : 'Stopped, brakes on';
       return;
@@ -275,6 +304,7 @@ export class FlightAutopilot implements ControlSource {
 
   disengage(): void {
     if (!this.state.engaged) return;
+    this.advisor.reset();
     this.state.engaged = false;
     this.state.guidance = null;
     this.state.status = 'Off';
@@ -396,6 +426,7 @@ export class FlightAutopilot implements ControlSource {
       return human;
     }
     if (s.kind === 'ground') {
+      this.advise(t);
       const out = this.flyGround(dt, t, human);
       this.lastOutput = out;
       return out;
@@ -418,7 +449,11 @@ export class FlightAutopilot implements ControlSource {
       else s.altitude = Math.min(6000, Math.max(air ? 60 : 5, s.altitude + human.pitch * 20 * dt));
       if (s.mode === 'hold' || s.mode === 'takeoff') s.heading = wrap360(s.heading + human.roll * 25 * dt);
       s.speed = air ? Math.min(250, Math.max(30, s.speed + dThr * 120)) : Math.min(25, Math.max(0, s.speed + dThr * 40));
+      // Turning a knob hands it back from the brain until its next pick.
+      if (Math.abs(human.pitch) > 0.1) this.brainAltitude = null;
+      if (Math.abs(dThr) > 0.01) this.brainSpeed = null;
     }
+    this.advise(t);
 
     let out: ControlInputs;
     if (air) out = this.flyAirplane(dt, t, human);
@@ -440,12 +475,15 @@ export class FlightAutopilot implements ControlSource {
     const dThr = human.throttle - this.lastHumanThrottle;
     this.lastHumanThrottle = human.throttle;
     s.speed = clamp(s.speed + dThr * 40, 3, 60);
+    if (Math.abs(dThr) > 0.01) this.brainPace = null;
     if (s.mode !== 'goto' || !this.dest) {
       s.phase = 'parked';
       s.guidance = null;
       return { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 1 };
     }
-    const { controls, status } = this.driver.drive(dt, t, s.speed);
+    // The brain's pace, never above the player's own cruise speed (their limit).
+    const { controls, status } = this.driver.drive(dt, t, Math.min(this.brainPace ?? s.speed, s.speed));
+    this.lastDrive = status;
     s.guidance = {
       distance: status.remaining, glideslopeDev: null, localizerDev: null, targetSpeed: status.target,
       eta: status.remaining / Math.max(3, t.groundSpeed), siteName: this.dest.name,
@@ -592,13 +630,14 @@ export class FlightAutopilot implements ControlSource {
       return this.flyOrbit(dt, t, human);
     }
     const top = this.clearance(t, brg, Math.max(800, t.groundSpeed * 25), 60);
-    s.commanded = Math.max(s.altitude + terrainHeight(t.position[0], t.position[2]), top + 70);
-    const urgent = s.commanded > s.altitude + 1;
+    const alt = this.brainAltitude ?? s.altitude, speed = this.brainSpeed ?? s.speed;
+    s.commanded = Math.max(alt + terrainHeight(t.position[0], t.position[2]), top + 70);
+    const urgent = s.commanded > alt + 1;
     s.heading = brg;
     const vs = this.vsToward(t, s.commanded, this.climbLimit(t, urgent));
-    s.guidance = { distance: dist, glideslopeDev: null, localizerDev: null, targetSpeed: s.speed, eta: dist / Math.max(1, t.groundSpeed), siteName: d.name };
+    s.guidance = { distance: dist, glideslopeDev: null, localizerDev: null, targetSpeed: speed, eta: dist / Math.max(1, t.groundSpeed), siteName: d.name };
     s.status = `Go to · ${d.name} · ${km(dist)} · ${r0(s.commanded)} m`;
-    return this.plane.fly(dt, t, { vs, track: brg, speed: s.speed, pitchMin: -12, pitchMax: 18, flaps: 0 });
+    return this.plane.fly(dt, t, { vs, track: brg, speed, pitchMin: -12, pitchMax: 18, flaps: 0 });
   }
 
   /** Where the chased vehicle is from the craft (into _rel) and how fast it goes (into _tv); null once it is gone or lost. */
@@ -776,6 +815,7 @@ export class FlightAutopilot implements ControlSource {
       if (distToGo < 500 && (Math.abs(cross) > 45 || h > gsH + 35) && h > flareH) {
         s.phase = 'join';
         this.joinFar = true;
+        this.advisor.notify('go-around');
         s.status = `Land · ${name} · going around`;
         return this.plane.fly(dt, t, { vs: 4, track: ap.heading, speed: vapp * 1.25, pitchMax: 15, flaps: 0.34 });
       }
@@ -864,7 +904,8 @@ export class FlightAutopilot implements ControlSource {
     if (s.mode === 'goto' && this.dest) {
       const d = this.dest;
       const dist = distance(t.position[0], t.position[2], d.x, d.z);
-      s.guidance = { distance: dist, glideslopeDev: null, localizerDev: null, targetSpeed: s.speed, eta: dist / Math.max(1, t.groundSpeed), siteName: d.name };
+      const alt = this.brainAltitude ?? s.altitude, speed = this.brainSpeed ?? s.speed;
+      s.guidance = { distance: dist, glideslopeDev: null, localizerDev: null, targetSpeed: speed, eta: dist / Math.max(1, t.groundSpeed), siteName: d.name };
       if (dist < 25 && t.groundSpeed < 2) {
         s.phase = 'hold';
         s.status = `Go to · over ${d.name}`;
@@ -872,7 +913,7 @@ export class FlightAutopilot implements ControlSource {
         s.phase = 'transit';
         s.status = `Go to · ${d.name} · ${km(dist)}`;
       }
-      return this.hoverTo(dt, t, d.x, d.z, s.altitude, s.speed, 25);
+      return this.hoverTo(dt, t, d.x, d.z, alt, speed, 25);
     }
     if (s.mode === 'takeoff' && Math.abs(t.altitude - s.altitude) < 3) {
       s.mode = 'hold';
@@ -961,6 +1002,108 @@ export class FlightAutopilot implements ControlSource {
     const vsTarget = -clamp(0.35 * hp, 0.4, 2.5);
     s.status = `Land · ${d.name} · descending · ${hp.toFixed(1)} m`;
     return this.hoverTo(dt, t, d.x, d.z, pad, 3, -1e9, this.padHeading, vsTarget);
+  }
+
+  // ---------------------------------------------------------------- brain
+
+  /** The outside brain, if any: notice what happened, ask when due, apply answers (inside this step). */
+  private advise(t: Telemetry): void {
+    const a = this.advisor;
+    const s = this.state;
+    if (!a.brain) {
+      // No brain (the usual case): its picks go, back to the player's settings; nothing to ask.
+      this.brainAltitude = this.brainSpeed = this.brainPace = null;
+      if (a.status.state !== 'off') a.reset();
+      return;
+    }
+    if (s.kind === 'ground') {
+      if (this.driver.planSeq !== this.seenPlanSeq) {
+        this.seenPlanSeq = this.driver.planSeq;
+        a.notify('reroute');
+      }
+      const blocked = this.driver.wallAhead < 30 && t.groundSpeed < 1;
+      if (blocked && !this.blockedSeen) a.notify('blocked');
+      this.blockedSeen = blocked;
+      const stuck = !!this.lastDrive?.stuck;
+      if (stuck && !this.stuckSeen) a.notify('stuck');
+      this.stuckSeen = stuck;
+    }
+    a.step(t.time, this.brainContext, (trigger) => this.buildDecision(t, trigger), (d, picks) => this.applyPicks(t, d, picks));
+  }
+
+  private get brainContext(): string {
+    return `${this.engageSeq}|${this.state.kind}|${this.state.mode}`;
+  }
+
+  /** The decision worth asking now for this vehicle and mode (null: nothing to choose). */
+  private buildDecision(t: Telemetry, trigger: string): BrainDecision | null {
+    const s = this.state;
+    const ground = s.kind === 'ground';
+    const view = {
+      kind: s.kind, mode: s.mode, phase: s.phase, t, dest: this.dest,
+      userSpeed: s.speed, userAltitude: s.altitude,
+      speed: ground ? Math.min(this.brainPace ?? s.speed, s.speed) : this.brainSpeed ?? s.speed,
+      altitude: this.brainAltitude ?? s.altitude,
+      stallSpeed: this.stallSpeed, approachSpeed: this.approachSpeed,
+      driver: this.driver, drive: this.lastDrive, fractured: this.fractured ?? undefined, world: this.world,
+      seq: this.advisor.nextSeq(), context: this.brainContext,
+    };
+    let b: BuiltDecision | null;
+    if (s.mode === 'land') b = landingDecision(view, trigger);
+    else if (ground) {
+      // Routes only when something happened: asked on a timer, "another route" every few seconds
+      // is how a car goes round in circles. A reroute asks at most every 20 s.
+      const routes = trigger === 'engage' || trigger === 'instructions' || trigger === 'blocked' || trigger === 'stuck' || (trigger === 'reroute' && t.time - this.routeAskedAt > 20);
+      b = groundDecision(view, trigger, routes);
+      if (b && routes) this.routeAskedAt = t.time;
+    } else b = airDecision(view, trigger);
+    this.built = b;
+    return b?.decision ?? null;
+  }
+
+  /** Carry out the brain's picks; says what was done, for the panel. */
+  private applyPicks(t: Telemetry, d: BrainDecision, picks: Record<string, BrainOption>): string {
+    const b = this.built;
+    if (!b || b.decision.seq !== d.seq) return '';
+    const s = this.state;
+    const done: string[] = [];
+    for (const [q, opt] of Object.entries(picks)) {
+      const act = b.actions[q]?.[opt.id];
+      if (!act) continue;
+      switch (act.kind) {
+        case 'keep-route':
+          done.push('same route');
+          break;
+        case 'route':
+          if (this.driver.adoptFrom(act.route, t.position[0], t.position[2])) {
+            this.seenPlanSeq = this.driver.planSeq;
+            done.push(`${opt.label} (${km(this.driver.length)})`);
+          } else done.push(`too late for ${opt.label}: kept the route`);
+          break;
+        case 'pace':
+          this.brainPace = act.speed;
+          done.push(`${r0(act.speed)} m/s`);
+          break;
+        case 'altitude':
+          this.brainAltitude = act.altitude;
+          done.push(`${r0(act.altitude)} m`);
+          break;
+        case 'speed':
+          this.brainSpeed = act.speed;
+          done.push(s.kind === 'airplane' ? `${r0(act.speed * 1.944)} kt` : `${r0(act.speed)} m/s`);
+          break;
+        case 'site':
+          if (act.id === this.dest?.id) done.push(`land at ${opt.label}`);
+          else if (s.mode === 'land' && s.phase === (s.kind === 'airplane' ? 'join' : 'transit')) {
+            s.destination = act.id;
+            if (s.kind === 'airplane') this.startAirplaneLanding(t);
+            else this.startRotorLanding(t);
+            done.push(`land at ${this.dest?.name ?? opt.label}`);
+          } else done.push(`too late for ${opt.label}`);
+          break;
+      }
+    }
+    return done.join(' · ');
   }
 
   // ---------------------------------------------------------------- helpers

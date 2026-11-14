@@ -137,8 +137,9 @@ export class Studio {
     for (const job of Object.keys(JOBS) as JobId[]) {
       const sel = h('select', { title: JOBS[job].description, onchange: () => this.pick(job, sel.value) });
       this.selects[job] = sel;
-      // The agent does the Engineer's job itself, so only the Designer (agent) and Composer show.
-      if (job !== 'engineer') crew.append(h('label', { title: JOBS[job].description }, job === 'designer' ? 'Designer (agent)' : JOBS[job].label, sel));
+      // The agent does the Engineer's job itself, so only the Designer (agent) and Composer show;
+      // the Navigator's model is picked in the Navigator panel, where it is used.
+      if (job !== 'engineer' && job !== 'navigator') crew.append(h('label', { title: JOBS[job].description }, job === 'designer' ? 'Designer (agent)' : JOBS[job].label, sel));
     }
     const freeOnly = h('input', { type: 'checkbox', onchange: () => this.setFreeOnly(freeOnly.checked) });
     freeOnly.checked = this.prefs.freeOnly;

@@ -53,14 +53,31 @@ export class GroundDriver {
   /** Distance to a light wall across the path ahead (m), or Infinity. */
   wallAhead = Infinity;
 
-  /** Plan a route from (x, z) to (gx, gz). False if no road connects them. */
-  plan(x: number, z: number, gx: number, gz: number): boolean {
-    this.goal = [gx, gz];
+  /** Bumped every time a route is adopted (planned here or chosen by the Navigator's brain). */
+  planSeq = 0;
+
+  /**
+   * Segments no route may use now: closed for good, or found blocked by a light wall in the last
+   * two minutes. Undefined when there are none.
+   */
+  avoid(): ((alongX: boolean, i: number, j: number) => boolean) | undefined {
     const now = this.clock;
     for (const [k, t] of this.blocked) if (now - t > 120) this.blocked.delete(k);
     const closed = this.closed;
-    const r = findRoute(x, z, gx, gz, 400000, this.blocked.size || closed ? (ax, i, j) => this.blocked.has(`${ax ? 1 : 0},${i},${j}`) || (!!closed && closed(ax, i, j)) : undefined);
+    return this.blocked.size || closed ? (ax, i, j) => this.blocked.has(`${ax ? 1 : 0},${i},${j}`) || (!!closed && closed(ax, i, j)) : undefined;
+  }
+
+  /** Plan a route from (x, z) to (gx, gz). False if no road connects them. */
+  plan(x: number, z: number, gx: number, gz: number): boolean {
+    this.goal = [gx, gz];
+    const r = findRoute(x, z, gx, gz, 400000, this.avoid());
     if (!r) { this.route = null; this.path = []; return false; }
+    this.adopt(r);
+    return true;
+  }
+
+  /** Drive this route (found by plan(), or one of alternativeRoutes() the brain chose) from its start. */
+  adopt(r: Route): void {
     // The legs between the road and the start/destination are driven only if nothing stands on
     // them (a destination inside a building ends at the nearest road point instead).
     const pts = r.points.map((p) => [p.x, p.z] as [number, number]);
@@ -77,7 +94,35 @@ export class GroundDriver {
     for (let i = 1; i < this.path.length; i++) this.cum.push(this.cum[i - 1] + Math.hypot(this.path[i][0] - this.path[i - 1][0], this.path[i][1] - this.path[i - 1][1]));
     this.idx = 0;
     this.stuckTime = 0;
+    this.planSeq++;
+  }
+
+  /**
+   * Switch to a route found from an earlier position (the brain took a few seconds to choose
+   * it), picking it up where the vehicle is now. False, with the old route kept, if the vehicle
+   * is no longer on it (it has driven past the turn).
+   */
+  adoptFrom(r: Route, x: number, z: number, reach = 25): boolean {
+    const keep = { route: this.route, path: this.path, cum: this.cum, idx: this.idx, endsAtRoad: this.endsAtRoad, planSeq: this.planSeq, stuckTime: this.stuckTime };
+    this.adopt(r);
+    const p0 = this.path[0];
+    const px = p0[0] + wrapCoord(x - p0[0]), pz = p0[1] + wrapCoord(z - p0[1]);
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < this.path.length - 1; i++) {
+      const [d] = segDist(px, pz, this.path[i], this.path[i + 1]);
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (bd > reach) {
+      Object.assign(this, keep);
+      return false;
+    }
+    this.idx = best;
     return true;
+  }
+
+  /** The path segment being driven (also the index into route.points). */
+  get index(): number {
+    return this.idx;
   }
 
   get length(): number {

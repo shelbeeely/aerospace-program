@@ -10,7 +10,9 @@ import { BUILTINS } from './craft/builtins.ts';
 import { landingSite, landingSites } from './world/landingSites.ts';
 import { STREET_SITE } from './world/spawnSites.ts';
 import { obstacleTop } from './world/structures.ts';
-import { browserClient } from './gen/openrouter.ts';
+import { browserClient, PROXY_BASE_URL, type ModelInfo } from './gen/openrouter.ts';
+import { OpenRouterBrain } from './gen/navBrain.ts';
+import { defaultModel, fallbacksFor, isFree, JOBS, modelsForJob, priceLabel } from './gen/catalog.ts';
 import { Library, type LibraryEntry } from './gen/library.ts';
 import { loadTheme } from './gen/tracks.ts';
 import { CameraRig } from './render/CameraRig.ts';
@@ -81,7 +83,7 @@ import { destinations } from './sim/nav.ts';
 import { uiProfile, type UiProfile } from './hud/profiles.ts';
 import { wallSegmentsNear } from './sim/lightWalls.ts';
 import { analyzeDesign } from './sim/flightTest.ts';
-import { AutopilotPanel } from './ui/AutopilotPanel.ts';
+import { AutopilotPanel, type BrainPrefs } from './ui/AutopilotPanel.ts';
 import { initPhysics, Simulation } from './sim/Simulation.ts';
 import { WEATHER_PRESETS } from './sim/atmosphere.ts';
 import { TUNING } from './tuning.ts';
@@ -283,6 +285,62 @@ async function start() {
   autopilot.driver.closed = sim.roadDamage.closed;
   autopilot.onDisengage = (thr) => { player.throttle = thr; };
   autopilot.fractured = sim.staticWorld.fractured;
+  // The brain's view of the war: who holds the ground, and who is after the player.
+  autopilot.world = {
+    hostileAt: (x, z) => {
+      const owner = sim.groundTurrets.territory.ownerAt(x, z);
+      return owner !== null && sim.hostileToPlayer(owner) ? TEAMS[owner].name : null;
+    },
+    extras: () => {
+      const foes = TEAMS.map((t, i) => ({ t, i: i as Team })).filter(({ i }) => i !== sim.team && sim.hostileToPlayer(i));
+      return { player_side: TEAMS[sim.team].name, ...(foes.length ? { hostile_sides: foes.map(({ t }) => t.name) } : { hostile_sides: 'none (peace)' }) };
+    },
+  };
+  // The Navigator's brain: the built-in computer, or an OpenRouter model choosing among options
+  // the Navigator has checked (src/gen/navBrain.ts). Shares the Studio's key and spend cap.
+  const NAV_BRAIN_KEY = 'aerospace.navigator.brain.v1';
+  const brainPrefs: BrainPrefs = { on: false, model: '', instructions: '' };
+  try {
+    Object.assign(brainPrefs, JSON.parse(localStorage.getItem(NAV_BRAIN_KEY) ?? '{}'));
+  } catch { /* defaults */ }
+  let brainModels: ModelInfo[] = [];
+  const navBrain = new OpenRouterBrain(
+    { chat: (req) => client.chat(req) },
+    () => ({ model: brainPrefs.model, fallbacks: brainModels.length && brainPrefs.model ? fallbacksFor(brainModels, 'navigator', brainPrefs.model) : [] }),
+  );
+  const syncBrain = () => {
+    autopilot.advisor.brain = brainPrefs.on && brainPrefs.model ? navBrain : null;
+    autopilot.advisor.instructions = brainPrefs.instructions;
+  };
+  const brainHooks = {
+    prefs: () => brainPrefs,
+    set: (p: Partial<BrainPrefs>) => {
+      const said = p.instructions !== undefined && p.instructions.trim() !== brainPrefs.instructions.trim();
+      Object.assign(brainPrefs, p);
+      // New words from the player: ask now, not at the next tick of the clock.
+      if (said) autopilot.advisor.notify('instructions');
+      try {
+        localStorage.setItem(NAV_BRAIN_KEY, JSON.stringify(brainPrefs));
+      } catch { /* private mode: this session only */ }
+      syncBrain();
+    },
+    status: () => autopilot.advisor.status,
+    models: async () => {
+      brainModels = await client.models();
+      const list = modelsForJob(brainModels, 'navigator');
+      if (!brainPrefs.model) brainHooks.set({ model: defaultModel(brainModels, 'navigator') ?? '' });
+      const job = JOBS.navigator;
+      const pick = (ids: string[]) => ids.map((id) => list.find((m) => m.id === id)).filter((m): m is ModelInfo => !!m);
+      const groups: Array<[string, ModelInfo[]]> = [
+        ['Recommended free', pick(job.free)],
+        ['Recommended paid', pick(job.paid)],
+        ['Other free', list.filter((m) => isFree(m) && !job.free.includes(m.id))],
+        ['All paid (newest first)', list.filter((m) => !isFree(m) && !job.paid.includes(m.id))],
+      ];
+      return groups.flatMap(([group, ms]) => ms.map((m) => ({ group, id: m.id, label: `${m.name} · ${priceLabel(m)}` })));
+    },
+    unavailable: () => (client.hasKey || client.baseUrl === PROXY_BASE_URL ? null : 'Needs an OpenRouter key: Studio → Models & generation settings → Key & spend.'),
+  };
   // The Navigator on foot: walks the player's Bit to a place, or back to its vehicle.
   const footNav = new FootNavigator();
   // Navigator: approach speeds come from the design's estimated stall speed.
@@ -331,6 +389,7 @@ async function start() {
       if (autopilot.state.notice) toast(autopilot.state.notice);
     },
     disengage: () => (sim.walker.active ? footNav.disengage() : autopilot.disengage()),
+    brain: brainHooks,
   });
   document.getElementById('nav-chip')!.addEventListener('click', () => apPanel.toggle());
   let shownProfile: UiProfile | null = null;
@@ -448,6 +507,7 @@ async function start() {
   // A player-supplied key talks to OpenRouter directly (works on GitHub Pages); otherwise the
   // dev-server proxy holds the key. Default session cap: $1.
   const client = browserClient(stored(KEY_STORAGE), Number(stored(CAP_STORAGE) ?? 1));
+  syncBrain(); // the Navigator's brain, as the player last left it
   const library = new Library();
   // AI air traffic: the built-in aircraft, plus your own designs in single player.
   const aiCount = document.getElementById('w-ai-count') as HTMLInputElement | null;
@@ -1653,7 +1713,9 @@ async function start() {
       } else {
         const st = autopilot.state;
         const g = st.engaged ? st.guidance : null;
-        const detail = !st.engaged ? '' : g ? `${g.siteName} · ${fd(g.distance)}` : st.mode === 'hold' ? `${Math.round(st.heading).toString().padStart(3, '0')}° ${Math.round(st.altitude)} m` : st.phase.toUpperCase();
+        const where = !st.engaged ? '' : g ? `${g.siteName} · ${fd(g.distance)}` : st.mode === 'hold' ? `${Math.round(st.heading).toString().padStart(3, '0')}° ${Math.round(st.altitude)} m` : st.phase.toUpperCase();
+        // AI: an OpenRouter model is choosing the route, heights or landing site.
+        const detail = st.engaged && autopilot.advisor.brain ? `${where} · AI` : where;
         hud.setNav({ mode: st.engaged ? MODE_LABELS[st.mode].toUpperCase() : null, detail, available: autopilotKind() !== null });
       }
     }

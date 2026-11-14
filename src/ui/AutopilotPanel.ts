@@ -9,6 +9,7 @@ import {
   type AutopilotState,
 } from '../sim/flightAutopilot.ts';
 import { destinations, type Destination } from '../sim/nav.ts';
+import type { AdvisorStatus } from '../sim/navBrain.ts';
 import type { Telemetry } from '../sim/telemetry.ts';
 
 const MS_TO_KT = 1.943844;
@@ -32,6 +33,25 @@ export interface AutopilotPanelHooks {
   /** Engage (or switch) with these options. */
   engage(opts: NavOptions): void;
   disengage(): void;
+  /** The OpenRouter brain, when the host offers one. */
+  brain?: BrainHooks;
+}
+
+/** The player's brain settings: built-in or an OpenRouter model, and their words for it. */
+export interface BrainPrefs {
+  on: boolean;
+  model: string;
+  instructions: string;
+}
+
+export interface BrainHooks {
+  prefs(): BrainPrefs;
+  set(p: Partial<BrainPrefs>): void;
+  status(): AdvisorStatus;
+  /** Models for the picker, in groups (the live OpenRouter catalog). */
+  models(): Promise<Array<{ group: string; id: string; label: string }>>;
+  /** Why it cannot be used here (no key on static hosting), or null. */
+  unavailable(): string | null;
 }
 
 const NAV_LABELS: Record<NavMode, string> = { ...MODE_LABELS, vehicle: 'Back to vehicle' };
@@ -82,6 +102,14 @@ export class AutopilotPanel {
   private readonly guidance: HTMLElement;
   private lastRefresh = 0;
   private destKey = '';
+  private brainBox: HTMLElement | null = null;
+  private brainSel: HTMLSelectElement | null = null;
+  private modelSel: HTMLSelectElement | null = null;
+  private modelRow: HTMLElement | null = null;
+  private instrRow: HTMLElement | null = null;
+  private instr: HTMLInputElement | null = null;
+  private brainStatus: HTMLElement | null = null;
+  private modelsLoaded = false;
 
   constructor(private readonly hooks: AutopilotPanelHooks) {
     const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', text = ''): HTMLElementTagNameMap[K] => {
@@ -144,6 +172,39 @@ export class AutopilotPanel {
     this.status.setAttribute('aria-live', 'polite');
     this.guidance = el('div', 'ap-guidance');
     this.root.append(close, el('h3', '', 'Navigator'), this.modeBar, this.hint, fields, buttons, this.status, this.guidance);
+    const bh = hooks.brain;
+    if (bh) {
+      // The brain: built-in, or an OpenRouter model choosing among options the Navigator checked.
+      const field = (label: string, input: HTMLElement) => {
+        const l = el('label', 'ap-field');
+        l.append(el('span', '', label), input);
+        return l;
+      };
+      const brainSel = el('select');
+      brainSel.append(new Option('Built-in computer', 'off'), new Option('OpenRouter model', 'on'));
+      brainSel.addEventListener('change', () => {
+        bh.set({ on: brainSel.value === 'on' });
+        this.renderBrain();
+        this.refresh(true);
+      });
+      const modelSel = el('select');
+      modelSel.addEventListener('change', () => bh.set({ model: modelSel.value }));
+      const instr = el('input');
+      instr.type = 'text';
+      instr.maxLength = 300;
+      instr.placeholder = 'e.g. avoid Red territory, keep low, prefer highways';
+      instr.addEventListener('change', () => bh.set({ instructions: instr.value }));
+      this.brainSel = brainSel;
+      this.modelSel = modelSel;
+      this.instr = instr;
+      this.modelRow = field('Model', modelSel);
+      this.instrRow = field('Instructions', instr);
+      this.brainStatus = el('div', 'ap-brain-status small');
+      this.brainStatus.setAttribute('aria-live', 'polite');
+      this.brainBox = el('div', 'ap-brain');
+      this.brainBox.append(field('Brain', brainSel), this.modelRow, this.instrRow, this.brainStatus);
+      this.root.append(this.brainBox);
+    }
     // Enter in a field engages.
     this.root.addEventListener('keydown', (e) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -172,7 +233,47 @@ export class AutopilotPanel {
     this.prefill(st);
     this.root.classList.remove('hidden');
     this.renderModes();
+    this.renderBrain();
     this.refresh(true);
+  }
+
+  /** Brain controls from the saved settings; the model list loads on first use. */
+  private renderBrain(): void {
+    const bh = this.hooks.brain;
+    if (!bh || !this.brainSel || !this.modelSel || !this.instr || !this.modelRow || !this.instrRow) return;
+    const p = bh.prefs();
+    this.brainSel.value = p.on ? 'on' : 'off';
+    if (document.activeElement !== this.instr) this.instr.value = p.instructions;
+    this.modelRow.classList.toggle('hidden', !p.on);
+    this.instrRow.classList.toggle('hidden', !p.on);
+    if (!p.on || this.modelsLoaded) return;
+    this.modelsLoaded = true;
+    const sel = this.modelSel;
+    sel.replaceChildren(new Option(p.model || 'Loading models…', p.model));
+    bh.models().then(
+      (list) => {
+        sel.replaceChildren();
+        const groups = new Map<string, HTMLOptGroupElement>();
+        for (const m of list) {
+          let g = groups.get(m.group);
+          if (!g) {
+            g = document.createElement('optgroup');
+            g.label = m.group;
+            groups.set(m.group, g);
+            sel.append(g);
+          }
+          g.append(new Option(m.label, m.id));
+        }
+        const want = bh.prefs().model;
+        if (want && !list.some((m) => m.id === want)) sel.prepend(new Option(want, want));
+        sel.value = want || list[0]?.id || '';
+        if (sel.value !== want) bh.set({ model: sel.value });
+      },
+      () => {
+        this.modelsLoaded = false;
+        sel.replaceChildren(new Option(p.model || 'Could not load the model list', p.model));
+      },
+    );
   }
 
   hide(): void {
@@ -308,6 +409,7 @@ export class AutopilotPanel {
     this.engageBtn.textContent = st.engaged ? `Switch to ${NAV_LABELS[this.mode]}` : 'Engage';
     this.status.textContent = st.engaged ? `${NAV_LABELS[st.mode]} · ${st.phase.toUpperCase()}${st.notice ? ` — ${st.notice}` : ''}\n${st.status}` : st.status && st.status !== 'Off' ? `Off — ${st.status}` : 'Off';
     this.status.classList.toggle('on', st.engaged);
+    this.refreshBrain(st.engaged, st.mode);
     const g = st.engaged ? st.guidance : null;
     if (!g) {
       this.guidance.replaceChildren();
@@ -325,6 +427,45 @@ export class AutopilotPanel {
     }
     this.guidance.replaceChildren(table);
   }
+
+  private refreshBrain(engaged: boolean, mode: NavMode): void {
+    const bh = this.hooks.brain;
+    if (!bh || !this.brainStatus || !this.brainBox) return;
+    // On foot there is nothing for the model to choose yet.
+    this.brainBox.classList.toggle('hidden', this.kind === 'foot');
+    const { text, warn } = brainLine(bh.status(), bh.prefs(), bh.unavailable(), engaged, engaged ? mode : this.mode);
+    this.brainStatus.textContent = text;
+    this.brainStatus.classList.toggle('warn', warn);
+  }
+}
+
+/** What the model chooses in each mode. */
+const BRAIN_MODES: Partial<Record<NavMode, string>> = {
+  goto: 'the route and pace on the road, the cruise height and speed in the air',
+  land: 'the runway or helipad',
+};
+
+/** The brain's status, in a few lines: what it chose and why, or why it is not choosing. */
+function brainLine(b: AdvisorStatus, p: BrainPrefs, unavailable: string | null, engaged: boolean, mode: NavMode): { text: string; warn: boolean } {
+  if (!p.on) return { text: 'The built-in computer makes every choice.', warn: false };
+  if (unavailable) return { text: unavailable, warn: true };
+  if (!p.model) return { text: 'Choose a model.', warn: true };
+  const asks = BRAIN_MODES[mode];
+  if (!engaged) return { text: `In Go to and Land the model picks ${asks ?? 'the route, heights and landing site'} from options the Navigator has checked. It never steers. Engage to start.`, warn: false };
+  if (!asks) return { text: 'This mode has nothing for the model to choose; the built-in computer flies it.', warn: false };
+  const lines: string[] = [];
+  if (b.state === 'thinking') lines.push('Thinking…');
+  if (b.lastPick) lines.push(`Chose ${b.lastPick}`);
+  const failed = b.state === 'error' || b.state === 'stopped';
+  if (b.message) lines.push(failed ? b.message : `“${b.message}”`);
+  const meta: string[] = [];
+  if (b.latencyMs) meta.push(`${(b.latencyMs / 1000).toFixed(1)} s`);
+  if (b.decisions) meta.push(`${b.decisions} decision${b.decisions === 1 ? '' : 's'}`);
+  if (b.discarded) meta.push(`${b.discarded} ignored`);
+  if (b.spentUsd > 0) meta.push(`$${b.spentUsd.toFixed(4)}`);
+  if (meta.length) lines.push(meta.join(' · '));
+  if (!lines.length) lines.push('Waiting for the first decision…');
+  return { text: lines.join('\n'), warn: failed };
 }
 
 function modesFor(kind: NavKind): readonly NavMode[] {

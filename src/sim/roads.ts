@@ -212,3 +212,52 @@ export function segmentAt(x: number, z: number): [boolean, number, number] {
   const dx = Math.abs(fx - Math.round(fx)), dz = Math.abs(fz - Math.round(fz));
   return dx < dz ? [false, mod(Math.round(fx), N), mod(Math.floor(fz), N)] : [true, mod(Math.floor(fx), N), mod(Math.round(fz), N)];
 }
+
+/** The road segments a route drives, as keys "alongX,i,j" (access legs left out). */
+export function routeSegments(points: readonly RoutePoint[]): string[] {
+  const out: string[] = [];
+  for (let k = 1; k < points.length; k++) {
+    if (points[k].kind === 'access') continue;
+    const [ax, i, j] = segmentAt((points[k - 1].x + points[k].x) / 2, (points[k - 1].z + points[k].z) / 2);
+    out.push(`${ax ? 1 : 0},${i},${j}`);
+  }
+  return out;
+}
+
+/** Share of `a`'s segments that `b` also drives (0..1). */
+export function routeOverlap(a: readonly string[], b: readonly string[]): number {
+  if (!a.length) return 1;
+  const s = new Set(b);
+  let n = 0;
+  for (const k of a) if (s.has(k)) n++;
+  return n / a.length;
+}
+
+/**
+ * Up to `n` genuinely different routes from (x, z) to (gx, gz), fastest first: each further one
+ * is the fastest that keeps off the middle stretch (20–80 %) of every route found before it, so
+ * it is free to share the first and last streets but must find its own way in between. Routes
+ * driving more than 70 % of an earlier one's segments are dropped. `avoid` (closed or blocked
+ * segments) holds for all of them; `keep` lists routes already known (the one being driven),
+ * whose middles are kept off too.
+ */
+export function alternativeRoutes(x: number, z: number, gx: number, gz: number, n: number, avoid?: (alongX: boolean, i: number, j: number) => boolean, keep: readonly string[][] = [], maxExpanded = 120000): Route[] {
+  const out: Route[] = [];
+  const known: string[][] = [...keep];
+  const banned = new Set<string>();
+  const ban = (segs: readonly string[]) => {
+    const a = Math.floor(segs.length * 0.2), b = Math.ceil(segs.length * 0.8);
+    for (let k = a; k < b; k++) banned.add(segs[k]);
+  };
+  for (const s of keep) ban(s);
+  for (let tries = 0; out.length < n && tries < n + 2; tries++) {
+    const r = findRoute(x, z, gx, gz, maxExpanded, (ax, i, j) => banned.has(`${ax ? 1 : 0},${i},${j}`) || (!!avoid && avoid(ax, i, j)));
+    if (!r) break;
+    const segs = routeSegments(r.points);
+    ban(segs);
+    if (known.some((k) => routeOverlap(segs, k) > 0.7)) continue;
+    known.push(segs);
+    out.push(r);
+  }
+  return out;
+}

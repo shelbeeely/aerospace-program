@@ -305,6 +305,14 @@ universe, not a conventional open world decorated with neon.
 - **The Navigator** (once called the flight computer) is one computer for every vehicle and for
   the player's Bit on foot (`src/sim/flightAutopilot.ts`, `src/sim/footNav.ts`), always on
   screen as the NAV chip. Check: `npm run navigator`.
+- **An outside brain only chooses; the Navigator flies.** The optional OpenRouter brain
+  (`src/sim/navBrain.ts`, `src/sim/navDecisions.ts`, `src/gen/navBrain.ts`) picks among options
+  the Navigator has already checked: routes off closed and blocked roads, paces under the
+  player's limit, speeds clear of the stall, runways long enough. It never sets controls.
+  The built-in choice stands until a valid, timely answer for the current engagement arrives.
+  Answers are applied inside the Navigator's step, never from a network callback. A new
+  choice for the brain is a new option builder there, not a new control path. Check:
+  `npm run navbrain`.
 
 ## 17. People (project)
 

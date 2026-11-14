@@ -46,6 +46,7 @@
     "bit": "node --experimental-transform-types --no-warnings scripts/bit.ts",
     "programs": "node --experimental-transform-types --no-warnings scripts/programs.ts",
     "navigator": "node --experimental-transform-types --no-warnings scripts/navigator.ts",
+    "navbrain": "node --experimental-transform-types --no-warnings scripts/navbrain.ts",
     "ground": "node --experimental-transform-types --no-warnings scripts/groundVehicles.ts",
     "server": "bun server/index.ts",
     "test:server": "bun test server"

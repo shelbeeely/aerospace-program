@@ -5,7 +5,7 @@ import type { ModelInfo } from './openrouter.ts';
  * Defaults are FREE models, each with free backups that OpenRouter fails over to when one is
  * rate-limited. Paid models stay one click away in the same pickers.
  */
-export type JobId = 'designer' | 'engineer' | 'composer';
+export type JobId = 'designer' | 'engineer' | 'composer' | 'navigator';
 
 export interface JobInfo {
   label: string;
@@ -44,6 +44,14 @@ export const JOBS: Record<JobId, JobInfo> = {
       'nvidia/nemotron-3-ultra-550b-a55b:free',
     ],
     paid: ['anthropic/claude-sonnet-5.5', 'openai/gpt-6.1-sol', 'google/gemini-3.8-flash'],
+  },
+  navigator: {
+    label: 'Navigator',
+    description: 'Makes the Navigator\'s choices on the move (route, pace, cruise height, runway): one short JSON answer every few seconds, so fast models suit it best.',
+    outputs: ['text'],
+    // Small, quick, non-reasoning models: a slow answer is a late answer.
+    free: ['inclusionai/ling-3.2-flash:free', 'google/gemma-4-26b-a4b-it:free', 'baidu/ernie-5.5-flash-preview:free', 'google/gemma-4-31b-it:free'],
+    paid: ['anthropic/claude-haiku-5.5', 'meta/muse-ember', 'deepseek/deepseek-v4.1-flash', 'google/gemini-3.8-flash'],
   },
   composer: {
     label: 'Composer',

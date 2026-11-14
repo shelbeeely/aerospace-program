@@ -528,6 +528,9 @@ body.touch-ui .lever-label { top: -46px; }
 #ap-panel .ap-guidance td { padding: 1px 10px 1px 0; }
 #ap-panel .ap-guidance td:first-child { color: #9fb2c2; }
 #ap-panel .small { font-size: 11px; }
+#ap-panel .ap-brain { display: grid; gap: 5px; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(0, 234, 255, 0.18); }
+#ap-panel .ap-brain-status { color: #9fb2c2; white-space: pre-line; min-height: 1.4em; overflow-wrap: anywhere; }
+#ap-panel .ap-brain-status.warn { color: #ffb347; }
 body.mode-hangar #ap-panel { display: none !important; }
 body.touch-ui #ap-panel {
   left: 50%; right: auto; top: max(8px, env(safe-area-inset-top)); transform: translateX(-50%);

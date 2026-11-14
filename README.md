@@ -16,6 +16,7 @@ npm run weather        # weather impact checks (rain, icing, ground effect, vort
 npm run ground         # ground vehicles: flat ground, skid steering, Outlands highways and rubble, spawn sites
 npm run arch           # digital world: five families vs the ten checks, districts, interiors, Outlands
 npm run drive          # road network: one graph, every destination by road, the Navigator driving
+npm run navbrain       # the Navigator's OpenRouter brain: checked options, routes, pace, heights, runways, fallbacks (offline; --live to ask a real model)
 npm run weapons        # weapons: fitted multiples, cannon cratering, tank bulldozer, bombs, missiles, laser, discs, armour
 npm run craft          # vehicle rules: connected parts, the 1982 palette, the vehicle grammar, ground-vehicle design loop (offline)
 npm run engines        # fast flight: compressibility, ramjet/scramjet/solid/turbojet, thrust vectoring, airbrake, chute, cone/capsule parts, weight floors
@@ -136,6 +137,7 @@ confidential information or personal data in descriptions sent to it.
 | Designer | Nemotron 3 Ultra 550B | Nemotron 3 Nano Omni, Dots 3 Note | Drafts craft from your description |
 | Engineer | Dots 3 Note | Nemotron 3 Nano Omni, Nemotron 3 Ultra | Repairs designs from validator and flight-test feedback |
 | Composer | Lyria 3 Clip | Lyria 3 Pro | Soundtrack clip (audio output) |
+| Navigator | Ling 3.2 Flash | Gemma 4 26B, ERNIE 5.5 Flash | Picks the Navigator's route, pace, cruise height and landing site (chosen in the Navigator panel, not the Studio) |
 
 - **Free only** is on by default, so the pickers show only free models. Turn it off to choose
   from all ~430 models, priced, with paid recommendations.
@@ -861,6 +863,7 @@ src/
     catalog.ts           the crew: jobs -> capable models, free-first defaults + free backups
     craftDesigner.ts     designer prompt + generate/validate/flight-test/repair loop
     music.ts             composer: audio model (Lyria) -> soundtrack clip
+    navBrain.ts          the Navigator's OpenRouter brain: prompt, lenient reply reading
     library.ts           hangar: saved craft with provenance (localStorage), import/export
   ui/Studio.ts           in-game generation workflow
   input/
@@ -1214,8 +1217,35 @@ with the debug panel and the archetype lab; in the game, **K** opens the inspect
   the roads, on the kerb, and *Back to vehicle* (also U on foot) walks it back and gets in. The
   HUD shows approach guidance while landing; a firm stick input (or walking yourself) takes
   over. Blimps are not flown by it yet. The airplane test card ends with an autoland.
+- **OpenRouter brain (optional):** in the Navigator panel, set *Brain* to *OpenRouter model*,
+  pick a model and, if you like, type *Instructions* in your own words ("avoid Red territory",
+  "keep low", "prefer highways"). The model then makes the Navigator's choices, and the NAV chip
+  shows **AI**:
+  - **On the road:** which route (the one being driven or up to two genuinely different
+    alternatives), and the pace under your own cruise speed.
+  - **On a Go to:** the cruise height and speed.
+  - **On a landing:** which runway or helipad.
 
-Checks: `npm run city`, `npm run autopilot`, `npm run navigator`, `npm run destruction`, `npm run design-pipeline`.
+  The model never steers. After [jevpilot](https://github.com/standardagents/jevpilot), it only
+  picks among options the Navigator has already checked: the routes keep off closed and blocked
+  roads, the speeds stay clear of the stall, the runways are long enough. The built-in computer
+  flies every pick at the full physics rate.
+
+  A decision goes out when something happens: on engaging, after a reroute, at a light wall,
+  when stuck, or on a go-around. On the move it repeats every 8 s on the road and every 12 s in
+  the air. That suits OpenRouter's response times, typically 0.5 to 5 s; jevpilot's purpose-built
+  API answers 2 to 4 times a second.
+
+  Until an answer comes, the built-in choice stands. The same happens when an answer fails,
+  arrives more than 20 s late, belongs to an earlier engagement, or names an option that wasn't
+  offered. Touching a knob (stick or throttle) takes that value back from the model until its
+  next pick.
+
+  The brain uses the Studio's key and spend cap. Its picks, reason, latency and cost show in
+  the panel. Code: `src/sim/navBrain.ts` (the contract and scheduler, DOM-free),
+  `src/sim/navDecisions.ts` (the options), `src/gen/navBrain.ts` (the prompt).
+
+Checks: `npm run city`, `npm run autopilot`, `npm run navigator`, `npm run navbrain`, `npm run destruction`, `npm run design-pipeline`.
 
 ### Credits
 
