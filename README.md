@@ -318,8 +318,8 @@ by which of four figures they show (`src/people/bit.ts`).
 
 | State | Figure | Colour |
 | --- | --- | --- |
-| Idle 1 | compound of icosahedron and dodecahedron | blue |
-| Idle 2 | small triambic icosahedron | blue |
+| Idle 1 | compound of icosahedron and dodecahedron | its inherited light (mostly blue) |
+| Idle 2 | small triambic icosahedron | its inherited light (mostly blue) |
 | YES | octahedron | yellow |
 | NO | stellated icosahedron | red |
 
@@ -377,6 +377,47 @@ by which of four figures they show (`src/people/bit.ts`).
   checks.
 - Not yet: other players do not see you on foot; and the world still streams around your
   parked vehicle, so stay within a few hundred metres of it.
+
+### Bits evolve
+
+Every Bit carries genes (`src/people/genome.ts`) and passes them on (`src/sim/evolution.ts`):
+
+| Gene | What it does |
+| --- | --- |
+| Pace | how fast it walks; walking fast costs more energy, but meets more Bits |
+| Boldness | how late it flinches from a fast vehicle (the timidest see one four times as far off) |
+| Sociability | how far off it stops to talk, and how soon it is ready to talk again |
+| Agreeable | how readily it answers YES |
+| Homebody | how much of its life it spends indoors (safe, and where it recharges) |
+| Pickiness | how much a partner's look matters to its YES |
+| Nerve, stealth, craft | sapper genes (the sides' wartime draft); founders start with almost no craft |
+
+Its look is inherited too: idle light (bright blue, electric cyan, white), size, idle figure and
+spin, the same choices as your own Bit's style. YES is yellow and NO red for every Bit.
+
+- **Life.** A Bit lives about ten minutes, grown at a sixth of that. Walking drains its energy
+  and its building's room recharges it; low, it goes home; old or spent, it fades out in a few
+  slow chips of its own light.
+- **Children.** Two grown Bits of one lot who meet, both say YES and have energy to spare compile
+  a child beside them: each gene from one parent or the other, with an occasional copying error.
+  A lot holds one and a half times the people it started with, and its room only so many.
+- **Moving house.** Grown Bits now and then (and often, from a crowded lot) walk round their
+  kerb and cross the street to a lot with room, so emptied lots fill again.
+- **Lots remember.** Founders are a pure function of the lot. After that a lot keeps its people
+  when it streams out, and carries them forward for the time you were away when it comes back:
+  older, fewer or more, changed. Your browser keeps every lot's gene pool between sessions, so
+  the city goes on evolving from one visit to the next. A world reset keeps evolution; *Reset
+  evolution* in the K inspector's **Bits** tab forgets it.
+- **Watch it.** The K inspector's **Bits** tab charts the Bits around you: how many, how many
+  generations deep, births and deaths by cause, each gene's mean over time, and the share of
+  each look. In the Digital World Explorer (`explore.html`, **Evo**, or `?view=evo`) the
+  **Evolution Lab** runs one downtown district at up to turbo speed under the pressures you set:
+  light cycles cutting along the kerbs, blasts, scarcity, mutation rate and lifespan.
+- **What evolves.** Kerb traffic breeds timid Bits (boldness 0.30 against 0.56 in a control after
+  3 h of lab time, four seeds each); scarcity breeds slow walkers (pace 0.41 against 0.55); with
+  no pressure at all, sociable and agreeable Bits spread, because they have more children.
+- Check: `npm run evolution` (genes, breeding rules, walls, gene pools, the encoding, the lab's
+  determinism and the selection results).
 
 ## Programs: the working population of the streets
 

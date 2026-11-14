@@ -16,6 +16,8 @@ import type { DigitalWorldView } from '../render/arch/DigitalWorldView.ts';
 import type { InfrastructureView } from '../render/arch/InfrastructureView.ts';
 import type { TerrainView } from '../render/arch/TerrainView.ts';
 import type { WorldView } from '../render/WorldView.ts';
+import type { CensusRecorder } from '../sim/evolutionLab.ts';
+import { EvolutionView } from './EvolutionPanel.ts';
 
 /**
  * Development / debug interface of the digital world (explorer and in-game inspector):
@@ -65,7 +67,11 @@ export interface PanelOptions {
   lab: LabHooks | null;
   regenerate: ((seed: number, transition: number) => void) | null;
   teleport: ((x: number, z: number, y?: number) => void) | null;
+  /** The game's Bits: their census over time, and forgetting every gene pool (the Bits tab). */
+  bits?: { recorder: CensusRecorder; reset: () => void } | null;
 }
+
+type Tab = 'world' | 'inspect' | 'lab' | 'bits';
 
 const REGION_COLORS: Record<string, string> = {
   control: '#36e2ff', 'machine-city': '#2f74ff', industrial: '#ff7a1a', communication: '#bfefff', transport: '#ffb347', plains: '#0b3a8a', caverns: '#1c2a6a',
@@ -76,7 +82,8 @@ const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt
 
 export class ArchitectureDebugPanel {
   readonly el: HTMLDivElement;
-  private tab: 'world' | 'inspect' | 'lab' = 'world';
+  private tab: Tab = 'world';
+  private evo: EvolutionView | null = null;
   private readonly body: HTMLDivElement;
   private timer = 0;
   private picked: { s: StructureSpec; ox: number; oz: number } | null = null;
@@ -91,7 +98,7 @@ export class ArchitectureDebugPanel {
     this.el.className = 'panel';
     const tabs = document.createElement('div');
     tabs.className = 'arch-tabs';
-    const names: Array<['world' | 'inspect' | 'lab', string]> = [['world', 'World'], ['inspect', 'Inspect'], ...(o.lab ? [['lab', 'Archetype lab'] as ['lab', string]] : [])];
+    const names: Array<[Tab, string]> = [['world', 'World'], ['inspect', 'Inspect'], ...(o.lab ? [['lab', 'Archetype lab'] as [Tab, string]] : []), ...(o.bits ? [['bits', 'Bits'] as [Tab, string]] : [])];
     for (const [id, label] of names) {
       const b = document.createElement('button');
       b.textContent = label;
@@ -122,7 +129,7 @@ export class ArchitectureDebugPanel {
     if (v) this.render();
   }
 
-  setTab(t: 'world' | 'inspect' | 'lab'): void {
+  setTab(t: Tab): void {
     this.tab = t;
     this.o.lab?.show(t === 'lab');
     for (const b of this.el.querySelectorAll<HTMLButtonElement>('.arch-tabs button[data-tab]')) b.classList.toggle('on', b.dataset.tab === t);
@@ -130,11 +137,13 @@ export class ArchitectureDebugPanel {
   }
 
   update(dt: number): void {
+    this.o.bits?.recorder.update(); // the census keeps its history while the panel is closed
     if (!this.visible) return;
     this.timer += dt;
     if (this.timer < 0.3) return;
     this.timer = 0;
     if (this.tab === 'world') this.refreshWorld();
+    else if (this.tab === 'bits') this.evo?.refresh();
   }
 
   // --- World ---
@@ -142,7 +151,21 @@ export class ArchitectureDebugPanel {
   private render(): void {
     if (this.tab === 'world') this.renderWorld();
     else if (this.tab === 'inspect') this.renderInspect();
+    else if (this.tab === 'bits') this.renderBits();
     else this.renderLab();
+  }
+
+  /** The Bits around the player: how they are evolving (census, gene means, looks). */
+  private renderBits(): void {
+    const b = this.o.bits;
+    if (!b) return;
+    this.evo ??= new EvolutionView(() => b.recorder.history, null, () => { b.reset(); b.recorder.clear(); this.evo?.refresh(); });
+    this.body.replaceChildren(this.evo.root);
+    const hint = document.createElement('p');
+    hint.className = 'arch-hint';
+    hint.textContent = 'The Bits in view, sampled every 15 s of play. Lots out of view evolve too and come back changed.';
+    this.body.prepend(hint);
+    this.evo.refresh();
   }
 
   private renderWorld(): void {

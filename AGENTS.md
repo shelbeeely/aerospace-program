@@ -338,9 +338,25 @@ universe, not a conventional open world decorated with neon.
 - **The player on foot is a Bit** (`BitWalker`): it steps out of a stopped vehicle, walks, and
   gets back in beside it. The vehicle stays parked.
 - **Errands on foot** (`src/sim/errands.ts`): an escorted Bit walks the trail the player
-  walked, so it is never inside a wall, and goes into its new building by the door. The player's
-  Bit can be styled (`src/people/bitStyle.ts`) in its idle light, size, idle figure and spin;
-  YES stays yellow and NO red for everyone.
+  walked, so it is never inside a wall, and goes into its new building by the door.
+- **Looks are inherited.** Every Bit's idle light, size, idle figure and spin are the
+  `bitStyle` choices (`src/people/bitStyle.ts`): the player picks its own Bit's, the people
+  inherit theirs. YES stays yellow and NO red for everyone, whatever a Bit inherits.
+- **Bits evolve** (`src/people/genome.ts`, `src/sim/evolution.ts`, `src/sim/bits.ts`). Each Bit
+  carries genes (pace, boldness, sociability, agreeable, homebody, pickiness; nerve, stealth
+  and craft for the sappers) and its look. It ages, lives on its energy (walking drains it, its
+  room recharges it) and fades out when old or spent. Two grown Bits of one lot who meet and
+  both say YES, with energy to spare, compile a child beside them (crossover and copying
+  errors) while the lot has room; a room holds only so many; grown Bits move house across the
+  street to a lot with room, never through a lot. Founders are still a pure function of their
+  lot; afterwards each lot keeps its gene pool when it streams out and is carried forward when
+  it comes back (`advancePool`). Seeded streams only, never `Math.random`. Behaviour reads the
+  phenotype (`express`), so a middle genome is the Bit as it was; new behaviour gets a gene or
+  reads an existing one, and keeps `scripts/evolution.ts` passing. The Evolution Lab
+  (`src/sim/evolutionLab.ts`, the explorer's Evo view) runs one district fast under kerb
+  traffic, blasts and scarcity; the K inspector's Bits tab charts the game's own streets.
+  The browser keeps the gene pools between sessions (`src/app/bitPools.ts`). Check:
+  `npm run evolution`.
 - The figures are the imported "BIT" meshes (CC-BY 4.0, credited in the README). Do not
   replace them with humanoids.
 - Check: `npm run bit`.

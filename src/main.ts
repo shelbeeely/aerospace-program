@@ -96,7 +96,8 @@ import { flightShapes, hangarShapes } from './render/raytrace/sceneShapes.ts';
 import { PostFX, QUALITIES, type Quality } from './render/postfx.ts';
 import { NetClient } from './net/NetClient.ts';
 import { MultiplayerPanel } from './ui/MultiplayerPanel.ts';
-import { keepBitPools } from './app/bitPools.ts';
+import { clearBitPools, keepBitPools } from './app/bitPools.ts';
+import { CensusRecorder } from './sim/evolutionLab.ts';
 
 async function start() {
   await initPhysics();
@@ -262,7 +263,11 @@ async function start() {
   // (`?room=CODE&server=ws://host:port` for another, `?offline=1` for none).
   const net = new NetClient({ sim, scene, mode: () => mode });
   // K: the architecture inspector (region, district, streaming, structure under the cursor).
-  const inspector = new ArchitectureInspector({ world: archView, terrain: terrainView, routes: routeView, sky: worldView, camera, canvas, active: () => mode === 'flight' });
+  const bitsCensus = new CensusRecorder(sim.bits);
+  const inspector = new ArchitectureInspector({
+    world: archView, terrain: terrainView, routes: routeView, sky: worldView, camera, canvas, active: () => mode === 'flight',
+    bits: { recorder: bitsCensus, reset: () => { sim.bits.clearEvolution(); clearBitPools(); } },
+  });
   const netPanel = new MultiplayerPanel(net);
 
   // --- Input. The active pilot is any ControlSource; the human is just one of them.

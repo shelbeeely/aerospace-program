@@ -17,8 +17,10 @@ The full rules are in [AGENTS.md](AGENTS.md) (imported above). The essentials:
 - **Vehicles:** every craft is restyled into the 1982 palette and must be one connected piece
   (`npm run craft`); a vehicle never hits its own light wall.
 - **People:** Bits are people, not vehicles: rigid hovering polyhedra with four figures (two
-  blue idles, yellow YES, red NO) that walk the kerbs; the player on foot is one (`npm run bit`). Every side also has one
-  street program of its own (Archivist, Sentinel, Tender, Scavenger, Broker; `npm run programs`).
+  idles in their inherited light, yellow YES, red NO) that walk the kerbs; the player on foot is
+  one (`npm run bit`). Bits evolve: genes, YES–YES children, ageing, energy, gene pools kept per
+  lot, an Evolution Lab (`npm run evolution`). Every side also has one street program of its own
+  (Archivist, Sentinel, Tender, Scavenger, Broker; `npm run programs`).
 - **Roads:** every road is pathed so the Navigator can drive any ground vehicle anywhere;
   ground vehicles spawn on roads, never on airstrips.
 - **Code:** no `Math.random` in generation; sim/world/arch stay DOM- and scene-free; run

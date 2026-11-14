@@ -104,10 +104,16 @@ export class EvolutionLab {
     const s = this.settings;
     const hub = CITY.hubs[((s.hub % CITY.hubs.length) + CITY.hubs.length) % CITY.hubs.length];
     this.centre = { x: hub.x, z: hub.z };
-    this.bits = new BitPopulation({
-      radius: LAB.radius, despawn: LAB.radius + 60, seed: s.seed,
-      evolution: { lifespanScale: s.lifespan / EVOLUTION.lifespan, energyScale: s.scarcity, mutation: s.mutation },
-    });
+    const evolution = { lifespanScale: s.lifespan / EVOLUTION.lifespan, energyScale: s.scarcity, mutation: s.mutation };
+    // One population for the lab's whole life (views hold on to it): reset, re-seeded.
+    if (!this.bits) this.bits = new BitPopulation({ radius: LAB.radius, despawn: LAB.radius + 60, seed: s.seed, evolution });
+    else {
+      this.bits.clearEvolution();
+      this.bits.opts.seed = s.seed;
+      Object.assign(this.bits.opts.evolution, evolution);
+      this.bits.clock = 0;
+      this.bits.moves = 0;
+    }
     this.rand = mulberry32(s.seed * 7919 + 17);
     this.time = 0;
     this.runners = [];
@@ -181,12 +187,39 @@ export class EvolutionLab {
   }
 
   private sampleNow(): void {
-    const c = this.bits.census();
-    const deaths = {} as Record<DeathCause, number>;
-    for (const d of DEATH_CAUSES) deaths[d] = this.bits.deaths[d];
-    const mean = {} as Record<Gene, number>;
-    for (const g of GENES) mean[g] = c.mean[g];
-    this.history.push({ t: this.time, count: c.count, maxGen: c.maxGen, meanGen: c.meanGen, lineages: c.lineages, mean, style: c.style, births: this.bits.births, deaths });
+    this.history.push(censusSample(this.bits, this.time));
     this.nextSample = this.time + LAB.sample;
+  }
+}
+
+/** A census of a population at time `t`, as the charts read it. */
+export function censusSample(bits: BitPopulation, t: number): LabSample {
+  const c = bits.census();
+  const deaths = {} as Record<DeathCause, number>;
+  for (const d of DEATH_CAUSES) deaths[d] = bits.deaths[d];
+  const mean = {} as Record<Gene, number>;
+  for (const g of GENES) mean[g] = c.mean[g];
+  return { t, count: c.count, maxGen: c.maxGen, meanGen: c.meanGen, lineages: c.lineages, mean, style: c.style, births: bits.births, deaths };
+}
+
+/**
+ * The game's census over time (the K inspector's Bits tab): a sample of the people in view every
+ * `every` seconds of the population's clock, the last `keep` of them.
+ */
+export class CensusRecorder {
+  readonly history: LabSample[] = [];
+  private next = 0;
+  constructor(readonly bits: BitPopulation, private readonly every = 15, private readonly keep = 480) {}
+
+  update(): void {
+    if (this.bits.clock < this.next || this.bits.people.length === 0) return;
+    this.history.push(censusSample(this.bits, this.bits.clock));
+    if (this.history.length > this.keep) this.history.splice(0, this.history.length - this.keep);
+    this.next = this.bits.clock + this.every;
+  }
+
+  clear(): void {
+    this.history.length = 0;
+    this.next = 0;
   }
 }

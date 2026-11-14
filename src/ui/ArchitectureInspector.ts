@@ -4,16 +4,18 @@ import type { InfrastructureView } from '../render/arch/InfrastructureView.ts';
 import type { TerrainView } from '../render/arch/TerrainView.ts';
 import type { WorldView } from '../render/WorldView.ts';
 import { ArchitectureDebugPanel } from './ArchitectureDebugPanel.ts';
+import type { CensusRecorder } from '../sim/evolutionLab.ts';
 
 /**
  * The in-game architecture inspector (K): the world tab and the structure inspector of the
- * explorer's debug panel, over the flight view. The archetype lab and seed regeneration live in
- * the Digital World Explorer (explore.html), which shares the same panel.
+ * explorer's debug panel over the flight view, and the Bits tab (how the people evolve). The
+ * archetype lab and seed regeneration live in the Digital World Explorer (explore.html), which
+ * shares the same panel.
  */
 export class ArchitectureInspector {
   readonly panel: ArchitectureDebugPanel;
 
-  constructor(opts: { world: DigitalWorldView; terrain: TerrainView; routes: InfrastructureView; sky: WorldView; camera: THREE.PerspectiveCamera; canvas: HTMLCanvasElement; active: () => boolean }) {
+  constructor(opts: { world: DigitalWorldView; terrain: TerrainView; routes: InfrastructureView; sky: WorldView; camera: THREE.PerspectiveCamera; canvas: HTMLCanvasElement; active: () => boolean; bits?: { recorder: CensusRecorder; reset: () => void } }) {
     this.panel = new ArchitectureDebugPanel({ ...opts, lab: null, regenerate: null, teleport: null });
     this.panel.visible = false;
     window.addEventListener('keydown', (e) => {

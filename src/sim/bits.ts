@@ -865,13 +865,19 @@ export class BitPopulation {
     const slot = CHILD_SLOT + n;
     const rec: StoredBit = { genome, age: 0, life: lifespanOf(rand(), this.opts.evolution), energy: EVOLUTION.childEnergy * ph.size, gen: Math.max(a.gen, b.gen) + 1, slot, lineage: a.lineage, prestige: 0 };
     const c = this.spawn(h, slot, rec, personRand(h.key, slot, h.visit, this.opts.seed), time);
-    // Beside its parents: on the kerb between them, or down the aisle they stand in.
+    // Beside its parents: on the kerb between them, or down the aisle they stand in (or, the
+    // room being full, just outside their door).
+    const roomy = c.place === 'inside' || !this.roomFull(h);
     if (a.place === 'kerb') {
       const gap = mod(b.s - a.s, h.loop);
       const mid = gap <= h.loop / 2 ? a.s + gap / 2 : a.s - (h.loop - gap) / 2;
       c.place = 'kerb';
       c.door = null;
       c.s = mod(mid, h.loop);
+    } else if (a.place === 'inside' && a.door && !roomy) {
+      c.place = 'kerb';
+      c.door = null;
+      c.s = a.doorS;
     } else if (a.place === 'inside' && a.door) {
       const spot = spotBehind(a.door, c.rand);
       c.place = 'inside';

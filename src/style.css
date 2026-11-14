@@ -636,8 +636,45 @@ body.touch-ui #mp-panel { top: auto; bottom: calc(max(8px, env(safe-area-inset-b
 #arch-panel .arch-roles b { display: inline-block; min-width: 72px; }
 #arch-panel .role-structure { color: #36e2ff; } #arch-panel .role-data { color: #2f74ff; } #arch-panel .role-energy { color: #eaf6ff; }
 #arch-panel .role-entrance { color: #ffb347; } #arch-panel .role-process { color: #ff7a1a; } #arch-panel .role-warning { color: #ff2a1a; }
+
+/* --- Bit evolution: the explorer's Evolution Lab panel and the K inspector's Bits tab --- */
+#evo-panel {
+  position: fixed; top: 52px; left: 12px; width: 380px; max-height: calc(100vh - 64px); overflow: auto;
+  z-index: 40; font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace; color: #cfe6ff;
+  background: rgba(3, 10, 30, 0.9); border: 1px solid rgba(54, 226, 255, 0.35); padding: 6px 10px 12px;
+}
+#evo-panel.hidden { display: none; }
+#evo-panel h3 { margin: 2px 0 6px; color: #36e2ff; font-size: 12px; letter-spacing: 0.08em; }
+#evo-panel h4 { margin: 10px 0 4px; color: #36e2ff; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 11px; }
+#evo-panel .arch-kv { width: 100%; border-collapse: collapse; }
+#evo-panel .arch-kv td { vertical-align: top; padding: 1px 4px 1px 0; }
+#evo-panel .arch-kv td:first-child { color: #6f8fbf; white-space: nowrap; width: 1%; }
+#evo-panel .arch-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+#evo-panel .arch-row label { display: flex; gap: 4px; align-items: center; }
+#evo-panel select, #evo-panel input[type=number] { background: #061230; color: #cfe6ff; border: 1px solid rgba(54, 226, 255, 0.3); font: inherit; max-width: 150px; }
+#evo-panel input[type=number] { width: 70px; }
+#evo-panel button { background: #061230; color: #cfe6ff; border: 1px solid rgba(54, 226, 255, 0.35); padding: 3px 8px; cursor: pointer; font: inherit; }
+#evo-panel button.on { background: #36e2ff; color: #02050d; }
+#evo-panel .arch-slider { display: grid; grid-template-columns: 1fr 110px 40px; gap: 6px; align-items: center; margin: 2px 0; }
+#evo-panel .arch-slider span { text-align: right; color: #8fb6e8; }
+#evo-panel input[type=range] { accent-color: #36e2ff; }
+.evo-chart { margin: 8px 0 4px; }
+.evo-chart-title { color: #8fb6e8; font-size: 11px; margin-bottom: 3px; }
+.evo-plot { position: relative; }
+.evo-plot canvas { display: block; width: 100%; border: 1px solid rgba(54, 226, 255, 0.18); cursor: crosshair; touch-action: none; }
+.evo-legend { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 10px; color: #8fb6e8; margin-top: 3px; }
+.evo-legend i { display: inline-block; margin-right: 4px; vertical-align: middle; }
+.evo-legend .evo-key-line { width: 12px; height: 2px; border-radius: 1px; }
+.evo-legend .evo-key-box { width: 9px; height: 9px; border-radius: 2px; }
+.evo-tip { position: absolute; pointer-events: none; min-width: 120px; max-width: 150px; background: rgba(2, 5, 13, 0.95); border: 1px solid rgba(54, 226, 255, 0.35); padding: 4px 6px; font-size: 10px; color: #8fb6e8; }
+.evo-tip.hidden { display: none; }
+.evo-tip-head { color: #6f8fbf; margin-bottom: 2px; }
+.evo-tip i { display: inline-block; width: 10px; height: 2px; margin-right: 4px; vertical-align: middle; border-radius: 1px; }
+.evo-tip b { color: #cfe6ff; font-weight: 600; }
+.evo-table td:last-child { color: #cfe6ff; }
 @media (max-width: 700px) {
   #arch-panel { top: auto; bottom: 0; right: 0; left: 0; width: auto; max-height: 55vh; }
+  #evo-panel { top: auto; bottom: 0; right: 0; left: 0; width: auto; max-height: 50vh; }
 }
 
 /* ---------------------------------------------------------------- weapons triggers (touch) */

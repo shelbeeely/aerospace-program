@@ -102,6 +102,13 @@ export class BitsView {
     this.player.setStyle(style);
   }
 
+  /** Show or hide the people (the explorer's Evolution Lab switches them with its view). */
+  setVisible(v: boolean): void {
+    for (const m of this.meshes.values()) m.visible = v;
+    this.pools.visible = v;
+    this.offerCubes.visible = this.offerRings.visible = v;
+  }
+
   /** People drawn last frame. */
   get drawn(): number {
     return this.pools.count;

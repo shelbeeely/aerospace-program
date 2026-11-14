@@ -21,11 +21,17 @@ import { updateSkyPlanet } from '../render/neon.ts';
 import { PostFX, QUALITIES, type Quality } from '../render/postfx.ts';
 import { WorldView } from '../render/WorldView.ts';
 import { ArchitectureDebugPanel, type LabState } from '../ui/ArchitectureDebugPanel.ts';
+import { BitsView } from '../render/BitsView.ts';
+import { EvolutionLabView } from '../render/EvolutionLabView.ts';
+import { EvolutionLab, LAB } from '../sim/evolutionLab.ts';
+import { kerbPoint } from '../sim/bits.ts';
+import { EvolutionView, type LabSpeed } from '../ui/EvolutionPanel.ts';
 
 /**
  * The Digital World Explorer: the same procedural world as the flight game (same seeds, same
  * generators, same streaming views), explored with a free camera, plus the archetype lab and
- * the full debug panel. `?seed=`, `?x=&z=&y=&yaw=&pitch=`, `?view=lab`, `?quality=`.
+ * the full debug panel, and the Evolution Lab (a downtown district's Bits run fast under
+ * pressures you set). `?seed=`, `?x=&z=&y=&yaw=&pitch=`, `?view=lab`, `?view=evo`, `?quality=`.
  */
 const C = PLANET.circumference;
 const params = new URLSearchParams(location.search);
@@ -254,8 +260,63 @@ async function start() {
   document.getElementById('ex-panel')!.addEventListener('click', () => { panel.visible = !panel.visible; });
   document.getElementById('ex-lab')!.addEventListener('click', () => { panel.visible = true; panel.setTab(labOn ? 'world' : 'lab'); });
 
+  // --- Evolution Lab: the real district, its Bits evolving fast, charted.
+  let evo: { lab: EvolutionLab; bits: BitsView; hazards: EvolutionLabView; panel: HTMLDivElement; view: EvolutionView; speed: LabSpeed; acc: number; shown: number } | null = null;
+  let evoOn = false;
+  const showEvo = (on: boolean) => {
+    evoOn = on;
+    document.getElementById('ex-evo')!.classList.toggle('on', on);
+    if (on && !evo) {
+      const lab = new EvolutionLab();
+      const el = document.createElement('div');
+      el.id = 'evo-panel';
+      const h = document.createElement('h3');
+      h.textContent = 'EVOLUTION LAB';
+      el.append(h);
+      const view = new EvolutionView(() => lab.history, { lab, speed: () => evo?.speed ?? 0, setSpeed: (sp) => { if (evo) evo.speed = sp; } });
+      el.append(view.root);
+      document.body.append(el);
+      evo = { lab, bits: new BitsView(scene, lab.bits, null), hazards: new EvolutionLabView(scene, lab), panel: el, view, speed: 10, acc: 0, shown: 0 };
+    }
+    if (!evo) return;
+    evo.panel.classList.toggle('hidden', !on);
+    evo.bits.setVisible(on);
+    evo.hazards.visible = on;
+    if (on) {
+      // From the street, onto the busiest stretch of kerb (fly about from there).
+      const kerb = evo.lab.bits.people.filter((p) => p.place === 'kerb');
+      const near = (p: (typeof kerb)[number]) => kerb.filter((q) => Math.hypot(q.x - p.x, q.z - p.z) < 25).length;
+      const at = kerb.reduce<(typeof kerb)[number] | null>((a, p) => (!a || near(p) > near(a) ? p : a), null);
+      const k = { x: evo.lab.centre.x, z: evo.lab.centre.z, tx: 1, tz: 0 };
+      if (at) kerbPoint(at.home, at.s, 0, k);
+      const nx = k.tz, nz = -k.tx; // out from the lot, over the street
+      teleport(k.x + nx * 30, k.z + nz * 30, terrainHeight(k.x + nx * 30, k.z + nz * 30) + 14);
+      cam.yaw = Math.atan2(nx, nz);
+      cam.pitch = -0.36;
+      if (labOn) { showLab(false); panel.setTab('world'); }
+      evo.view.refresh();
+    }
+  };
+  document.getElementById('ex-evo')!.addEventListener('click', () => showEvo(!evoOn));
+  const stepEvo = (dt: number) => {
+    if (!evo || !evoOn) return;
+    const lab = evo.lab;
+    if (evo.speed === 'turbo') {
+      const t0 = performance.now();
+      while (performance.now() - t0 < 14) for (let i = 0; i < 20; i++) lab.step();
+    } else if (evo.speed > 0) {
+      evo.acc = Math.min(evo.acc + dt * evo.speed, LAB.dt * 400);
+      while (evo.acc >= LAB.dt) { lab.step(); evo.acc -= LAB.dt; }
+    }
+    evo.bits.update(lab.time, 1);
+    evo.hazards.update();
+    evo.shown += dt;
+    if (evo.shown > 0.5) { evo.shown = 0; evo.view.refresh(); }
+  };
+
   buildDests();
   document.getElementById('ex-loading')?.remove();
+  if (params.get('view') === 'evo') showEvo(true);
   if (labOn) { panel.visible = true; panel.setTab('lab'); }
 
   window.addEventListener('resize', () => {
@@ -323,6 +384,7 @@ async function start() {
     terrainView.update(camera);
     routeView.update(camera.position);
     if (++tick % 60 === 1) applyCurvature(scene);
+    stepEvo(dt);
     fx.render();
     panel.update(dt);
   };
@@ -333,6 +395,8 @@ async function start() {
       renderer, scene, camera, cam, archView, terrainView, routeView, worldView, panel, labState, WORLD,
       goto: (x: number, z: number, y: number, yaw = cam.yaw, pitch = cam.pitch) => { teleport(x, z, y); cam.yaw = yaw; cam.pitch = pitch; },
       lab: (on = true) => { panel.visible = true; panel.setTab(on ? 'lab' : 'world'); },
+      evo: (on = true) => showEvo(on),
+      evolution: () => evo?.lab ?? null,
       labCamera: labCam,
       orbit,
       setWalk,
