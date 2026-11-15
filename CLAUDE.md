@@ -27,7 +27,10 @@ The full rules are in [AGENTS.md](AGENTS.md) (imported above). The essentials:
   scripted teachers (`npm run train-drive` for drivers, `npm run train-squad` for the escort
   squad and the supply drone), proven in the Scenario Lab (`npm run scenario`). Weights are
   stamped with the code they were trained on: `npm run train` retrains whatever is stale, and
-  CI (`brains.yml`) does it on push and commits the weights back to the branch.
+  CI (`brains.yml`) does it on push and commits the weights back to the branch. Each side learns
+  the player's style in realtime and keeps it for the four-week season (`npm run style`). A Stop
+  hook (`.claude/hooks/stop-checks.sh`) runs the typecheck and the stale-weights check before a
+  turn ends.
 - **Roads:** every road is pathed so the Navigator can drive any ground vehicle anywhere;
   ground vehicles spawn on roads, never on airstrips.
 - **Code:** no `Math.random` in generation; sim/world/arch stay DOM- and scene-free; run

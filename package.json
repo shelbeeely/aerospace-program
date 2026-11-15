@@ -46,6 +46,7 @@
     "bit": "node --experimental-transform-types --no-warnings scripts/bit.ts",
     "evolution": "node --experimental-transform-types --no-warnings scripts/evolution.ts",
     "sappers": "node --experimental-transform-types --no-warnings scripts/sappers.ts",
+    "style": "node --experimental-transform-types --no-warnings scripts/style.ts",
     "train": "node --experimental-transform-types --no-warnings scripts/train.ts",
     "train-drive": "node --experimental-transform-types --no-warnings scripts/trainDrive.ts",
     "train-squad": "node --experimental-transform-types --no-warnings scripts/trainSquad.ts",

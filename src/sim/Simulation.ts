@@ -42,6 +42,7 @@ import { nearestRoadPoint, siteSpawnPoint, type SpawnPoint, type SpawnSite } fro
 import { orbitElements, type OrbitTelemetry, type Telemetry } from './telemetry.ts';
 import { StrikeSystem, type Strike, type StrikeKind } from './strikes.ts';
 import { wrapDelta } from './contacts.ts';
+import { StyleBook, type StyleSituation } from '../brain/style.ts';
 import { AdsbTracker, craftRecord, flyerCallsign, flyerRecord, riderRecord, type AdsbRecord } from './adsb.ts';
 
 function roundOrbit(o: OrbitTelemetry): OrbitTelemetry {
@@ -945,6 +946,13 @@ export class Simulation {
   }
   /** Hostile turrets on tower roofs around the player (density 0 = off). */
   readonly groundTurrets: GroundTurretSystem;
+  /**
+   * Every side's model of how the player flies (src/brain/style.ts): learned in realtime while a
+   * side fights the player, read by its turrets (they lead into the break it expects). The app
+   * keeps it for the season (src/app/styleStore.ts).
+   */
+  readonly style = new StyleBook((s) => sideName(s as Side));
+  private styleHeading = 0;
   /** Called-in strikes (the strike globe): missile barrages, EMP strikes, nuke bombers. */
   readonly strikeSystem: StrikeSystem;
   readonly wrapShift = new THREE.Vector3();
@@ -1037,6 +1045,7 @@ export class Simulation {
     // Who is after the player: the war, or its own deeds (wanted by a team it attacked at peace,
     // renegade to its own for friendly fire).
     this.playerFoe.hostileTo = (side) => this.hostileToPlayer(side);
+    this.groundTurrets.playerLean = (side) => this.style.leans.get(side);
     this.airTraffic.playerHostile = (side) => this.hostileToPlayer(side);
     this.airTraffic.groundAt = (x, z) => (isSea(x) ? -COAST.depth : terrainHeight(x, z));
     // Runways are used into the wind (10 m up, the gusts averaged out by how seldom it is asked).
@@ -1537,6 +1546,7 @@ export class Simulation {
     this.airTraffic.focus = focus;
     this.groundTurrets.focus = focus;
     this.airTraffic.step(this.dt, this.time, this.position, this.airTarget);
+    this.observeStyle(pf);
     const turretFoes = [pf, ...this.extraFoes, ...this.strikeSystem.foes()];
     for (const f of this.airTraffic.flyers) if (f.foe && f.derezAt === null && !f.leaving) turretFoes.push(f.foe);
     // The player sees its unarmed self watched: the turrets get the player even when it isn't armed.
@@ -2071,6 +2081,47 @@ export class Simulation {
   readonly adsb = new AdsbTracker();
   /** Other players' broadcasts (set by the network each frame; sampled with the rest). */
   extraAdsb: AdsbRecord[] = [];
+
+  /**
+   * Let the side fighting the player watch how it flies: the nearest aircraft or turret on the
+   * player gives the situation (where it is, how it points, the range, rounds and missiles on
+   * the player), and every side's model labels what the player did a moment ago.
+   */
+  private observeStyle(pf: Foe): void {
+    const fwd = _fwd.set(0, 0, -1).applyQuaternion(this.rotation);
+    const heading = Math.atan2(fwd.x, -fwd.z);
+    const turnRate = Math.atan2(Math.sin(heading - this.styleHeading), Math.cos(heading - this.styleHeading)) / this.dt;
+    this.styleHeading = heading;
+    const p = this.position;
+    let best: { side: number; x: number; y: number; z: number; facing: number; firing: boolean } | null = null, bestD = Infinity;
+    if (!this.exploded && pf.engage) {
+      for (const f of this.airTraffic.flyers) {
+        if (f.target !== pf || f.derezAt !== null || f.side === null) continue;
+        const d = Math.hypot(wrapDelta(f.pos.x, p.x), f.pos.y - p.y, wrapDelta(f.pos.z, p.z));
+        if (d < bestD) { bestD = d; best = { side: f.side, x: f.pos.x, y: f.pos.y, z: f.pos.z, facing: f.heading, firing: !!f.weapons?.trigger.primary }; }
+      }
+      for (const t of this.groundTurrets.turrets) {
+        if (t.target !== pf || t.derezAt !== null) continue;
+        const d = Math.hypot(wrapDelta(t.pos.x, p.x), t.pos.y - p.y, wrapDelta(t.pos.z, p.z));
+        if (d < bestD) { bestD = d; best = { side: t.side, x: t.pos.x, y: t.pos.y, z: t.pos.z, facing: t.pose.yaw, firing: t.state === 'firing' }; }
+      }
+    }
+    let fight: { side: number; s: StyleSituation } | null = null;
+    if (best) {
+      const dx = wrapDelta(p.x, best.x), dz = wrapDelta(p.z, best.z);
+      const toThreat = Math.atan2(dx, -dz), fromThreat = Math.atan2(-dx, dz);
+      const wrapA = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+      fight = {
+        side: best.side,
+        s: {
+          bearing: wrapA(toThreat - heading), aspect: wrapA(fromThreat - best.facing), range: bestD, speed: this.linvel.length(),
+          agl: p.y - terrainHeight(p.x, p.z), missile: this.incomingMissiles() > 0 ? 1 : 0,
+          underFire: best.firing || this.time - this.lastHitAt < 1 ? 1 : 0, hit: this.time - this.lastHitAt < 0.5 ? 1 : 0, turnRate, climbRate: this.linvel.y,
+        },
+      };
+    }
+    this.style.step(this.time, heading, p.y, fight);
+  }
 
   /** Every vehicle's ADS-B record now: the AI aircraft, the light cycles, the craft, other players. */
   adsbRecords(): AdsbRecord[] {

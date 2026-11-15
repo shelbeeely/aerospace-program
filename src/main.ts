@@ -97,6 +97,7 @@ import { PostFX, QUALITIES, type Quality } from './render/postfx.ts';
 import { NetClient } from './net/NetClient.ts';
 import { MultiplayerPanel } from './ui/MultiplayerPanel.ts';
 import { clearBitPools, keepBitPools } from './app/bitPools.ts';
+import { keepStyle } from './app/styleStore.ts';
 import { CensusRecorder } from './sim/evolutionLab.ts';
 
 async function start() {
@@ -224,6 +225,8 @@ async function start() {
   const bitsView = new BitsView(scene, sim.bits, sim.walker);
   // The Bits evolve across sessions: this browser keeps their gene pools (src/app/bitPools.ts).
   keepBitPools(sim.bits);
+  // Each side remembers how you fly for the season (src/brain/style.ts, src/app/styleStore.ts).
+  keepStyle(sim.style);
   const programsView = new ProgramsView(scene, sim.programs);
   const chargesView = new ChargesView(scene);
   bitsView.setErrands(sim.errands);

@@ -514,6 +514,12 @@ its east end for six minutes, the convoy must cross at 2:00, and the district ke
   battery is running down. It delivers in about a minute, in calm air and in wind up to 10 m/s.
   `npm run train-squad` trains both from their scripted teachers (98.8% squad, 98.6% flight
   and 97.7% landing agreement on held-out decisions) and writes the weights deterministically.
+- **The enemy learns your style.** While a side fights you it watches what you do (which way you
+  break when shot at or hit, whether you climb with a missile on you) and retrains two tiny
+  networks every few seconds; its turrets then lead into the break it expects. Fly by habit and
+  you get hit more (a pilot who always turns left when hit took 15 hits instead of 3 in four
+  minutes of attack runs); fly unpredictably and nothing changes. Each side remembers you for the
+  four-week season, in your browser. Check: `npm run style`.
 - **Retraining is automatic.** Each weights file is stamped with a fingerprint of the code it
   was trained on (comments and layout don't count). `npm run train` retrains only the stale
   networks (`-- --check` to list them, `-- --all` for everything), `npm run scenario` refuses

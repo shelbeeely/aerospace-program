@@ -222,6 +222,10 @@ export class GroundTurretSystem {
   groundAt: (x: number, z: number) => number = terrainHeight;
   /** Has the structure under a site fractured? (the simulation answers) */
   fractured: (structureId: string) => boolean = () => false;
+  /** What a side expects of the player next, as an acceleration (m/s²), or null (the simulation answers from its StyleBook). */
+  playerLean: ((side: Team) => { x: number; y: number; z: number } | null | undefined) | null = null;
+  /** Aim solutions that led into an expected break (checks). */
+  leaned = 0;
   /** A turret whose tower fell (the simulation shows the derez). */
   /** A tower with a turret on it fell: who brought it down (a side, or null for nobody in particular). */
   onTowerFell: ((t: GroundTurret) => Side | null | void) | null = null;
@@ -495,7 +499,17 @@ export class GroundTurretSystem {
     const rel = this._rel.set(wrapDelta(head.x, tp.x), tp.y - head.y, wrapDelta(head.z, tp.z));
     const range = rel.length();
     if (t.site.kind === 'rail') return this.rail(t, dt, time, target, rel, range);
-    const aim = anglesOf(leadAim(rel, target.lock.velocity(this._tv), GUN_SPEED, 9.81, this._aim));
+    const lead = leadAim(rel, target.lock.velocity(this._tv), GUN_SPEED, 9.81, this._aim);
+    // Against the player, lead into the break this side has learned to expect (src/brain/style.ts).
+    const lean = target.kind === 'player' ? this.playerLean?.(t.side) : null;
+    if (lean) {
+      const tof = lead.length() / GUN_SPEED;
+      lead.x += 0.5 * lean.x * tof * tof;
+      lead.y += 0.5 * lean.y * tof * tof;
+      lead.z += 0.5 * lean.z * tof * tof;
+      this.leaned++;
+    }
+    const aim = anglesOf(lead);
     slewTurret(t.pose, aim.yaw + t.aimError.h, aim.pitch + t.aimError.p, dt, TOWER_LIMITS);
     let dy = aim.yaw - t.pose.yaw;
     dy = Math.atan2(Math.sin(dy), Math.cos(dy));

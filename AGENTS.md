@@ -410,6 +410,14 @@ universe, not a conventional open world decorated with neon.
   and the drone) record the scripted teachers (plus generated hard cases), train by imitation
   (driving can also be refined by evolution), and write `src/brain/weights/*.json`
   deterministically; regenerate them rather than editing them.
+- **The enemy learns your style, in realtime** (`src/brain/style.ts`). While a side fights the
+  player it samples the player's situation every half second and what the player did next,
+  retrains two tiny networks every few seconds, counts habits (the break when shot at or hit,
+  what the player does with a missile on it) and writes down what it notices; explanations come
+  from those records. Confidence is skill over guessing the commonest move, so an unpredictable
+  player changes nothing. Turrets lead into the break their side expects. One `StyleBook` per
+  simulation, kept per side for the season in the browser (`src/app/styleStore.ts`); seasons
+  are four weeks from a fixed epoch (`src/brain/season.ts`). Check: `npm run style`.
 - **Retraining is automatic.** Every weights file carries a stamp: a fingerprint of the code
   its trainer ran (`scripts/lib/fingerprint.ts`: the trainer and everything it imports,
   printed without comments or layout, so only a change in behaviour counts). `npm run train`
