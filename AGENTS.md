@@ -460,7 +460,18 @@ universe, not a conventional open world decorated with neon.
   border districts. Bits move house along the trade routes.
 - **Explanations come from the log**: "while you were away" (`digest`) is built only from
   recorded events.
-- Check: `npm run living`.
+- **World generation reads the growth** (`src/arch/growth.ts`, from `src/living/overlay.ts`):
+  generation is a pure function of the seed, the lattice indices and the growth overlay. A
+  plains lot with a block past survey splits into single blocks; a block at the structure stage
+  carries its structure about half grown, a built one a structure of its region (the ten checks
+  still apply). The block summary (and `connectRoads`), district plans, traffic's intersections,
+  the ground and the radar listen and refresh, so every road stays pathed (§14).
+- **The relay keeps it** (`server/living.ts`): advanced every minute, saved to its disk
+  (`LIVING_DATA`, atomically; a failed save is reported on `/health`, never fatal), handed to
+  clients in the world (`living-want` → `living`) and shared every ten minutes. The relay loads
+  the planet from `src/living/baseMap.json` (`npm run living-map`, stamped and kept fresh by
+  `npm run train` and CI) instead of carrying the world generator.
+- Checks: `npm run living`, `npm run test:server`.
 
 ## 18. Destruction (project)
 

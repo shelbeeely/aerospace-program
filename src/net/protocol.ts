@@ -127,13 +127,17 @@ export type ClientMessage =
   /** A Bit of a lot this client does not hold was derezzed here. */
   | { t: 'lot-derez'; key: number; slot: number }
   /** Saved pools for a relay that lacks them (several lots, base64), each away so many seconds. */
-  | { t: 'lot-offer'; pool: string; away: number[] };
+  | { t: 'lot-offer'; pool: string; away: number[] }
+  /** The living world (AGENTS.md §21): send me its state, with the events since `since` (ms; 0: the latest). */
+  | { t: 'living-want'; since: number };
 
 /** What a world-keeping relay says about its world in `welcome`. */
 export interface WorldInfo {
   /** How long the relay has been running (s), and how many lots it keeps. */
   uptime: number;
   lots: number;
+  /** It keeps the living world too (ask with `living-want`). */
+  living?: boolean;
 }
 
 export type ServerMessage =
@@ -142,6 +146,8 @@ export type ServerMessage =
   | { t: 'lot'; key: number; pool: string | null; holder: boolean }
   /** One of your lot's Bits was derezzed in another player's game. */
   | { t: 'lot-derez'; key: number; slot: number }
+  /** The living world's state (src/living/state.ts LivingState), on asking and every few minutes. */
+  | { t: 'living'; state: unknown }
   | { t: 'join'; player: PlayerInfo }
   | { t: 'leave'; id: string; reason: string }
   | { t: 'state'; id: string; s: NetState }
@@ -286,6 +292,8 @@ export function parseClientMessage(raw: string, bytes = raw.length): ClientMessa
     case 'lot-offer':
       return isPool(m.pool) && Array.isArray(m.away) && m.away.length <= MAX_OFFER_LOTS && m.away.every((a) => isNum(a, 1e9) && a >= 0)
         ? { t: 'lot-offer', pool: m.pool, away: m.away } : bad('invalid lot offer');
+    case 'living-want':
+      return isNum(m.since, 1e15) && m.since >= 0 ? { t: 'living-want', since: m.since } : bad('invalid living-want');
     default:
       return bad('unknown message type');
   }

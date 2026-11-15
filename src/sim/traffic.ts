@@ -9,6 +9,7 @@ import { OWN_WALL_GROUPS } from './collisionGroups.ts';
 import { segmentExists } from './roadRules.ts';
 import { isHighwayLine as gridHighway } from '../arch/grid.ts';
 import type { PolicyMode } from '../brain/policy.ts';
+import { onGrowth } from '../arch/growth.ts';
 import { GROUND_FIGURES, RIDER_ACTIONS, riderNet, riderPolicy, type GroundType, type RiderAction, type RiderObs } from './riderPolicy.ts';
 
 /**
@@ -268,6 +269,8 @@ export function signalPhase(i: number, j: number, axisX: boolean, time: number):
 }
 
 const degrees = new Uint8Array(N * N);
+// The cities grow (new streets round new blocks): intersections are judged again.
+onGrowth(() => { controls.fill(0); degrees.fill(0); });
 /** Does intersection (i, j) lead nowhere (one way in, the same way out)? */
 export function deadEnd(i: number, j: number): boolean {
   const key = nodeKey(i, j);

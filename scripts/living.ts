@@ -6,18 +6,29 @@
  * 2. Deterministic: the same seed and time give the same world.
  * 3. Catching up equals living through it: a week at once is the same as tick by tick (and a
  *    snapshot taken mid-way, round-tripped through JSON, carries on identically).
- * 4. Growth only where it may: every developed block was open or plain, in a district of the
+ * 4. Growth only where it may: every developed block was a plain block, in a district of the
  *    faction that built it when it began, next to a built block; and no faction past its cap.
  *    A few blocks a day per faction.
  * 5. The books balance: goods made = goods in stock + in transit + consumed + used in building
  *    + lost on the road; credits = the start + taxes - building.
  * 6. Wars are rare: over three seasons on four seeds, wars start, but seldom.
- * 7. "While you were away" is built from the log.
+ * 7. The world generator builds what the factions built: each developed block is a lot of its
+ *    own with a structure of its region (passing the architectural checks), every new block
+ *    faces a street, and the roads are still one network; taking the growth away gives back
+ *    the planet as generated.
+ * 8. "While you were away" is built from the log.
  */
 import { advance, digest, LIVING, LivingIndex, newLiving } from '../src/living/advance.ts';
 import { baseMap, livingPitch, livingRegions } from '../src/living/baseMap.ts';
 import { SEASON_EPOCH } from '../src/brain/season.ts';
 import { FACTION_NAME, FACTIONS, GOODS, pairKey, type LivingState } from '../src/living/state.ts';
+import { growthOverlay } from '../src/living/overlay.ts';
+import { readShippedMap } from '../src/living/shippedMap.ts';
+import shippedJson from '../src/living/baseMap.json' with { type: 'json' };
+import { setGrowth } from '../src/arch/growth.ts';
+import { districtPlan, lotAt } from '../src/arch/DistrictGenerator.ts';
+import { BLOCK_KIND, blockSummary, roadStats } from '../src/world/planetCity.ts';
+import { roadOpen } from '../src/sim/roads.ts';
 
 let failures = 0;
 const check = (ok: boolean, label: string, detail = '') => {
@@ -78,13 +89,13 @@ console.log('\n--- growth only where it may');
     for (const site of s.sites) if (!before.has(site.b) && !begun.has(site.b)) begun.set(site.b, { f: site.f, owner: idx.owner[idx.chunkOf(site.b)], adjacent: true, kind: map.kind[site.b] });
   }
   const devBlocks = s.developed.map(([b]) => b);
-  const okKind = devBlocks.every((b) => map.kind[b] === 128 || map.kind[b] === 32);
+  const okKind = devBlocks.every((b) => map.kind[b] === 32);
   const unique = new Set(devBlocks).size === devBlocks.length;
   const idx = idx0();
   const adjacent = devBlocks.every((b) => idx.neighbours(b).some((nb) => map.kind[nb] === 0 || idx.developed.has(nb)));
   const owned = [...begun.values()].every((x) => x.owner === x.f);
   const caps = FACTIONS.every((f) => s.factions[f].built <= s.factions[f].cap);
-  check(okKind && unique && adjacent && owned && caps, 'only open or plain blocks, in the builder\'s own district, next to built ones, within caps',
+  check(okKind && unique && adjacent && owned && caps, 'only plain blocks (never airfield approaches or negative space), in the builder\'s own district, next to built ones, within caps',
     `${devBlocks.length} blocks; caps ${FACTIONS.map((f) => `${s.factions[f].built}/${s.factions[f].cap}`).join(', ')}`);
 }
 
@@ -124,6 +135,77 @@ console.log('\n--- wars are rare');
   }
   const rate = wars / seasons;
   check(wars >= 1 && rate <= 1, 'wars do start, but seldom (at most about one a season)', `${wars} wars in ${seasons} seasons${examples.length ? `: ${examples.join('; ')}` : ''}`);
+}
+
+console.log('\n--- the world generator builds what the factions built');
+{
+  // The sixty-day world's growth, laid over the generated planet.
+  const before = blockSummary().slice();
+  const overlay = growthOverlay(world, regions);
+  setGrowth(overlay);
+  const s2 = blockSummary();
+  const n = map.n;
+  const developed = world.developed.map(([b]) => b);
+  const asLots = developed.filter((b) => s2[b * 4 + 2] === BLOCK_KIND.lot).length;
+  const withStructure = developed.filter((b) => {
+    const l = lotAt(b % n, Math.floor(b / n));
+    return !!l && l.wb === 1 && l.db === 1 && (l.kind === 'structure' || l.kind === 'open');
+  }).length;
+  check(asLots === developed.length && withStructure === developed.length, 'every block the factions built is a lot of its own, with a structure of its region', `${asLots} of ${developed.length} lots`);
+  // Every new block faces a street: one of its four edges is a road segment.
+  const facing = developed.filter((b) => {
+    const gi = b % n, gj = Math.floor(b / n);
+    return roadOpen(true, gi, gj) || roadOpen(true, gi, gj + 1) || roadOpen(false, gi, gj) || roadOpen(false, gi + 1, gj);
+  }).length;
+  check(facing === developed.length, 'every new block faces a street', `${facing} of ${developed.length}`);
+  // One road network still (AGENTS.md §14): flood from one segment, every segment reached.
+  const N = n;
+  const seen = new Uint8Array(N * N);
+  const md = (v: number) => ((v % N) + N) % N;
+  let start = -1;
+  for (let k = 0; k < N * N && start < 0; k++) if (roadOpen(true, Math.floor(k / N), k % N)) start = k;
+  const stack = [start];
+  seen[start] = 1;
+  while (stack.length) {
+    const c = stack.pop()!;
+    const i = Math.floor(c / N), j = c % N;
+    for (const [di, dj, ax, si, sj] of [[1, 0, true, i, j], [-1, 0, true, i - 1, j], [0, 1, false, i, j], [0, -1, false, i, j - 1]] as const) {
+      if (!roadOpen(ax, si, sj)) continue;
+      const nk = md(i + di) * N + md(j + dj);
+      if (!seen[nk]) { seen[nk] = 1; stack.push(nk); }
+    }
+  }
+  let orphan = 0, total = 0;
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (const ax of [true, false]) {
+    if (!roadOpen(ax, i, j)) continue;
+    total++;
+    if (!seen[i * N + j]) orphan++;
+  }
+  check(orphan === 0 && !!roadStats && roadStats.removed <= roadStats.components * 0.05, 'the roads are still one network after the growth', `${total} segments, ${orphan} orphaned; ${JSON.stringify(roadStats)}`);
+  // Districts with new blocks plan structures for them, and they pass the ten checks.
+  const touched = [...new Set(developed.map((b) => `${Math.floor((b % n) / map.chunkBlocks)},${Math.floor(Math.floor(b / n) / map.chunkBlocks)}`))].slice(0, 6);
+  let planned = 0, failedChecks = 0;
+  for (const k of touched) {
+    const [ci, cj] = k.split(',').map(Number);
+    const p = districtPlan(ci, cj);
+    for (const [i, lot] of p.lots.entries()) if (lot.wb === 1 && lot.db === 1 && developed.includes(lot.gj * n + lot.gi)) { planned++; if (!p.structures[i].validation?.pass) failedChecks++; }
+  }
+  check(planned > 0 && failedChecks === 0, 'their structures are planned and pass the architectural checks', `${planned} new structures in ${touched.length} districts`);
+  setGrowth(new Map());
+  check(blockSummary().every((v, k) => v === before[k]), 'taking the growth away gives back the planet as generated');
+}
+
+console.log('\n--- the relay\'s copy of the planet');
+{
+  const sm = readShippedMap(shippedJson);
+  const same = !!sm && sm.map.n === map.n && sm.map.kind.every((v, k) => v === map.kind[k]) && sm.map.region.every((v, k) => v === map.region[k])
+    && sm.map.owner.every((v, k) => v === map.owner[k]) && sm.pitch === pitch && sm.regions.join() === regions.join();
+  check(same, 'the shipped planet map (src/living/baseMap.json) is what the world generator builds now', same ? `${(JSON.stringify(shippedJson).length / 1024).toFixed(0)} KB` : 'stale: run npm run living-map');
+  if (sm) {
+    const a = newLiving(sm.map, sm.regions, sm.pitch, 5, start), b = fresh(5);
+    advance(a, start + 2 * DAY, sm.map, sm.regions, sm.pitch); go(b, start + 2 * DAY);
+    check(JSON.stringify(a) === JSON.stringify(b), 'the relay (on the shipped map) and a browser (on the generator) live the same world');
+  }
 }
 
 console.log('\n--- while you were away');

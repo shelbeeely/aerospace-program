@@ -8,6 +8,7 @@ import { hash32, hashFloat, Rng } from './rng.ts';
 import type { ArchetypeId, StructureSpec } from './types.ts';
 import { cityRegionAt, intensityAt, REGION_PROFILES, type CityRegion, type TerrainArchetype } from './WorldRegionManager.ts';
 import { onWorldReset, WORLD } from './world.ts';
+import { BUILT, growthAt, onGrowth } from './growth.ts';
 import { KIT } from '../world/kit.ts';
 
 /**
@@ -76,6 +77,15 @@ let usableCache: Uint8Array | null = null;
 let hubBlocks: Map<string, { name: string; h: number; main: boolean }> | null = null;
 let pylonSet: Set<string> | null = null;
 onWorldReset(() => { layoutCache.clear(); planCache.clear(); usableCache = null; hubBlocks = null; pylonSet = null; });
+// The cities grow (src/arch/growth.ts): the districts holding changed blocks are laid out again.
+onGrowth((changed) => {
+  for (const b of changed) {
+    const gi = b % GRID.blocks, gj = Math.floor(b / GRID.blocks);
+    const key = `${Math.floor(gi / GRID.chunkBlocks)},${Math.floor(gj / GRID.chunkBlocks)}`;
+    layoutCache.delete(key);
+    planCache.delete(key);
+  }
+});
 
 const HUB_NAMES = ['Grid Spire', 'Southwest Processor', 'South Relay', 'Northwest Core', 'Northeast Array'];
 
@@ -213,7 +223,43 @@ function makeLayout(ci: number, cj: number): DistrictLayout {
     } else if (lot.kind === 'structure') lot.archetype = pickFamily(region, size, rng);
     lots.push(lot);
   }
-  return { ci, cj, lots, region: reg.primary, regionName: reg.name };
+  return { ci, cj, lots: grow(lots, gi0, gj0), region: reg.primary, regionName: reg.name };
+}
+
+/**
+ * The cities' growth (src/arch/growth.ts) on top of the generated layout: a plains lot with a
+ * block past survey is split into single blocks (streets run round them: the roads stage);
+ * a block at the structure stage carries its structure about half grown, and a built one a
+ * structure of its region like any other. Everything else is as generated.
+ */
+function grow(lots: Lot[], gi0: number, gj0: number): Lot[] {
+  const n = GRID.blocks;
+  const at = (gi: number, gj: number) => growthAt(mod(gj, n) * n + mod(gi, n));
+  const out: Lot[] = [];
+  for (const lot of lots) {
+    let growing = false;
+    if (lot.kind === 'open' && lot.region === 'plains') {
+      for (let a = 0; a < lot.wb && !growing; a++) for (let b = 0; b < lot.db; b++) if ((at(lot.gi + a, lot.gj + b)?.stage ?? -1) >= 1) { growing = true; break; }
+    }
+    if (!growing) { out.push(lot); continue; }
+    for (let a = 0; a < lot.wb; a++) for (let b = 0; b < lot.db; b++) {
+      const gi = lot.gi + a, gj = lot.gj + b;
+      const rect = blockRect(gi, gj);
+      const g = at(gi, gj);
+      if (!g || g.stage < 3) { out.push({ ...lot, gi, gj, wb: 1, db: 1, rect }); continue; }
+      const prof = REGION_PROFILES[g.region];
+      const rng = new Rng(hash32(WORLD.seed, gi, gj, 0x6b0e));
+      const cap = heightCapRect(rect.x0, rect.z0, rect.x1, rect.z1);
+      const full = Math.min(prof.height[0] + (prof.height[1] - prof.height[0]) * (0.15 + 0.4 * rng.next()), prof.height[1], cap * 0.96);
+      const maxH = g.stage >= BUILT ? full : full * 0.55;
+      out.push({
+        gi, gj, wb: 1, db: 1, rect, central: lot.central, region: g.region, kind: maxH < 12 ? 'open' : 'structure',
+        archetype: pickFamily(g.region, [1, 1], rng), minH: Math.min(prof.height[0], maxH * 0.45), maxH, intensity: lot.intensity,
+      });
+    }
+  }
+  void gi0; void gj0;
+  return out;
 }
 
 function pickFamily(region: CityRegion, [wb, db]: [number, number], rng: Rng): ArchetypeId {

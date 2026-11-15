@@ -12,13 +12,11 @@ name: Retrain NPC networks
 
 on:
   push:
+    # The networks, and the living world's shipped planet map, depend on the simulation and the
+    # world generator as well as the brains: any of them can make a weights file stale.
     paths:
-      - 'src/brain/**'
-      - 'src/scenario/**'
-      - 'src/people/**'
-      - 'scripts/train*.ts'
-      - 'scripts/lib/**'
-      - 'scripts/scenario.ts'
+      - 'src/**'
+      - 'scripts/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/brains.yml'
@@ -51,17 +49,20 @@ jobs:
         run: npm run train -- ${{ inputs.all && '--all' || '' }}
       - run: npm run typecheck
       - name: Brain checks
-        run: npm run scenario
+        run: |
+          npm run scenario
+          npm run civil
+          npm run living
       - name: Commit the new weights
         run: |
-          if git diff --quiet -- src/brain/weights; then
+          if git diff --quiet -- src/brain/weights src/living/baseMap.json; then
             echo "The weights did not change."
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/brain/weights
-          git commit -m "Retrain NPC networks" -m "npm run train after ${GITHUB_SHA::7}: the shipped weights were trained on older code."
+          git add src/brain/weights src/living/baseMap.json
+          git commit -m "Retrain NPC networks" -m "npm run train after ${GITHUB_SHA::7}: the shipped weights (or the living world's planet map) came from older code."
           for i in 1 2 3 4; do
             if git pull --rebase origin "$GITHUB_REF_NAME" && git push origin "HEAD:$GITHUB_REF_NAME"; then
               exit 0
@@ -75,4 +76,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: weights
-          path: src/brain/weights
+          path: |
+            src/brain/weights
+            src/living/baseMap.json

@@ -31,8 +31,22 @@ declare const Bun: {
     };
   }): BunServer;
 };
-declare const process: { env: Record<string, string | undefined> };
+declare const process: {
+  env: Record<string, string | undefined>;
+  on(event: 'SIGTERM' | 'SIGINT', fn: () => void): void;
+  exit(code?: number): never;
+};
+declare module 'node:fs' {
+  export function existsSync(path: string): boolean;
+  export function mkdirSync(path: string, opts?: { recursive?: boolean }): void;
+  export function readFileSync(path: string, encoding: 'utf8'): string;
+  export function writeFileSync(path: string, data: string): void;
+  export function renameSync(from: string, to: string): void;
+  export function rmSync(path: string, opts?: { recursive?: boolean; force?: boolean }): void;
+  export function mkdtempSync(prefix: string): string;
+}
 declare const Buffer: { byteLength(s: string): number };
+declare const console: { log(...a: unknown[]): void; error(...a: unknown[]): void };
 interface ImportMeta { main: boolean }
 declare module 'bun:test' {
   export function test(name: string, fn: () => unknown): void;

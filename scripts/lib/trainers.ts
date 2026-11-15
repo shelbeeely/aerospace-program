@@ -21,6 +21,8 @@ export const TRAINERS: readonly Trainer[] = [
   { name: 'train-drive', script: 'scripts/trainDrive.ts', outputs: ['src/brain/weights/drive.json'] },
   { name: 'train-squad', script: 'scripts/trainSquad.ts', outputs: ['src/brain/weights/squad.json', 'src/brain/weights/drone.json'] },
   { name: 'train-civil', script: 'scripts/trainCivil.ts', outputs: ['src/brain/weights/civil.json'] },
+  // Not a network: the planet as the living world sees it, for the relay (stale when world generation changes).
+  { name: 'living-map', script: 'scripts/livingMap.ts', outputs: ['src/living/baseMap.json'] },
 ];
 
 export interface Freshness {

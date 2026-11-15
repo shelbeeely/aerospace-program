@@ -3,6 +3,7 @@ import { blockArchetype, nearWasteland, wastelandByte } from '../arch/DigitalTer
 import { GRID, isCentralBlock } from '../arch/grid.ts';
 import { CITY_REGIONS, intensityAt, TERRAIN_ARCHETYPES } from '../arch/WorldRegionManager.ts';
 import { onWorldReset } from '../arch/world.ts';
+import { onGrowth } from '../arch/growth.ts';
 import { CITY, hash01, heightCap, isSea, PLANET } from '../sim/layout.ts';
 import { appendDistrict, emptyPlan, type CityPlan } from './City.ts';
 import { connectRoads } from '../sim/roadRules.ts';
@@ -52,6 +53,15 @@ export function skyline(x: number, z: number, base: number): { h: number; core: 
 const cache = new Map<string, PlanetChunk>();
 const MAX_CACHED = 400;
 onWorldReset(() => { cache.clear(); summaryCache = null; styleCache = null; });
+// The cities grow: the summary (and its one road network) is rebuilt, the changed districts' pieces dropped.
+onGrowth((changed) => {
+  summaryCache = null;
+  styleCache = null;
+  for (const b of changed) {
+    const gi = b % GRID.blocks, gj = Math.floor(b / GRID.blocks);
+    cache.delete(`${Math.floor(gi / GRID.chunkBlocks)},${Math.floor(gj / GRID.chunkBlocks)}`);
+  }
+});
 
 /** The chunk (generated once, then cached; oldest entries are dropped past MAX_CACHED). */
 export function planetChunk(ci: number, cj: number): PlanetChunk {

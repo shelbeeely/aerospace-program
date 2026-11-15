@@ -6,6 +6,7 @@ import { CITY } from '../sim/layout.ts';
 import { BLOCK_KIND, blockSummary, GRID, terrainStyleSummary } from '../world/planetCity.ts';
 import { flatWorld } from './curvature.ts';
 import { gridLines, type TslNode } from './neon.ts';
+import { onGrowth } from '../arch/growth.ts';
 
 /**
  * The planet's ground as an electronic substrate (book pp. 12–13, 15, 35): one shader on the
@@ -90,7 +91,7 @@ function glowTexture(): THREE.DataTexture {
   return glowTex;
 }
 
-/** Recompute the summary textures in place (a new world seed: shaders keep their textures). */
+/** Recompute the summary textures in place (a new world seed, or the cities grew: shaders keep their textures). */
 export function refreshGroundTextures(): void {
   const swap = (t: THREE.DataTexture | null, make: () => THREE.DataTexture) => {
     if (!t) return;
@@ -235,3 +236,11 @@ export function cityGroundNode(): TslNode {
 
 void vec3;
 void clamp;
+
+// The cities grow (src/arch/growth.ts): new blocks and streets on the ground, at most a few times a second.
+let groundDirty = false;
+onGrowth(() => {
+  if (groundDirty) return;
+  groundDirty = true;
+  setTimeout(() => { groundDirty = false; refreshGroundTextures(); }, 250);
+});

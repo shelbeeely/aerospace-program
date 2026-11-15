@@ -4,6 +4,7 @@ import { globeAngles, globeProject, globeUnproject, mapPoint, radarPoint, type C
 import { PLANET, type LandingSite } from '../sim/layout.ts';
 import type { AdsbRecord } from '../sim/adsb.ts';
 import { BLOCK_KIND, blockSummary } from '../world/planetCity.ts';
+import { onGrowth } from '../arch/growth.ts';
 
 /** Radar ranges (m), cycled by the range button. */
 export const RADAR_RANGES = [2000, 5000, 12000] as const;
@@ -51,6 +52,8 @@ export class RadarMap {
   private open = false;
   private last = -Infinity;
   private base: HTMLCanvasElement | null = null;
+  /** The cities grow: repaint the surface next time (the radar lives as long as the page). */
+  readonly offGrowth = onGrowth(() => { this.base = null; });
   private readonly scope: HTMLCanvasElement | null;
   private readonly rangeButton: HTMLElement | null;
   private readonly panel: HTMLElement | null;

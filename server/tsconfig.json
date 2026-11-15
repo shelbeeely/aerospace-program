@@ -10,7 +10,8 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
-    "types": []
+    "types": [],
+    "resolveJsonModule": true
   },
-  "include": ["*.ts", "../src/net/protocol.ts", "../src/sim/evolution.ts", "../src/people/genome.ts", "../src/people/bitStyle.ts"]
+  "include": ["*.ts", "../src/net/protocol.ts", "../src/sim/evolution.ts", "../src/people/genome.ts", "../src/people/bitStyle.ts", "../src/living/state.ts", "../src/living/advance.ts", "../src/living/shippedMap.ts"]
 }

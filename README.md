@@ -549,8 +549,13 @@ trust brings trade pacts and alliances; contested edges, lost convoys and border
 it, and now and then (about one war in three seasons) two factions go to war and move a border.
 Bits move house along the trade routes.
 
-It is one pure function of world time, so the relay can carry it forward in real time and a
-browser can catch up the weeks it was away; when you come back, "while you were away" tells you
+The world generator builds what the factions build: a developed block becomes a lot of its own
+with a structure of its region (a half-grown one while it is under construction), every new
+block faces a street, and the roads stay one network.
+
+It is one pure function of world time, so the relay carries it forward in real time (and keeps
+it on its disk: the relay now runs on an always-on plan with a 1 GB disk, see `render.yaml`)
+and a browser can catch up the weeks it was away; when you come back, "while you were away" tells you
 what happened, built only from the world's own log. In sixty simulated days each faction builds
 about 4 blocks a day and the books balance to the unit. Check: `npm run living`.
 

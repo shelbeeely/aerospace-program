@@ -8,10 +8,14 @@ services:
     runtime: docker
     dockerfilePath: ./server/Dockerfile
     dockerContext: .
-    # Free instances sleep after 15 minutes without traffic (the first player waits ~1 minute
-    # while it wakes; sleeping drops open rooms and the Bits' world, which players' saved pools
-    # then reseed). Use "starter" for an always-on relay whose world never stops.
-    plan: free
+    # Always on, with a disk: the living world (AGENTS.md §21) goes on with nobody connected and
+    # is saved to /var/data, so a restart or redeploy picks up where it left off. (A free
+    # instance sleeps after 15 idle minutes and forgets; disks need a paid plan.)
+    plan: starter
+    disk:
+      name: grid-data
+      mountPath: /var/data
+      sizeGB: 1
     region: oregon
     branch: main
     autoDeploy: true
@@ -23,6 +27,9 @@ services:
         - src/sim/evolution.ts
         - src/people/genome.ts
         - src/people/bitStyle.ts
+        - src/living/**
     envVars:
       - key: NODE_ENV
         value: production
+      - key: LIVING_DATA
+        value: /var/data/living

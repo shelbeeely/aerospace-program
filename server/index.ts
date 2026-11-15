@@ -9,6 +9,7 @@
  */
 import { Lobby, type Peer, type Session } from './rooms.ts';
 import { World } from './world.ts';
+import { LivingHost } from './living.ts';
 import { MAX_CRAFT_BYTES, PROTOCOL_VERSION } from '../src/net/protocol.ts';
 
 export interface RelayOptions {
@@ -18,6 +19,14 @@ export interface RelayOptions {
   quiet?: boolean;
   /** World tick (ms); 0 keeps no world (a plain relay). */
   worldTickMs?: number;
+  /**
+   * The living world (server/living.ts): advanced every `livingTickMs` (0: not kept), saved under
+   * `livingData` (default: $LIVING_DATA, else $BRAIN_DATA; none: memory only), shared with the
+   * world every `livingShareMs`.
+   */
+  livingTickMs?: number;
+  livingData?: string | null;
+  livingShareMs?: number;
 }
 
 export function startServer(opts: RelayOptions = {}) {
@@ -26,11 +35,16 @@ export function startServer(opts: RelayOptions = {}) {
   let server: BunServer;
   const worldTick = opts.worldTickMs ?? 10_000;
   const world = worldTick > 0 ? new World() : undefined;
+  const livingTick = opts.livingTickMs ?? (world ? 60_000 : 0);
+  const livingData = opts.livingData !== undefined ? opts.livingData : (process.env.LIVING_DATA ?? process.env.BRAIN_DATA ?? null);
+  const living = livingTick > 0 ? new LivingHost({ dataDir: livingData }) : undefined;
+  if (living) { living.tick(); living.save(); }
   const lobby = new Lobby({
     idleMs: opts.idleMs,
     broadcast: (topic, data) => server.publish(topic, data),
     log,
     world,
+    living,
   });
   const decoder = new TextDecoder();
   server = Bun.serve<{ session?: Session }>({
@@ -38,7 +52,7 @@ export function startServer(opts: RelayOptions = {}) {
     fetch(req, srv) {
       const url = new URL(req.url);
       if (url.pathname === '/health') {
-        return Response.json({ ok: true, version: PROTOCOL_VERSION, rooms: lobby.rooms.size, players: lobby.playerCount, ...(world ? { world: world.stats() } : {}) });
+        return Response.json({ ok: true, version: PROTOCOL_VERSION, rooms: lobby.rooms.size, players: lobby.playerCount, ...(world ? { world: world.stats() } : {}), ...(living ? { living: living.stats() } : {}) });
       }
       if (req.headers.get('upgrade')?.toLowerCase() === 'websocket') {
         if (srv.upgrade(req, { data: {} })) return undefined;
@@ -69,18 +83,29 @@ export function startServer(opts: RelayOptions = {}) {
   });
   const sweep = setInterval(() => lobby.sweep(), opts.sweepMs ?? 5000);
   const ticker = world ? setInterval(() => world.tick(), worldTick) : null;
+  // The living world goes on whether anyone is connected or not; it is saved as it changes.
+  const livingTicker = living ? setInterval(() => { living.tick(); living.save(); }, livingTick) : null;
+  const livingSharer = living ? setInterval(() => lobby.shareLiving(), opts.livingShareMs ?? 10 * 60_000) : null;
   log?.(`relay listening on :${server.port} (protocol v${PROTOCOL_VERSION}${world ? ', keeping the world' : ''})`);
   return {
     server,
     lobby,
     world,
+    living,
     port: server.port as number,
     stop() {
       clearInterval(sweep);
       if (ticker) clearInterval(ticker);
+      if (livingTicker) clearInterval(livingTicker);
+      if (livingSharer) clearInterval(livingSharer);
+      living?.save();
       server.stop(true);
     },
   };
 }
 
-if (import.meta.main) startServer();
+if (import.meta.main) {
+  const relay = startServer();
+  // A redeploy or restart stops the process: save the living world first.
+  process.on('SIGTERM', () => { relay.living?.save(); process.exit(0); });
+}

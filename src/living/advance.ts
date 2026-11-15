@@ -64,7 +64,7 @@ export const LIVING = {
 } as const;
 
 const TICKS_PER_DAY = 86_400_000 / LIVING.tickMs;
-const OPEN = 128, PLAIN = 32, LOT = 0, OUTLANDS = 64;
+const PLAIN = 32, LOT = 0, OUTLANDS = 64;
 
 /** What each city region makes (transport adds trade capacity instead). */
 export const REGION_GOOD: Record<string, Good | null> = {
@@ -83,7 +83,11 @@ export class LivingIndex {
   readonly make: Float64Array;
   readonly lots: Int32Array;
   readonly transport: Int32Array;
-  /** Every open or plain block (could be built on). */
+  /**
+   * Every plain block (an open lot on the grid plains): what a city can grow into. Blocks with
+   * no lot at all (OPEN) are kept clear on purpose (airfield approaches, pylons) and are never
+   * built on; open lots in other regions are the city's negative space and stay so.
+   */
   readonly open: number[];
   readonly developed = new Set<number>();
   readonly siteAt = new Set<number>();
@@ -102,7 +106,7 @@ export class LivingIndex {
     this.open = [];
     for (let b = 0; b < n * n; b++) {
       const k = map.kind[b];
-      if (k === OPEN || k === PLAIN) { this.open.push(b); continue; }
+      if (k === PLAIN) { this.open.push(b); continue; }
       if (k === LOT) this.addLot(b, map.region[b]);
     }
     for (const [b, , region] of state.developed) { this.developed.add(b); this.addLot(b, region); }

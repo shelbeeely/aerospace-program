@@ -14,11 +14,12 @@
  *   room: `lot-*` messages go there, and the welcome says the world is kept.
  */
 import {
-  MAX_PLAYERS, PROTOCOL_VERSION, WORLD_ROOM, asTeam, isRoomCode, parseClientMessage, randomRoomCode, worldOverflowRooms,
+  MAX_PLAYERS, PROTOCOL_VERSION, WORLD_ROOM, asTeam, isRoomCode, isWorldRoom, parseClientMessage, randomRoomCode, worldOverflowRooms,
   type ClientMessage, type NetTeam, type ErrorCode, type NetState, type PlayerInfo, type ServerMessage,
 } from '../src/net/protocol.ts';
 import type { CraftDef } from '../src/craft/types.ts';
 import type { World } from './world.ts';
+import type { LivingHost } from './living.ts';
 
 /** The bits of a Bun ServerWebSocket the lobby uses. */
 export interface Peer {
@@ -71,6 +72,8 @@ export interface LobbyOptions {
   log?: (msg: string) => void;
   /** The Bits' world this relay keeps (absent: a plain relay). */
   world?: World;
+  /** The living world (server/living.ts), when the relay keeps it. */
+  living?: LivingHost;
 }
 
 const topic = (room: string) => `room:${room}`;
@@ -126,6 +129,11 @@ export class Lobby {
     if (m.t === 'hello') return this.join(s, m);
     if (!s.room) return this.error(s, 'not-joined', 'send hello first', now, true);
     if (m.t === 'lot-want' || m.t === 'lot-push' || m.t === 'lot-release' || m.t === 'lot-derez' || m.t === 'lot-offer') return this.worldMessage(s, m, now);
+    if (m.t === 'living-want') {
+      const living = this.opts.living;
+      if (living && s.room && isWorldRoom(s.room)) this.send(s, { t: 'living', state: living.snapshot(m.since) });
+      return;
+    }
     this.relay(s, m, now);
   }
 
@@ -210,7 +218,7 @@ export class Lobby {
     s.craft = m.craft;
     s.room = code;
     const world = this.opts.world;
-    this.send(s, { t: 'welcome', v: PROTOCOL_VERSION, id: s.id, room: code, players: [...members].map(info), ...(world ? { world: { uptime: Math.round(world.uptime), lots: world.lots.size } } : {}) });
+    this.send(s, { t: 'welcome', v: PROTOCOL_VERSION, id: s.id, room: code, players: [...members].map(info), ...(world ? { world: { uptime: Math.round(world.uptime), lots: world.lots.size, ...(this.opts.living ? { living: true } : {}) } } : {}) });
     members.add(s);
     // Subscribe first, then announce: Bun 1.2 (the relay's image) only publishes from a socket
     // that is subscribed to the topic, so announcing first never reached the room. publish()
@@ -264,6 +272,16 @@ export class Lobby {
     if (throttle && now - s.lastErrorAt < 1000) return;
     s.lastErrorAt = now;
     this.send(s, { t: 'error', code, message });
+  }
+
+  /** Hand the living world's latest state to everyone in the world (every few minutes). */
+  shareLiving(): number {
+    const living = this.opts.living;
+    if (!living) return 0;
+    let n = 0;
+    const data = JSON.stringify({ t: 'living', state: living.snapshot(living.state.time - 15 * 60_000) } satisfies ServerMessage);
+    for (const s of this.sessions) if (s.room && isWorldRoom(s.room)) { try { s.peer.send(data); n++; } catch { /* closed */ } }
+    return n;
   }
 
   private send(s: Session, m: ServerMessage): void {
