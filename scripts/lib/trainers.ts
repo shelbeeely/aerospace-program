@@ -20,6 +20,7 @@ export interface Trainer {
 export const TRAINERS: readonly Trainer[] = [
   { name: 'train-drive', script: 'scripts/trainDrive.ts', outputs: ['src/brain/weights/drive.json'] },
   { name: 'train-squad', script: 'scripts/trainSquad.ts', outputs: ['src/brain/weights/squad.json', 'src/brain/weights/drone.json'] },
+  { name: 'train-civil', script: 'scripts/trainCivil.ts', outputs: ['src/brain/weights/civil.json'] },
 ];
 
 export interface Freshness {

@@ -418,6 +418,13 @@ universe, not a conventional open world decorated with neon.
   player changes nothing. Turrets lead into the break their side expects. One `StyleBook` per
   simulation, kept per side for the season in the browser (`src/app/styleStore.ts`); seasons
   are four weeks from a fixed epoch (`src/brain/season.ts`). Check: `npm run style`.
+- **Road traffic drives by networks** (`src/sim/riderPolicy.ts`): one per stock ground vehicle
+  type (`drive.cycle` first; types without their own network use the cycle's). Between the
+  intersections a rider's network picks follow, pass, keep right, give room or turn away; the
+  engine keeps the signals, give-way, the lane-change gap checks and jetwalls. Riders give a
+  reckless player room: the traffic remembers how the player drives (`DrivingStyle` in
+  `src/brain/style.ts`: speed for the road, near misses), kept for the season.
+  Check: `npm run civil`.
 - **Retraining is automatic.** Every weights file carries a stamp: a fingerprint of the code
   its trainer ran (`scripts/lib/fingerprint.ts`: the trainer and everything it imports,
   printed without comments or layout, so only a change in behaviour counts). `npm run train`

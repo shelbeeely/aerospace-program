@@ -49,6 +49,8 @@
     "style": "node --experimental-transform-types --no-warnings scripts/style.ts",
     "train": "node --experimental-transform-types --no-warnings scripts/train.ts",
     "train-drive": "node --experimental-transform-types --no-warnings scripts/trainDrive.ts",
+    "train-civil": "node --experimental-transform-types --no-warnings scripts/trainCivil.ts",
+    "civil": "node --experimental-transform-types --no-warnings scripts/civil.ts",
     "train-squad": "node --experimental-transform-types --no-warnings scripts/trainSquad.ts",
     "scenario": "node --experimental-transform-types --no-warnings scripts/scenario.ts",
     "programs": "node --experimental-transform-types --no-warnings scripts/programs.ts",

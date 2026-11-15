@@ -96,11 +96,12 @@ export interface Example {
  * from `rand`, each class weighted by the inverse of how often it appears (so a policy that
  * mostly "follows" still learns when to yield). Returns the final loss and accuracy.
  */
-export function train(net: Net, examples: readonly Example[], opts: { epochs: number; lr: number; rand: () => number }): { loss: number; accuracy: number } {
+export function train(net: Net, examples: readonly Example[], opts: { epochs: number; lr: number; rand: () => number; balance?: boolean }): { loss: number; accuracy: number } {
   const nOut = net.sizes[net.sizes.length - 1];
   const counts = new Array<number>(nOut).fill(0);
   for (const e of examples) counts[e.y]++;
-  const weight = counts.map((c) => (c > 0 ? examples.length / (nOut * c) : 0));
+  // `balance: false` for a set already balanced by the caller (class weights on top over-predict the rare actions).
+  const weight = counts.map((c) => (opts.balance === false ? 1 : c > 0 ? examples.length / (nOut * c) : 0));
   const order = examples.map((_, i) => i);
   let loss = 0, right = 0;
   for (let epoch = 0; epoch < opts.epochs; epoch++) {

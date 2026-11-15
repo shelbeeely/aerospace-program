@@ -50,10 +50,13 @@ export class Policy<O, A extends string> {
     return raw.map((v, i) => Math.max(-3, Math.min(3, v / this.inputs[i].scale)));
   }
 
-  /** Decide: by the network when asked and one is loaded, else by the scripted rule. */
-  decide(o: O, mode: PolicyMode): Decision<A> {
-    if (mode === 'net' && this.net) {
-      const out = forward(this.net, this.encode(o));
+  /**
+   * Decide: by the network when asked and one is loaded, else by the scripted rule. `net`
+   * overrides the policy's own network (one per stock vehicle type, or a challenger on trial).
+   */
+  decide(o: O, mode: PolicyMode, net: Net | null = this.net): Decision<A> {
+    if (mode === 'net' && net) {
+      const out = forward(net, this.encode(o));
       return { action: this.actions[argmax(out)], probs: softmax(out), mode };
     }
     return { action: this.scripted(o), probs: null, mode: 'scripted' };

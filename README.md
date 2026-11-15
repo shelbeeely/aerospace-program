@@ -520,6 +520,11 @@ its east end for six minutes, the convoy must cross at 2:00, and the district ke
   you get hit more (a pilot who always turns left when hit took 15 hits instead of 3 in four
   minutes of attack runs); fly unpredictably and nothing changes. Each side remembers you for the
   four-week season, in your browser. Check: `npm run style`.
+- **Traffic drives by networks, and remembers how you drive.** Every rider on the planet's roads
+  decides by its vehicle type's network (follow, pass, keep right, give room, turn away) while
+  the engine keeps the signals, give-way and jetwalls. Drive fast and close to them and the
+  riders learn to make way for you; a calm driver at the same speed is left alone. Check:
+  `npm run civil`.
 - **Retraining is automatic.** Each weights file is stamped with a fingerprint of the code it
   was trained on (comments and layout don't count). `npm run train` retrains only the stale
   networks (`-- --check` to list them, `-- --all` for everything), `npm run scenario` refuses

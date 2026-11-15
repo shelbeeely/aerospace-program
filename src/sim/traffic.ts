@@ -8,6 +8,8 @@ import { DEREZ_TIME, type TrailPoint, type TrailSystem } from './trails.ts';
 import { OWN_WALL_GROUPS } from './collisionGroups.ts';
 import { segmentExists } from './roadRules.ts';
 import { isHighwayLine as gridHighway } from '../arch/grid.ts';
+import type { PolicyMode } from '../brain/policy.ts';
+import { GROUND_FIGURES, RIDER_ACTIONS, riderNet, riderPolicy, type GroundType, type RiderAction, type RiderObs } from './riderPolicy.ts';
 
 /**
  * AI light-cycle traffic: programs riding the planet's street grid (Rule 4: each lays a short
@@ -147,6 +149,9 @@ export interface Rider {
   rng: () => number;
   body?: RAPIER.RigidBody;
   walls: RAPIER.Collider[];
+  /** Which stock ground vehicle it is (its network), and what its policy last chose. */
+  type: GroundType;
+  action: RiderAction;
 }
 
 /** Intersection control: none (a bend, a straight), signals, a priority road, or one at a time. */
@@ -154,6 +159,14 @@ export const CONTROL = { none: 1, signal: 2, priority: 3, yield: 4 } as const;
 export type Light = 'green' | 'amber' | 'red';
 /** Signal timing (s): the cycle, amber, all-red, and the speed (m/s) the green wave runs at. */
 export const SIGNAL = { cycle: 40, amber: 3, allRed: 2, wave: 34 } as const;
+
+/** The traffic's own speed for the road at (x, z) (m/s): the middle of a data highway's range near one, else a street's. */
+export function roadSpeedAt(x: number, z: number): number {
+  const i = Math.round((x - GRID.x0) / P), j = Math.round((z - GRID.z0) / P);
+  const nearX = Math.abs(x - lineX(i)) < 14 && isHighwayLine(i), nearZ = Math.abs(z - lineZ(j)) < 14 && isHighwayLine(j);
+  const range = nearX || nearZ ? TRAFFIC.highwaySpeed : TRAFFIC.streetSpeed;
+  return (range[0] + range[1]) / 2;
+}
 
 /** Something else on the road that riders brake for (the player's vehicle). */
 export interface RoadObstacle {
@@ -318,6 +331,13 @@ export class TrafficSystem {
    * [x0, z0, x1, z1]: riders treat them as they treat the player's jetwall. Set by the host.
    */
   barriers: ReadonlyArray<readonly [number, number, number, number]> = [];
+  /** Who decides what a rider does between intersections: its type's network or the scripted rider (src/sim/riderPolicy.ts). */
+  brain: PolicyMode = 'net';
+  /** How reckless the player drives (0..1, from its driving style); the host sets it. */
+  reckless = 0;
+  /** What the riders' policies chose (counts), and, while recording, every decision as (inputs, action). */
+  readonly decisions: Record<RiderAction, number> = { follow: 0, pass: 0, keepRight: 0, giveRoom: 0, turnAway: 0 };
+  recording: Array<{ type: GroundType; x: number[]; y: number }> | null = null;
   private readonly lanes = new Map<number, LaneEntry[]>();
   private readonly laneLists: LaneEntry[][] = [];
   private readonly entryPool: LaneEntry[] = [];
@@ -425,6 +445,7 @@ export class TrafficSystem {
       speed: 0, accel: 0, temper: o.temper ?? 1, fixedSpeed: o.temper === undefined ? o.speed ?? 30 : undefined, room: Infinity,
       jog: 0, jogBack: h, wantLane: -1, token: -1, tokenX: 0, tokenZ: 0, box: -1, boxX: 0, boxZ: 0, boxAxisX: false, held: -1, commit: -1, commitUntil: 0, fresh: true, waited: 0,
       line: o.line, node: 0, next: h, turnAt: 0, uturn: 0, trail: [], derezAt: null, rng, walls: [],
+      type: 'cycle', action: 'follow',
     };
     r.speed = this.desired(r);
     r.node = this.nodeAhead(r);
@@ -617,6 +638,11 @@ export class TrafficSystem {
         const px = ax ? at : r.x, pz = ax ? r.z : at;
         if (this.wallAhead(px, pz, h2, 50) < Infinity) w = 0;
       }
+      // Its policy wants away from the player: the turns that lead away weigh more.
+      if (r.action === 'turnAway' && h2 !== h) {
+        const ob = this.obstacles[0];
+        if (ob) w *= (ob.x - r.x) * HX[h2] + (ob.z - r.z) * HZ[h2] > 0 ? 0.2 : 4;
+      }
       if (w <= 0) continue;
       options.push([h2, at, w]);
       total += w;
@@ -646,8 +672,13 @@ export class TrafficSystem {
     return next === h || next === back(h) ? nodePos : nodePos + (ax ? -HZ[next] : HX[next]) * r.lane;
   }
 
-  /** The speed the rider wants on the road it is on (m/s). */
+  /** The speed the rider wants on the road it is on (m/s): its own speed, eased off while it gives the player room. */
   desired(r: Rider): number {
+    return this.ownSpeed(r) * (r.action === 'giveRoom' ? 0.7 : 1);
+  }
+
+  /** Its own speed for the road (m/s): the middle of the road's range times its temper. */
+  ownSpeed(r: Rider): number {
     if (r.fixedSpeed !== undefined) return r.fixedSpeed;
     const range = isHighwayLine(r.line) ? TRAFFIC.highwaySpeed : TRAFFIC.streetSpeed;
     return ((range[0] + range[1]) / 2) * r.temper;
@@ -1176,7 +1207,36 @@ export class TrafficSystem {
     }
     r.accel = Math.min(TRAFFIC.accel, idm(r.speed, v0, gap, lv));
     r.room = Math.max(0, gap - 2.3);
-    if (this.control && (this.steps / 4 + r.id) % 8 === 0) this.changeLane(r, leadGap, leadV, toStop);
+    if (this.control && (this.steps / 4 + r.id) % 8 === 0) {
+      this.decide(r, leadGap, leadV, toStop);
+      this.changeLane(r, leadGap, leadV, toStop);
+    }
+  }
+
+  /** What the rider's policy wants now (its type's network, or the scripted rider). */
+  private decide(r: Rider, leadGap: number, leadV: number, toStop: number): void {
+    const h = r.heading, f = GROUND_FIGURES[r.type];
+    const ob = this.obstacles[0];
+    const px = ob ? ob.x : this.player.x, pz = ob ? ob.z : this.player.z;
+    const dx = px - r.x, dz = pz - r.z;
+    const along = dx * HX[h] + dz * HZ[h], across = Math.abs(dx * HZ[h] - dz * HX[h]);
+    const pv = ob ? ob.vx * HX[h] + ob.vz * HZ[h] : 0;
+    const v0 = this.ownSpeed(r);
+    const o: RiderObs = {
+      speed: r.speed, desired: v0, leadGap: leadGap === Infinity ? 999 : leadGap, leadSlower: leadGap === Infinity ? 0 : v0 - leadV,
+      inner: r.laneIndex === 0 ? 1 : 0, mustMove: r.wantLane >= 0 && r.wantLane !== r.laneIndex ? 1 : 0, leftNext: r.next === left(h) ? 1 : 0,
+      toStop, highway: isHighwayLine(r.line) ? 1 : 0, waited: r.waited,
+      playerDist: ob ? Math.hypot(dx, dz) : 999, playerBehind: ob && along < 0 && across < 12 ? 1 : 0, playerClosing: ob ? pv - r.speed : 0, reckless: this.reckless,
+      playerEta: ob && along < 0 && across < 12 && pv - r.speed > 0.5 ? -along / (pv - r.speed) : 99,
+      mass: f.mass, top: f.top, accel: f.accel, length: f.length,
+    };
+    const dec = riderPolicy.decide(o, this.brain, riderNet(r.type));
+    if (this.recording) this.recording.push({ type: r.type, x: riderPolicy.encode(o), y: RIDER_ACTIONS.indexOf(riderPolicy.scripted(o)) });
+    const was = r.action;
+    r.action = dec.action;
+    this.decisions[dec.action]++;
+    // Wanting away from the player with room still to move over: choose the coming turn again.
+    if (dec.action === 'turnAway' && was !== 'turnAway' && toStop > 45 && r.jog === 0 && r.uturn === 0) this.plan(r);
   }
 
   /** Two left turns waiting face to face cross each other: the one that has waited longer goes first. */
@@ -1233,8 +1293,11 @@ export class TrafficSystem {
     const other = (1 - r.laneIndex) as 0 | 1;
     const must = r.wantLane === other;
     const v0 = this.desired(r);
-    const slowed = leadGap < 90 && leadV < v0 - 3;
-    const keepRight = r.laneIndex === 0 && r.wantLane < 0 && r.next !== left(h) && !slowed && r.speed > 8 && r.rng() < 0.1;
+    // The policy asks (pass, back to the outer lane, out of a reckless player's way); the engine
+    // keeps the rules: only where there is room, never across the turn it has planned.
+    const slowed = r.action === 'pass' && leadGap < 90 && leadV < v0 - 3;
+    const keepRight = r.laneIndex === 0 && r.wantLane < 0 && r.next !== left(h) && !slowed && r.speed > 8
+      && (r.action === 'giveRoom' || (r.action === 'keepRight' && r.rng() < 0.1));
     if (!must && !slowed && !keepRight) return;
     if (!must && r.wantLane === r.laneIndex) return;
     const list = this.lanes.get(laneKey(ax, lanePerp(h, r.line, TRAFFIC.lanes[other])));
@@ -1251,7 +1314,9 @@ export class TrafficSystem {
     }
     if (!must) {
       const gain = idm(r.speed, v0, gap, lv) - idm(r.speed, v0, leadGap, leadV);
-      if (slowed ? gain < 0.8 : gap < 120) return;
+      // Drifting back to the outer lane wants plenty of room; getting out of a reckless player's
+      // way takes any safe gap (the checks above: nobody close behind or alongside).
+      if (slowed ? gain < 0.8 : gap < (r.action === 'giveRoom' ? 30 : 120)) return;
     }
     // A light cycle changes lane the way it turns: square.
     this.corner(r);

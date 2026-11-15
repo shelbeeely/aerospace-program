@@ -18,7 +18,7 @@ import { programLight, Programs, PROGRAMS, PROGRAM_KINDS } from './programs.ts';
 import { BitPopulation, BitWalker, ON_FOOT, type BitThreat, type WalkInput } from './bits.ts';
 import { TrailSystem } from './trails.ts';
 import { TrailEmitter } from '../modules/TrailEmitter.ts';
-import { HX, HZ, TrafficSystem, type Rider, type RoadObstacle } from './traffic.ts';
+import { HX, HZ, roadSpeedAt, TrafficSystem, type Rider, type RoadObstacle } from './traffic.ts';
 import { LockSystem, relativePosition, type LockTarget } from './lock.ts';
 import { anglesOf, applyTurret, driveTurret, leadAim, slewTurret } from '../craft/turret.ts';
 import { FireSystem } from './fire.ts';
@@ -953,6 +953,8 @@ export class Simulation {
    */
   readonly style = new StyleBook((s) => sideName(s as Side));
   private styleHeading = 0;
+  /** When each rider last had a near miss with the player (s), so one pass counts once. */
+  private readonly nearRiders = new Map<number, number>();
   /** Called-in strikes (the strike globe): missile barrages, EMP strikes, nuke bombers. */
   readonly strikeSystem: StrikeSystem;
   readonly wrapShift = new THREE.Vector3();
@@ -1428,6 +1430,7 @@ export class Simulation {
     ob.x = this.position.x; ob.z = this.position.z; ob.vx = this.linvel.x; ob.vz = this.linvel.z;
     ob.y = this.position.y - terrainHeight(this.position.x, this.position.z);
     this.traffic.obstacles = this.exploded ? [] : [ob];
+    this.observeDriving();
     this.traffic.step(this.dt, this.time, this.position, this.trails);
     // The people: they watch for the player's vehicle and flinch from anything that goes off.
     this.walker.step(this.dt, this.walkInput, this.world, (x, z) => (isSea(x) ? -COAST.depth : terrainHeight(x, z)), this.craft.body);
@@ -2081,6 +2084,30 @@ export class Simulation {
   readonly adsb = new AdsbTracker();
   /** Other players' broadcasts (set by the network each frame; sampled with the rest). */
   extraAdsb: AdsbRecord[] = [];
+
+  /**
+   * How the player drives, as the traffic remembers it (src/brain/style.ts DrivingStyle): while
+   * it drives a ground vehicle on the roads, its speed for the road and its near misses with
+   * riders (within 5 m at more than 8 m/s between them). The riders read how reckless that is.
+   */
+  private observeDriving(): void {
+    const p = this.position;
+    const driving = !this.exploded && this.craft.wheels.some((w) => (w.def.drive ?? 0) > 0) && p.y - terrainHeight(p.x, p.z) < 4;
+    if (driving) {
+      let nearMiss = false;
+      for (const r of this.traffic.riders) {
+        if (r.derezAt !== null || Math.abs(r.x - p.x) > 5 || Math.abs(r.z - p.z) > 5) continue;
+        const rel = Math.hypot(this.linvel.x - HX[r.heading] * r.speed, this.linvel.z - HZ[r.heading] * r.speed);
+        if (Math.hypot(r.x - p.x, r.z - p.z) < 5 && rel > 8 && this.time - (this.nearRiders.get(r.id) ?? -Infinity) > 3) {
+          nearMiss = true;
+          this.nearRiders.set(r.id, this.time);
+        }
+      }
+      if (this.nearRiders.size > 256) for (const [id, t] of this.nearRiders) if (this.time - t > 10) this.nearRiders.delete(id);
+      this.style.driving.step(this.time, Math.hypot(this.linvel.x, this.linvel.z), roadSpeedAt(p.x, p.z), nearMiss);
+    }
+    this.traffic.reckless = this.style.driving.reckless();
+  }
 
   /**
    * Let the side fighting the player watch how it flies: the nearest aircraft or turret on the

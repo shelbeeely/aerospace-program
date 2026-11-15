@@ -95,7 +95,7 @@ export interface Habits {
 
 export interface StyleRecord {
   t: number;
-  kind: 'break' | 'hit' | 'missile';
+  kind: 'break' | 'hit' | 'missile' | 'drive';
   text: string;
 }
 
@@ -345,6 +345,66 @@ export interface StoredStyle {
  * `step` each simulation step: your heading and height, and who is fighting you (the side of
  * the nearest unit on you, and your situation against it), or null.
  */
+/**
+ * How the player drives on the roads, as the traffic remembers it: speed for the road and near
+ * misses with riders (a moving average over about a minute), and what the riders noticed. The
+ * riders give a reckless player room (src/sim/riderPolicy.ts).
+ */
+export class DrivingStyle {
+  /** Speed over the traffic's own speed for the road (moving average, about 20 s). */
+  speedRatio = 1;
+  /** Near misses with riders per minute (moving average). */
+  nearMissRate = 0;
+  /** Near misses counted all season, and seconds driven. */
+  nearMisses = 0;
+  seconds = 0;
+  readonly records: StyleRecord[] = [];
+  private lastT = -Infinity;
+
+  /** Each step while the player drives a ground vehicle on the roads. */
+  step(t: number, speed: number, roadSpeed: number, nearMiss: boolean): void {
+    const dt = t - this.lastT;
+    this.lastT = t;
+    if (!(dt > 0 && dt < 1)) return;
+    this.seconds += dt;
+    this.speedRatio += (speed / Math.max(1, roadSpeed) - this.speedRatio) * Math.min(1, dt / 20);
+    this.nearMissRate *= 1 - Math.min(1, dt / 60);
+    if (nearMiss) {
+      this.nearMissRate += 1;
+      this.nearMisses++;
+      if (this.nearMisses >= 5 && this.nearMisses % 5 === 0) this.write(t, `The riders here have seen you pass within a few metres of them ${this.nearMisses} times`);
+    }
+    const r = this.reckless();
+    if (r > 0.5 && !this.records.some((x) => x.text.includes('give you room'))) this.write(t, 'The riders here have learned to give you room');
+  }
+
+  /** How reckless the player drives (0..1): well over the road's speed, and close to riders. */
+  reckless(): number {
+    const fast = Math.max(0, Math.min(1, (this.speedRatio - 1) / 0.6));
+    const close = Math.max(0, Math.min(1, this.nearMissRate / 3));
+    return Math.min(1, 0.6 * fast + 0.4 * close);
+  }
+
+  private write(t: number, text: string): void {
+    this.records.push({ t, kind: 'drive', text });
+    if (this.records.length > 8) this.records.shift();
+  }
+
+  toJSON() {
+    return { speedRatio: this.speedRatio, nearMissRate: this.nearMissRate, nearMisses: this.nearMisses, seconds: this.seconds, records: this.records };
+  }
+
+  load(o: unknown): void {
+    const d = (o ?? {}) as Partial<ReturnType<DrivingStyle['toJSON']>>;
+    const num = (v: unknown, def: number) => (typeof v === 'number' && Number.isFinite(v) ? v : def);
+    this.speedRatio = num(d.speedRatio, 1);
+    this.nearMissRate = num(d.nearMissRate, 0);
+    this.nearMisses = num(d.nearMisses, 0);
+    this.seconds = num(d.seconds, 0);
+    if (Array.isArray(d.records)) this.records.splice(0, this.records.length, ...d.records.slice(-8));
+  }
+}
+
 export class StyleBook {
   readonly models = new Map<number, StyleModel>();
   /** What the side fighting you expects of you now, as a world acceleration (m/s², x east, y up, z south). */
@@ -353,6 +413,8 @@ export class StyleBook {
   enabled = true;
   /** The side fighting you now, and your situation against it (the Brains tab shows it). */
   fight: { side: number; s: StyleSituation } | null = null;
+  /** How you drive on the roads, as the traffic remembers it. */
+  readonly driving = new DrivingStyle();
 
   constructor(private readonly name: (side: number) => string, private readonly seed = 1) {}
 
@@ -373,8 +435,8 @@ export class StyleBook {
     this.leans.set(fight.side, { x: Math.cos(heading) * l.lateral, y: l.vertical, z: Math.sin(heading) * l.lateral });
   }
 
-  toJSON(): Record<string, StoredStyle> {
-    const out: Record<string, StoredStyle> = {};
+  toJSON(): Record<string, unknown> {
+    const out: Record<string, unknown> = { drive: this.driving.toJSON() };
     for (const [side, m] of this.models) out[side] = m.toJSON();
     return out;
   }
@@ -382,6 +444,7 @@ export class StyleBook {
   load(o: unknown): void {
     if (!o || typeof o !== 'object') return;
     for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
+      if (k === 'drive') { this.driving.load(v); continue; }
       const side = Number(k);
       if (!Number.isInteger(side) || side < 0 || side > 8) continue;
       this.models.set(side, StyleModel.fromJSON(v, this.name(side), (this.seed * 31 + side + 7) >>> 0));
