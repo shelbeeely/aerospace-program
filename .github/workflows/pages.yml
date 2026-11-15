@@ -35,8 +35,11 @@ jobs:
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
           # The multiplayer relay every client joins on load (repo Settings → Variables →
-          # GRID_SERVER). Empty: the deployed relay, GRID_RELAY in src/net/NetClient.ts.
+          # GRID_SERVER). Empty: the deployed relay, GRID_RELAY in src/net/protocol.ts.
           VITE_GRID_SERVER: ${{ vars.GRID_SERVER }}
+          # The Cast receiver app id for pad.html (repo variable CAST_APP_ID; docs/tv.md). Empty:
+          # the pad pairs by code, or takes ?castApp=ID once.
+          VITE_CAST_APP_ID: ${{ vars.CAST_APP_ID }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

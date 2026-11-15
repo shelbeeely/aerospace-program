@@ -23,6 +23,8 @@
 import type { CraftDef } from '../craft/types.ts';
 
 export const PROTOCOL_VERSION = 4;
+/** The deployed relay (render.yaml): where every client goes unless told otherwise. */
+export const GRID_RELAY = 'wss://grid-relay-ruei.onrender.com';
 
 /** A player's team: 0 Cyan, 1 Red, 2 Amber (sim/teams.ts). Anything else reads as Cyan. */
 export type NetTeam = 0 | 1 | 2;

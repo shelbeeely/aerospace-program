@@ -33,6 +33,9 @@ The full rules are in [AGENTS.md](AGENTS.md) (imported above). The essentials:
   (`npm run civil`). A Stop
   hook (`.claude/hooks/stop-checks.sh`) runs the typecheck and the stale-weights check before a
   turn ends.
+- **Grid TV:** `tv.html` draws the game with Canvas 2D for a Chromecast or a TV browser; `pad.html`
+  makes a phone the gamepad (Cast channel, relay code, or one browser). The game runs in a worker
+  on the TV or on the phone; one frame format either way (`npm run tv`, `docs/tv.md`).
 - **Roads:** every road is pathed so the Navigator can drive any ground vehicle anywhere;
   ground vehicles spawn on roads, never on airstrips.
 - **Code:** no `Math.random` in generation; sim/world/arch stay DOM- and scene-free; run

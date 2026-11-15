@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#02050d" />
+    <title>Grid Pad</title>
+    <link rel="stylesheet" href="/src/style.css" />
+    <style>
+      html, body { background: radial-gradient(ellipse at 50% 130%, rgba(224, 138, 52, 0.22), transparent 60%), linear-gradient(#01020a, #071540); }
+      body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #cfe6ff; }
+      /* The pad keeps the game's thumb controls; the game's own bar and menu are replaced by the pad's. */
+      .touch .tbar, .touch .tmore { display: none !important; }
+      #pad-connect { position: fixed; inset: 0; overflow: auto; display: flex; padding: 24px; }
+      .pad-box { margin: auto; width: min(440px, 100%); padding: 22px; border: 1px solid rgba(54, 226, 255, 0.4); background: rgba(2, 6, 18, 0.85); }
+      .pad-box h1 { margin: 0 0 2px; font-size: 24px; letter-spacing: 0.12em; color: #eaf6ff; }
+      .pad-box p { margin: 6px 0; color: #8fb6e8; }
+      .pad-box h2 { margin: 18px 0 6px; font-size: 13px; letter-spacing: 0.1em; color: #36e2ff; text-transform: uppercase; }
+      .pad-row { display: flex; gap: 8px; align-items: center; }
+      #pad-code { flex: 1; min-width: 0; font: 700 28px ui-monospace, Menlo, monospace; letter-spacing: 0.3em; text-transform: uppercase; text-align: center; padding: 8px; color: #36e2ff; background: #061230; border: 1px solid rgba(54, 226, 255, 0.4); }
+      .pad-btn { min-height: 48px; padding: 0 18px; font: 600 16px system-ui, sans-serif; color: #02050d; background: #36e2ff; border: 0; }
+      .pad-btn.alt { color: #cfe6ff; background: #061230; border: 1px solid rgba(54, 226, 255, 0.4); }
+      .pad-btn:disabled { opacity: 0.4; }
+      .pad-check { display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; color: #8fb6e8; font-size: 14px; }
+      .pad-check input { accent-color: #36e2ff; margin-top: 3px; }
+      #pad-cast-note, #pad-status { font-size: 13px; color: #8fb6e8; }
+      #pad-status { margin-top: 14px; white-space: pre-line; }
+      /* Playing: a status chip, the readouts and the pad's menu, out of the thumbs' way. */
+      #pad-top { position: fixed; top: var(--st); left: var(--sl); right: var(--sr); display: flex; gap: 8px; align-items: flex-start; z-index: 12; pointer-events: none; }
+      #pad-top > * { pointer-events: auto; }
+      #pad-chip { padding: 6px 10px; font: 600 12px ui-monospace, monospace; background: rgba(2, 6, 18, 0.7); border: 1px solid rgba(54, 226, 255, 0.35); color: #9fd8ff; }
+      #pad-chip.off { color: #ff9a8c; border-color: rgba(255, 90, 60, 0.6); }
+      #pad-lines { flex: 1; text-align: center; font: 600 13px ui-monospace, monospace; color: #cfe6ff; text-shadow: 0 1px 2px #000; }
+      #pad-menu-btn { min-width: 48px; height: 40px; font-size: 20px; color: #eaf2f8; background: rgba(10, 18, 28, 0.7); border: 1px solid rgba(255, 255, 255, 0.22); }
+      #pad-menu { position: fixed; top: calc(var(--st) + 48px); right: var(--sr); z-index: 13; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; width: min(340px, calc(100vw - 16px)); max-height: calc(100dvh - var(--st) - 56px); overflow: auto; padding: 8px; background: rgba(2, 6, 18, 0.94); border: 1px solid rgba(54, 226, 255, 0.4); }
+      #pad-menu button { min-height: 44px; font: 600 14px system-ui, sans-serif; color: #eaf2f8; background: #061230; border: 1px solid rgba(54, 226, 255, 0.3); }
+      @media (orientation: landscape) and (max-height: 500px) { #pad-menu { grid-template-columns: 1fr 1fr 1fr; width: min(520px, calc(100vw - 16px)); } #pad-menu button { min-height: 40px; } }
+      #pad-toast { position: fixed; left: 50%; top: calc(var(--st) + 52px); transform: translateX(-50%); max-width: 80vw; padding: 6px 12px; background: rgba(2, 6, 18, 0.85); color: #eaf6ff; font-size: 13px; z-index: 12; pointer-events: none; }
+    </style>
+  </head>
+  <body>
+    <div id="pad-connect">
+      <div class="pad-box">
+        <h1>GRID PAD</h1>
+        <p>Your phone becomes the gamepad for the game on the TV.</p>
+        <h2>Cast</h2>
+        <div class="pad-row"><button class="pad-btn" id="pad-cast" disabled>Cast to a TV</button></div>
+        <p id="pad-cast-note"></p>
+        <h2>Or pair with the code on the TV</h2>
+        <div class="pad-row">
+          <input id="pad-code" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="CODE" />
+          <button class="pad-btn" id="pad-pair">Pair</button>
+        </div>
+        <label class="pad-check"><input type="checkbox" id="pad-host" /> Run the game on this phone (for a TV too slow to run it; the TV only draws)</label>
+        <div id="pad-status"></div>
+      </div>
+    </div>
+    <div id="pad-top" class="hidden">
+      <span id="pad-chip">PAD</span>
+      <span id="pad-lines"></span>
+      <button id="pad-menu-btn" aria-label="Menu" aria-expanded="false" aria-controls="pad-menu">☰</button>
+    </div>
+    <div id="pad-menu" class="hidden"></div>
+    <div id="pad-toast" class="hidden"></div>
+    <script type="module" src="/src/pad/main.ts"></script>
+  </body>
+</html>

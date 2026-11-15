@@ -20,6 +20,7 @@ services:
       paths:
         - server/**
         - src/net/protocol.ts
+        - src/tv/pair.ts
         - src/sim/evolution.ts
         - src/people/genome.ts
         - src/people/bitStyle.ts

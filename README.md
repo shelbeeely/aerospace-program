@@ -1130,7 +1130,7 @@ npm run test:server     # bun test server: two clients join, relay, isolation, s
   this repository. `render.yaml` builds `server/Dockerfile` (Bun) into a web service at
   `https://grid-relay.onrender.com` (or the name Render gives it), health-checked on `/health`,
   redeployed when `server/` or the protocol changes on `main`. The game connects to
-  `wss://grid-relay-ruei.onrender.com` by default (`GRID_RELAY` in `src/net/NetClient.ts`); to
+  `wss://grid-relay-ruei.onrender.com` by default (`GRID_RELAY` in `src/net/protocol.ts`); to
   point a build elsewhere, set repo **Settings → Secrets and variables → Actions → Variables →
   `GRID_SERVER`** and re-run the Pages deploy (a typed server or an invite's `?server=` still
   wins). Free instances sleep after 15 idle minutes (the first
@@ -1141,6 +1141,31 @@ npm run test:server     # bun test server: two clients join, relay, isolation, s
   Protocol: `src/net/protocol.ts` (versioned; client and server share it). Room logic:
   `server/rooms.ts`. Client: `src/net/NetClient.ts`, `src/render/RemoteCraftView.ts`,
   `src/ui/MultiplayerPanel.ts`. Not connected, the game is single-player as before.
+- **Phone-as-gamepad pairing:** `ws://host/pad?code=ABCD&role=tv|pad` pairs a TV page with its
+  phones (`server/pads.ts`; see *Grid TV* below).
+
+## Grid TV: Chromecast, Canvas 2D, the phone as the gamepad
+
+`tv.html` plays the game on a TV with a **Canvas 2D** renderer (no WebGL), and `pad.html` makes a
+phone its gamepad. Open `tv.html` on the big screen (a smart TV's browser, a laptop on the HDMI)
+and it shows a four-letter code; open `pad.html` on any phone and type it. Or cast: with a
+registered Cast receiver app, Chrome on Android casts `tv.html` to a Chromecast and the phone that
+cast it is the gamepad. Setup, the Cast registration and how it works: [`docs/tv.md`](docs/tv.md).
+
+- **The game runs on the TV** (in a worker: simulating and drawing on two cores), or, for a
+  receiver too slow for that, **on the phone** (*Run the game on this phone*: the phone sends
+  frames, the TV only draws).
+- **The pad is the game's own touch controls**, laid out per vehicle (lever, stick, brake,
+  FIRE / DROP, YES / NO and BOARD on foot), plus a menu: vehicles, camera, Navigator hold,
+  trail, weapons, on foot, flaps, radar range, resets. Rumble reaches the phone.
+- **The TV view** is a small software 3D pipeline in the 1982 language: dark masses shaded by
+  orientation, light only on structure rims, craft light parts, light walls and the street grid,
+  haze and the amber horizon band; it adapts its detail to hold the frame rate (`?stats`).
+- `tv.html?code=ABCD&craft=cycle&lite&stats`, `pad.html?code=ABCD&host=1&castApp=ID`.
+
+```bash
+npm run tv              # the pad protocol, the TV's game, frames, the planned architecture, the renderer
+```
 
 ## Disasters
 

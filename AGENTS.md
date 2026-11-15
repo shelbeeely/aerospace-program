@@ -18,7 +18,8 @@ Rules for every agent and contributor working on this repo. Claude Code reads th
   scene objects and the DOM; rendering lives in `src/render`.
 - **Checks:** `npm run typecheck`, `npm run arch`, `npm run drive`, `npm run city`,
   `npm run ground` before pushing world or vehicle changes; `npm run bit`, `npm run evolution`
-  and `npm run sappers` for the people; `npm run scenario` for the NPC brains.
+  and `npm run sappers` for the people; `npm run scenario` for the NPC brains; `npm run tv` for
+  the TV view and the phone gamepad.
 
 ## Design rules
 
@@ -438,6 +439,26 @@ universe, not a conventional open world decorated with neon.
   data channel, an evacuation and a closure, fighting at the broken crossing, an escort squad
   and a supply drone; its layouts are the design test (does a different street network change
   the plan?). Check: `npm run scenario`.
+
+## 21. Grid TV and the phone gamepad (project)
+
+- **The TV draws with Canvas 2D** (`tv.html`, `src/tv/TvRenderer.ts`): the design rules hold there
+  too. Dark masses shaded by orientation, light only where it means something (structure rims,
+  a craft's light parts, light walls, the street grid), haze and the horizon band; never cover
+  everything in glowing lines. It draws a frame (`src/tv/format.ts`) and the planned
+  architecture, never the simulation; its page stays free of three.js and the simulation.
+- **One frame format** (`src/tv/frame.ts` builds it from a Simulation): the same frames come from
+  the TV's worker or from the phone. A new kind of thing on screen gets a stride and a cap in
+  the frame and is drawn from that; the frame stays small (cast messages: 64 KB).
+- **The phone is a pad, not a second game.** It sends its controls (`src/tv/protocol.ts`); the
+  game carries them out through `RemoteDevice` like any input device, and goes hands-off when
+  the pad goes quiet. Pad actions are the subset in `PAD_ACTIONS`; the pad's layout follows the
+  vehicle's profile (§19).
+- **Links carry the same messages**: Cast custom channel, the relay's pad pairing
+  (`server/pads.ts`: one TV per code, size-capped, rate-limited), a BroadcastChannel.
+- When the phone runs the game, the TV rebuilds the structure list from the chunk list
+  (`src/tv/plan.ts`) with the game's own group ids, so a broken structure is hidden on the TV.
+- Checks: `npm run tv`, `npm run test:server`. Setup: `docs/tv.md`.
 
 ## 18. Destruction (project)
 

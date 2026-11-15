@@ -11,7 +11,7 @@ import { DEREZ_TIME, type Trail, type TrailMode, type TrailPoint, type TrailSyst
 import { decodePools, encodePools, fromBase64, toBase64, type StoredLot } from '../sim/evolution.ts';
 import type { PoolSource } from '../sim/bits.ts';
 import {
-  MAX_TRAIL_POINTS, PROTOCOL_VERSION, STATE_HZ, isWorldRoom, normalizeRoom, r2, r4, splitGroupName, validCraftShape, validEvent, validState,
+  GRID_RELAY, MAX_TRAIL_POINTS, PROTOCOL_VERSION, STATE_HZ, isWorldRoom, normalizeRoom, r2, r4, splitGroupName, validCraftShape, validEvent, validState,
   type ClientMessage, type NetEvent, type NetState, type NetTrail, type NetTrailPoint, type PlayerInfo, type ServerMessage, asTeam, type NetTeam, HIT_KINDS,
 } from './protocol.ts';
 
@@ -39,8 +39,7 @@ import {
  */
 export type NetStatus = 'offline' | 'connecting' | 'connected' | 'error';
 
-/** The deployed relay (render.yaml): where every client goes unless told otherwise. */
-export const GRID_RELAY = 'wss://grid-relay-ruei.onrender.com';
+export { GRID_RELAY } from './protocol.ts';
 /**
  * Attempts before giving up on a relay that has never answered. A free Render instance sleeps
  * after 15 idle minutes and takes about a minute to wake, so the first connect keeps trying

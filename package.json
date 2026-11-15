@@ -55,6 +55,7 @@
     "scenario": "node --experimental-transform-types --no-warnings scripts/scenario.ts",
     "programs": "node --experimental-transform-types --no-warnings scripts/programs.ts",
     "navigator": "node --experimental-transform-types --no-warnings scripts/navigator.ts",
+    "tv": "node --experimental-transform-types --no-warnings scripts/tv.ts",
     "ground": "node --experimental-transform-types --no-warnings scripts/groundVehicles.ts",
     "server": "bun server/index.ts",
     "test:server": "bun test server"

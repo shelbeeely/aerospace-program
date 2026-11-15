@@ -52,6 +52,11 @@ export type Action =
   | 'strategic'
   | 'foot';
 
+/** Nothing pressed, nothing moved. */
+export function emptyRaw(): RawInput {
+  return { pitch: 0, roll: 0, yaw: 0, throttleRate: 0, throttleSet: null, brake: 0, trimRate: 0, flapSteps: 0, flapCycle: false, fire: false, fireAlt: false, hack: false, aimYaw: 0, aimPitch: 0 };
+}
+
 /** What a device may know about the game when it reads. */
 export interface InputContext {
   profile: ControlProfile;

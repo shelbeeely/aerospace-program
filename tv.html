@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#01020a" />
+    <title>Grid TV</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #01020a; color: #cfe6ff; font: 18px/1.4 "Segoe UI", Roboto, system-ui, sans-serif; }
+      #tv { display: block; width: 100vw; height: 100vh; }
+      #tv-card {
+        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+        background: radial-gradient(ellipse at 50% 120%, rgba(224, 138, 52, 0.28), transparent 55%), linear-gradient(#01020a, #071540 70%, #183a7c);
+      }
+      #tv-card.over { background: rgba(1, 2, 10, 0.55); }
+      .tv-box { max-width: 860px; padding: 40px 56px; border: 1px solid rgba(54, 226, 255, 0.45); background: rgba(2, 6, 18, 0.82); }
+      .tv-box h1 { margin: 0 0 4px; font-size: 40px; letter-spacing: 0.12em; color: #eaf6ff; font-weight: 700; }
+      .tv-box .sub { color: #8fb6e8; margin: 0 0 28px; }
+      .tv-code { font: 700 96px/1 ui-monospace, Menlo, Consolas, monospace; letter-spacing: 0.25em; color: #36e2ff; margin: 8px 0 18px; }
+      .tv-step { margin: 8px 0; }
+      .tv-step b { color: #36e2ff; }
+      .tv-url { font-family: ui-monospace, Menlo, Consolas, monospace; color: #eaf6ff; word-break: break-all; }
+      #tv-status { margin-top: 22px; color: #8fb6e8; font-size: 15px; white-space: pre-line; }
+      #tv-progress { margin-top: 10px; color: #e08a34; font-size: 15px; }
+      #tv-badge { position: fixed; left: 36px; bottom: 30px; font: 600 14px ui-monospace, monospace; color: rgba(160, 200, 255, 0.55); pointer-events: none; }
+      .hidden { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <canvas id="tv"></canvas>
+    <div id="tv-card">
+      <div class="tv-box">
+        <h1>GRID TV</h1>
+        <p class="sub">Your phone is the gamepad.</p>
+        <div id="tv-pair">
+          <div class="tv-step">On your phone, open <span class="tv-url" id="tv-pad-url"></span></div>
+          <div class="tv-step">and enter the code</div>
+          <div class="tv-code" id="tv-code">····</div>
+        </div>
+        <div id="tv-cast" class="tv-step hidden">Casting: the phone that started the cast is the gamepad.</div>
+        <div id="tv-progress"></div>
+        <div id="tv-status"></div>
+      </div>
+    </div>
+    <div id="tv-badge"></div>
+    <script type="module" src="/src/tv/main.ts"></script>
+  </body>
+</html>
