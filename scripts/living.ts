@@ -16,7 +16,10 @@
  *    own with a structure of its region (passing the architectural checks), every new block
  *    faces a street, and the roads are still one network; taking the growth away gives back
  *    the planet as generated.
- * 8. "While you were away" is built from the log.
+ * 8. The game takes the world as it is: a client adopts the relay's living world, lays its growth
+ *    over the planet, takes its captures as territory and its wars as the game's wars, and tells
+ *    the player what happened while they were away.
+ * 9. "While you were away" is built from the log.
  */
 import { advance, digest, LIVING, LivingIndex, newLiving } from '../src/living/advance.ts';
 import { baseMap, livingPitch, livingRegions } from '../src/living/baseMap.ts';
@@ -24,8 +27,12 @@ import { SEASON_EPOCH } from '../src/brain/season.ts';
 import { FACTION_NAME, FACTIONS, GOODS, pairKey, type LivingState } from '../src/living/state.ts';
 import { growthOverlay } from '../src/living/overlay.ts';
 import { readShippedMap } from '../src/living/shippedMap.ts';
+import { LivingKeeper } from '../src/app/livingStore.ts';
+import { initPhysics, Simulation } from '../src/sim/Simulation.ts';
+import { LIGHT_CYCLE } from '../src/craft/lightCycle.ts';
+import { diplomacy } from '../src/sim/diplomacy.ts';
 import shippedJson from '../src/living/baseMap.json' with { type: 'json' };
-import { setGrowth } from '../src/arch/growth.ts';
+import { growthSize, setGrowth } from '../src/arch/growth.ts';
 import { districtPlan, lotAt } from '../src/arch/DistrictGenerator.ts';
 import { BLOCK_KIND, blockSummary, roadStats } from '../src/world/planetCity.ts';
 import { roadOpen } from '../src/sim/roads.ts';
@@ -206,6 +213,30 @@ console.log('\n--- the relay\'s copy of the planet');
     advance(a, start + 2 * DAY, sm.map, sm.regions, sm.pitch); go(b, start + 2 * DAY);
     check(JSON.stringify(a) === JSON.stringify(b), 'the relay (on the shipped map) and a browser (on the generator) live the same world');
   }
+}
+
+console.log('\n--- the game takes the world as it is');
+{
+  await initPhysics();
+  const sim = new Simulation(LIGHT_CYCLE);
+  sim.traffic.enabled = false;
+  const keeper = new LivingKeeper(sim);
+  // A world with a war going on and a district taken (as the relay would hand over).
+  const shared = clone(world);
+  shared.relations['01'].stance = 'war';
+  const nc = map.n / map.chunkBlocks;
+  const taken = shared.captures.length ? shared.captures[0][0] : (() => { for (let c = 0; c < nc * nc; c++) if (map.owner[c] === 1) return c; return 0; })();
+  if (!shared.captures.length) shared.captures.push([taken, 0]);
+  const seenBefore = keeper.since;
+  check(keeper.adopt(shared), 'a client adopts the relay\'s living world');
+  check(growthSize() === shared.developed.length + shared.sites.length, 'its growth is laid over the generated planet', `${growthSize()} blocks`);
+  const [c0, f0] = shared.captures[0];
+  check(sim.groundTurrets.territory.ownerOf(c0 % nc, Math.floor(c0 / nc)) === f0, 'its captured districts are the game\'s territory');
+  check(diplomacy.atWar(0, 1) && !diplomacy.atWar(0, 2), 'its wars are the game\'s wars', `Cyan–Red ${diplomacy.stance(0, 1)}, Cyan–Amber ${diplomacy.stance(0, 2)}`);
+  const told = sim.notices.find((n) => n.text.startsWith('While you were away'));
+  check(!!told || seenBefore >= shared.time, 'and the player is told what happened while they were away', told?.text.slice(0, 160) ?? '');
+  setGrowth(new Map());
+  diplomacy.reset();
 }
 
 console.log('\n--- while you were away');

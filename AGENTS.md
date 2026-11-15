@@ -471,6 +471,11 @@ universe, not a conventional open world decorated with neon.
   clients in the world (`living-want` → `living`) and shared every ten minutes. The relay loads
   the planet from `src/living/baseMap.json` (`npm run living-map`, stamped and kept fresh by
   `npm run train` and CI) instead of carrying the world generator.
+- **Browsers keep a copy** (`src/app/livingStore.ts`): offline it is the world, caught up by the
+  time away (up to sixty days) and carried on every minute; online the relay's state is adopted
+  as it arrives and carried on locally between arrivals by the same function. The game takes the
+  world as it is: its growth (the world generator builds it), its captures (territory), its wars
+  (diplomacy). Coming back, a toast says what happened while the player was away.
 - Checks: `npm run living`, `npm run test:server`.
 
 ## 18. Destruction (project)

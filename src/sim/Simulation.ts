@@ -431,6 +431,11 @@ export class Simulation {
     }
   }
 
+  /** Say something to the player (the living world's "while you were away", and the like). */
+  announce(text: string): void {
+    this.notice(text);
+  }
+
   private notice(text: string): void {
     this.notices.push({ text, time: this.time });
     if (this.notices.length > 16) this.notices.splice(0, this.notices.length - 16);

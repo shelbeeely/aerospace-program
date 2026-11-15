@@ -140,6 +140,8 @@ export class NetClient {
 
   /** The relay keeps the Bits' world, and this game is part of it. */
   worldLinked = false;
+  /** The living world in this browser (src/app/livingStore.ts): asks the relay for the shared one, and adopts it. */
+  living: { since: number; adopt(state: unknown): boolean } | null = null;
   private offerTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly poolLink: PoolSource = {
     want: (keys) => this.send({ t: 'lot-want', keys }),
@@ -325,6 +327,10 @@ export class NetClient {
         for (const p of m.players) this.addPlayer(p);
         this.setStatus('connected', `Room ${m.room} · ${m.players.length + 1} on the Grid`);
         if (m.world) this.linkWorld();
+        if (m.world?.living && this.living) this.send({ t: 'living-want', since: Math.max(0, Math.floor(this.living.since)) });
+        break;
+      case 'living':
+        this.living?.adopt(m.state);
         break;
       case 'lot': {
         const bytes = m.pool ? fromBase64(m.pool) : null;

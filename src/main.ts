@@ -98,6 +98,7 @@ import { NetClient } from './net/NetClient.ts';
 import { MultiplayerPanel } from './ui/MultiplayerPanel.ts';
 import { clearBitPools, keepBitPools } from './app/bitPools.ts';
 import { keepStyle } from './app/styleStore.ts';
+import { keepLiving } from './app/livingStore.ts';
 import { CensusRecorder } from './sim/evolutionLab.ts';
 
 async function start() {
@@ -266,6 +267,8 @@ async function start() {
   // Multiplayer (Grid Link): joins the shared WORLD room on the deployed relay on load
   // (`?room=CODE&server=ws://host:port` for another, `?offline=1` for none).
   const net = new NetClient({ sim, scene, mode: () => mode });
+  // The living world (AGENTS.md §21): caught up by the time away, shared with the relay's when online.
+  net.living = keepLiving(sim, (text) => toast(text, 10_000));
   // K: the architecture inspector (region, district, streaming, structure under the cursor).
   const bitsCensus = new CensusRecorder(sim.bits, sim.sappers);
   const inspector = new ArchitectureInspector({

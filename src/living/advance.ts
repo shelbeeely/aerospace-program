@@ -549,7 +549,12 @@ export function digest(state: LivingState, since: number): string[] {
   const built = FACTIONS.map((f) => ev.filter((e) => e.kind === 'built' && e.factions[0] === f).length);
   const parts = FACTIONS.filter((f) => built[f]).map((f) => `${fname(f)} ${built[f]}`);
   if (parts.length) out.push(`Blocks built: ${parts.join(', ')}`);
-  for (const e of ev) if (e.kind === 'treaty' || e.kind === 'stance' || e.kind === 'capture') out.push(e.text);
+  // Border incidents, counted; treaties, stances and captures as they happened (the latest few).
+  const incidents = ev.filter((e) => e.kind === 'stance' && e.text.startsWith('A border incident')).length;
+  const notable = ev.filter((e) => (e.kind === 'treaty' || e.kind === 'stance' || e.kind === 'capture') && !e.text.startsWith('A border incident'));
+  if (notable.length > 6) out.push(`${notable.length - 6} earlier changes in treaties and borders`);
+  for (const e of notable.slice(-6)) out.push(e.text);
+  if (incidents) out.push(`${incidents} border incident${incidents > 1 ? 's' : ''}`);
   const lost = ev.filter((e) => e.kind === 'convoyLost').length;
   if (lost) out.push(`${lost} convoy${lost > 1 ? 's' : ''} lost`);
   return out;
