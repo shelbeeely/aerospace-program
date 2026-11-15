@@ -409,8 +409,15 @@ universe, not a conventional open world decorated with neon.
 - **Train and compare.** `npm run train-drive` (drivers) and `npm run train-squad` (the squad
   and the drone) record the scripted teachers (plus generated hard cases), train by imitation
   (driving can also be refined by evolution), and write `src/brain/weights/*.json`
-  deterministically; regenerate them rather than editing them. A change
-  to a policy's inputs or actions retrains it. `npm run scenario` keeps the networks within a
+  deterministically; regenerate them rather than editing them.
+- **Retraining is automatic.** Every weights file carries a stamp: a fingerprint of the code
+  its trainer ran (`scripts/lib/fingerprint.ts`: the trainer and everything it imports,
+  printed without comments or layout, so only a change in behaviour counts). `npm run train`
+  retrains just the stale networks (`--check` lists them, `--all` retrains all); the brain
+  checks fail on stale weights; the `brains.yml` workflow retrains on push and commits the new
+  weights to the branch pushed (pull before your next push), and Pages trains before it builds.
+  A new trainer is added to `TRAINERS` in `scripts/lib/trainers.ts` and stamps its output with
+  `stampOf`. `npm run scenario` keeps the networks within a
   stated margin of the scripted baseline, with no collisions and nobody on a closed road.
 - The Scenario Lab (`scenario.html`) is the proving ground: one district, two crossings over a
   data channel, an evacuation and a closure, fighting at the broken crossing, an escort squad

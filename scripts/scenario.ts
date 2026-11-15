@@ -2,6 +2,8 @@
  * The Scenario Lab: one district, two crossings, an evacuation and a closure. Run with
  * `npm run scenario`.
  *
+ * 0. Fresh: the shipped weights were trained on the code as it is now (their stamp matches a
+ *    fingerprint of their trainer's code; `npm run train` retrains what is stale).
  * 1. Deterministic: the same settings give the same metrics and the same logs.
  * 2. Safe whoever drives: no collisions for the scripted driver or the networks; nobody enters a
  *    closed crossing; those who learn of the closure on their way reroute.
@@ -23,6 +25,7 @@ import { DRIVE_ACTIONS, drivePolicy, loadDriveWeights, respondPolicy } from '../
 import { loadSquadWeights, squadPolicy } from '../src/scenario/escort.ts';
 import { flightPolicy, landingPolicy, loadDroneWeights } from '../src/scenario/drone.ts';
 import { Scenario, summary, type ScenarioSettings } from '../src/scenario/scenario.ts';
+import { freshness } from './lib/trainers.ts';
 
 let failures = 0;
 const check = (ok: boolean, label: string, detail = '') => {
@@ -33,7 +36,12 @@ const run = (s: Partial<ScenarioSettings>) => { const sc = new Scenario(s); sc.r
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
 const f0 = (x: number) => (Number.isFinite(x) ? x.toFixed(0) : '-');
 
-console.log('--- determinism');
+console.log('--- the weights are fresh');
+for (const f of freshness()) {
+  check(!f.stale, `${f.trainer.outputs.join(', ')} trained on the code as it is now`, f.stale ? `stale (${f.reasons.slice(0, 4).join('; ')}): run npm run train` : f.stamp.fingerprint);
+}
+
+console.log('\n--- determinism');
 {
   const a = run({ seed: 3 }), b = run({ seed: 3 });
   const logs = (s: Scenario) => s.vehicles.map((v) => v.log.map((e) => `${e.t}:${e.text}`).join('|')).join('\n');

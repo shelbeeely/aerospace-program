@@ -29,6 +29,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run sim
+      # Ship networks trained on this code (retrains only stale weights; see brains.yml).
+      - run: npm run train
       - run: npm run build
         env:
           BASE_PATH: /${{ github.event.repository.name }}/

@@ -1,0 +1,78 @@
+# Retrains the NPC networks whose weights are stale, and commits them to the branch pushed.
+#
+# Each weights file in src/brain/weights carries a fingerprint of the code its trainer ran
+# (scripts/lib/fingerprint.ts). On a push that touches that code, `npm run train` retrains only
+# the stale networks (deterministically), the brain checks run on the result, and if the weights
+# changed and the checks pass, the new weights are committed to the same branch. Pushes made
+# with the workflow's own token start no workflows, so this never loops.
+#
+# One-time setup: repo Settings → Actions → General → Workflow permissions → "Read and write".
+# (A protected branch refuses the push; the job then fails and says so.)
+name: Retrain NPC networks
+
+on:
+  push:
+    paths:
+      - 'src/brain/**'
+      - 'src/scenario/**'
+      - 'src/people/**'
+      - 'scripts/train*.ts'
+      - 'scripts/lib/**'
+      - 'scripts/scenario.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/brains.yml'
+  workflow_dispatch:
+    inputs:
+      all:
+        description: Retrain every network, stale or not
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: brains-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Retrain what is stale
+        run: npm run train -- ${{ inputs.all && '--all' || '' }}
+      - run: npm run typecheck
+      - name: Brain checks
+        run: npm run scenario
+      - name: Commit the new weights
+        run: |
+          if git diff --quiet -- src/brain/weights; then
+            echo "The weights did not change."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/brain/weights
+          git commit -m "Retrain NPC networks" -m "npm run train after ${GITHUB_SHA::7}: the shipped weights were trained on older code."
+          for i in 1 2 3 4; do
+            if git pull --rebase origin "$GITHUB_REF_NAME" && git push origin "HEAD:$GITHUB_REF_NAME"; then
+              exit 0
+            fi
+            sleep $((2 ** i))
+          done
+          echo "Could not push the retrained weights to $GITHUB_REF_NAME."
+          exit 1
+      - name: Keep the weights of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weights
+          path: src/brain/weights

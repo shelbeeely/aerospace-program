@@ -5,7 +5,8 @@
  * Lab (escorts of the convoy and of freight, drone flights in calm and windy air, with the
  * clinic's pad busy now and then), add generated hard cases, train each network by imitation
  * and report how often it agrees with the teacher on held-out decisions. Writes
- * src/brain/weights/squad.json and src/brain/weights/drone.json, deterministically.
+ * src/brain/weights/squad.json and src/brain/weights/drone.json, deterministically, stamped with
+ * a fingerprint of the code it ran (scripts/lib/fingerprint.ts).
  */
 import { writeFileSync } from 'node:fs';
 import { accuracy, argmax, createNet, forward, toJSON, train, type Example } from '../src/brain/net.ts';
@@ -13,6 +14,7 @@ import { seededRand } from '../src/people/genome.ts';
 import { scriptedSquad, SQUAD_ACTIONS, squadPolicy, type SquadObs } from '../src/scenario/escort.ts';
 import { FLIGHT_ACTIONS, flightPolicy, LAND_ACTIONS, landingPolicy, scriptedFlight, scriptedLanding, type FlightObs, type LandObs } from '../src/scenario/drone.ts';
 import { Scenario } from '../src/scenario/scenario.ts';
+import { stampOf } from './lib/fingerprint.ts';
 
 const SEED = 20261115;
 const rand = seededRand(SEED);
@@ -54,7 +56,7 @@ for (const [pol, actions] of [[squadPolicy, SQUAD_ACTIONS], [flightPolicy, FLIGH
   console.log(`${pol.id}: ${ex.length} examples; agrees with the teacher on ${(accuracy(net, test) * 100).toFixed(1)}% held out (${per}); train loss ${fit.loss.toFixed(3)}`);
   out[pol.id] = toJSON(net);
 }
-const note = { seed: SEED, runs, note: 'npm run train-squad regenerates this file; scripted leader and pilot = teachers (src/scenario/escort.ts, drone.ts)' };
+const note = { seed: SEED, runs, note: 'npm run train (or train-squad) regenerates this file; scripted leader and pilot = teachers (src/scenario/escort.ts, drone.ts)', ...stampOf('scripts/trainSquad.ts') };
 writeFileSync('src/brain/weights/squad.json', JSON.stringify({ trained: note, squad: out.squad }) + '\n');
 writeFileSync('src/brain/weights/drone.json', JSON.stringify({ trained: note, flight: out.flight, landing: out.landing }) + '\n');
 console.log(`${runs} scenario runs recorded; wrote src/brain/weights/squad.json and drone.json`);

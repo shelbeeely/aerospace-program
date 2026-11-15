@@ -514,7 +514,14 @@ its east end for six minutes, the convoy must cross at 2:00, and the district ke
   battery is running down. It delivers in about a minute, in calm air and in wind up to 10 m/s.
   `npm run train-squad` trains both from their scripted teachers (98.8% squad, 98.6% flight
   and 97.7% landing agreement on held-out decisions) and writes the weights deterministically.
-- Check: `npm run scenario` (determinism, no collisions, nobody on a closed crossing, rerouting,
+- **Retraining is automatic.** Each weights file is stamped with a fingerprint of the code it
+  was trained on (comments and layout don't count). `npm run train` retrains only the stale
+  networks (`-- --check` to list them, `-- --all` for everything), `npm run scenario` refuses
+  stale weights, and the *Retrain NPC networks* workflow (`.github/workflows/brains.yml`)
+  retrains on every push that touches the brains or the scenario and commits the new weights to
+  that branch. It needs write access for workflows (Settings → Actions → General → Workflow
+  permissions → Read and write).
+- Check: `npm run scenario` (fresh weights, determinism, no collisions, nobody on a closed crossing, rerouting,
   the comparison within 25%, both levels of detail agree, shortages when shipments never come,
   policy switches, the recorded stories, the design test, the escort holding its order and
   getting its vehicle through, the drone delivering in wind and diverting from a busy pad).

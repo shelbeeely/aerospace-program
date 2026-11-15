@@ -11,7 +11,9 @@
  * 4. Optionally evolve: variants of the trained network, scored in the scenario on delivery
  *    lateness, response times, delay and shortage (collisions disqualify); the best is kept
  *    only if it beats the imitation.
- * 5. Write src/brain/weights/drive.json. Deterministic for its seed.
+ * 5. Write src/brain/weights/drive.json, stamped with a fingerprint of the code it ran
+ *    (scripts/lib/fingerprint.ts) so `npm run train` knows when it is stale. Deterministic for
+ *    its seed.
  */
 import { writeFileSync } from 'node:fs';
 import { accuracy, cloneNet, createNet, evolve, forward, argmax, mutateNet, toJSON, train, type Example, type Net } from '../src/brain/net.ts';
@@ -19,6 +21,7 @@ import { seededRand } from '../src/people/genome.ts';
 import { DRIVE_ACTIONS, drivePolicy, respondPolicy, scriptedDrive, scriptedRespond, type DriveObs } from '../src/scenario/policies.ts';
 import { Scenario, summary } from '../src/scenario/scenario.ts';
 import { LAYOUTS } from '../src/scenario/district.ts';
+import { stampOf } from './lib/fingerprint.ts';
 
 const SEED = 20261114;
 const rand = seededRand(SEED);
@@ -124,7 +127,7 @@ if (generations > 0) {
 }
 
 const json = {
-  trained: { seed: SEED, runs, generations, note: 'npm run train-drive regenerates this file; scripted driver = teacher (src/scenario/policies.ts)' },
+  trained: { seed: SEED, runs, generations, note: 'npm run train (or train-drive) regenerates this file; scripted driver = teacher (src/scenario/policies.ts)', ...stampOf('scripts/trainDrive.ts') },
   drive: toJSON(out.drive as Net),
   respond: toJSON(out.respond as Net),
 };
