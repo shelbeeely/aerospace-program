@@ -537,6 +537,23 @@ its east end for six minutes, the convoy must cross at 2:00, and the district ke
   policy switches, the recorded stories, the design test, the escort holding its order and
   getting its vehicle through, the drone delivering in wind and diverting from a busy pad).
 
+## The living world: it goes on without you
+
+The three factions keep living while nobody plays (`src/living/`). Their districts make goods
+by what they do (compute in the control centres, materials in the industrial zones, bandwidth
+in the communication districts, energy on the plains, memory in the machine cities), their
+people consume them, and they trade surpluses for deficits by convoy and cargo flight. Prosperity
+pays for growth: each faction builds a few blocks a day at the edges of its cities (open and
+plain blocks in its own districts, within a cap, so the Outlands stay wild). Trade builds trust,
+trust brings trade pacts and alliances; contested edges, lost convoys and border incidents cost
+it, and now and then (about one war in three seasons) two factions go to war and move a border.
+Bits move house along the trade routes.
+
+It is one pure function of world time, so the relay can carry it forward in real time and a
+browser can catch up the weeks it was away; when you come back, "while you were away" tells you
+what happened, built only from the world's own log. In sixty simulated days each faction builds
+about 4 blocks a day and the books balance to the unit. Check: `npm run living`.
+
 ## Programs: the working population of the streets
 
 Beside the Bits (who belong to everyone), the streets are walked by programs: one kind for each

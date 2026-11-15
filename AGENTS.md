@@ -439,6 +439,29 @@ universe, not a conventional open world decorated with neon.
   and a supply drone; its layouts are the design test (does a different street network change
   the plan?). Check: `npm run scenario`.
 
+## 21. The living world (project)
+
+- **The world lives without players** (`src/living/`). One state, advanced by a pure function in
+  fixed world-time ticks (`advance`, seeded by world seed and tick), so catching up a month at
+  once is exactly living through it. The relay advances it in real time; a browser offline
+  catches its copy up by the time it was away. The planet stays a pure function of the seed;
+  the living state is the layer on top: blocks developed, districts captured, damage repaired,
+  the factions' economies and relations.
+- **Factions make, need and trade goods** by what their districts do (control: compute,
+  industrial: materials, communication: bandwidth, plains: energy, caverns and machine-city:
+  memory; transport adds trade capacity). Trade runs by convoy and cargo flight, paid on
+  arrival; goods and credits are conserved (checked). Prosperity funds growth.
+- **Cities grow a few blocks a day per faction**: only open or plain blocks, in the builder's own
+  district, next to built ones, within a cap per faction so the Outlands stay wild (§13). Stages:
+  survey, roads, foundation, structure.
+- **Relations**: trade builds trust; contested blocks, lost convoys and border incidents cost it.
+  Trust brings pacts and alliances, distrust embargoes; the war ladder (peace, tension,
+  mobilising, war, truce) is climbed rarely, about one war in three seasons, and wars move
+  border districts. Bits move house along the trade routes.
+- **Explanations come from the log**: "while you were away" (`digest`) is built only from
+  recorded events.
+- Check: `npm run living`.
+
 ## 18. Destruction (project)
 
 - **One engine, and it bears load.** Everything that breaks (structures, kit towers,

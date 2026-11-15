@@ -33,6 +33,9 @@ The full rules are in [AGENTS.md](AGENTS.md) (imported above). The essentials:
   (`npm run civil`). A Stop
   hook (`.claude/hooks/stop-checks.sh`) runs the typecheck and the stale-weights check before a
   turn ends.
+- **Living world:** the factions grow their cities, trade, sign treaties and now and then fight
+  whether anyone plays or not (`src/living/`, a pure function of world time; the relay keeps it,
+  browsers catch up offline). Check: `npm run living`.
 - **Roads:** every road is pathed so the Navigator can drive any ground vehicle anywhere;
   ground vehicles spawn on roads, never on airstrips.
 - **Code:** no `Math.random` in generation; sim/world/arch stay DOM- and scene-free; run
